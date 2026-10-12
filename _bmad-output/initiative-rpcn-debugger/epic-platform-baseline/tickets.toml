@@ -1,0 +1,80 @@
+# epic-platform-baseline: entries in build order
+
+[[entry]]
+id = 1
+type = "story"
+title = "Repo scaffold, task runner and installable skeleton extension"
+description = "Creates the GitHub repo and Go module github.com/ajurcenk/rpcn-debugger (go 1.26.6) with the debugger/{core,engine,rewrite,blobl,dap} layout and a cmd/rpcn-debug that links schema.Standard(...).Environment() with components/all (the AD-1 stock binary, which pins connect v4.112.0 / benthos v4.81.0). With no arguments the binary will serve DAP on stdio; --version prints and exits before Serve (AD-15). Also creates the vscode/ extension (pipeline-debugger-for-redpanda-connect, publisher ajurcenk, engines ^1.120.0, TypeScript 6.0.3, contributes the redpanda-connect debug type, MIT LICENSE, README, repository field) and a Taskfile whose `task ci` builds Go and TS, runs the tests and runs a non-interactive `vsce package`. If components/all needs CGO or extra system libraries, the build prerequisites go in the README."
+verify = "On a fresh clone `task ci` is green and produces a .vsix; after `code --install-extension` it, Redpanda Connect appears as a debugger type in Run and Debug, and `rpcn-debug --version` prints the pinned Connect version."
+covers = ["B1", "B7"]
+after = []
+hitl = true
+risk = "medium"
+notes = ["MIT licence (user, 2026-10-12)."]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Lint gates for public-API-only and stdout rules"
+description = "Adds golangci-lint, pinned through a go.mod tool directive, to `task ci`: forbidigo bans fmt.Print* and os.Stdout under debugger/..., depguard allow-lists only public/... packages under github.com/redpanda-data, and a check fails on replace directives for benthos/connect (AD-2, AD-15)."
+verify = "Planting fmt.Println in debugger/core, a non-public github.com/redpanda-data import, or a replace directive each makes `task ci` fail, naming the rule (a Go internal-import compile error is also accepted); removing them makes it green."
+covers = ["B2"]
+after = [1]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Redpanda container integration-test job"
+description = "Adds package test/integration (build tag `integration`) using testcontainers-go's Redpanda module, with a smoke test that produces and consumes one record, run by `task ci`. epic-safe-against-real-systems writes the never-ack test into this package."
+verify = "`task ci` starts a Redpanda container, the smoke test passes, and no container is left running afterwards."
+covers = ["B3"]
+after = [2]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 4
+type = "story"
+title = "DAP adapter seed, debugger.Serve and extension wiring"
+description = "Creates debugger.Serve(env, in, out, opts...) (AD-1) backed by a debugger/dap go-dap v0.12.1-0.20260926015354-7505f696918e server answering only initialize (empty capabilities; epic-local-release adds the AD-14 version fields) and disconnect. cmd/rpcn-debug calls Serve(env, os.Stdin, os.Stdout), and go-dap types stay inside debugger/dap (AD-3). The extension gains the rpcnDebug.binaryPath setting and a DebugAdapterExecutable that starts the binary (AD-23 MVP), and a vscode/ test suite with @vscode/debugadapter-testsupport 1.68.0 asserts the initialize response. epic-tracer extends the adapter."
+verify = "`task ci` runs the TS DAP test, which starts rpcn-debug, gets an initialize response and disconnects cleanly; in VS Code, F5 with rpcnDebug.binaryPath set starts and ends a session with no error dialog."
+covers = ["B4"]
+after = [3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Equivalence harness: case discovery and reference runs"
+description = "Adds a Go test harness exposing equivalence.Cases(dir) and Case.RunReference(ctx) ([]service.MessageBatch, error), which discovers testdata/equivalence/<name>/pipeline.yaml and runs each pipeline's own input (for example generate) through a plain StreamBuilder with no debugger, collecting the output batches. It ships with one generate + mapping case. epic-tracer adds input.snapshot.json / expected.snapshot.json (AD-11), the debugger run and the comparison on top of this interface."
+verify = "`task ci` lists the discovered cases, and the sample case's reference run returns the expected number of output messages."
+covers = ["B5"]
+after = [2]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 6
+type = "spike"
+title = "components/all link: size, CGO and license timing"
+description = "Measures the entry-1 rpcn-debug binary (size, and whether CGO_ENABLED=0 builds and which components need CGO). In a nested spike/go.mod module (not linted), it checks whether processor_resources with an enterprise component are built during Build() before public/license.StoreCustomLicenseBytes can apply a license. The answers go to the spine's Open Questions through bmad-architecture, then the spike folder is deleted."
+verify = "The spine's Open Questions rows for binary size/CGO and license timing hold measured answers, and no spike/ folder remains in the repo."
+covers = ["B6"]
+after = [1]
+hitl = false
+risk = "medium"
+unknown = "Is a Redpanda enterprise or trial license available for the timing test? Without one the spike only records how enterprise components fail."
+
+[[entry]]
+id = 7
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1-6; scope pushed out of another entry becomes a new entry."
+verify = "`task ci` is green with no behaviour change."
+covers = []
+after = [1, 2, 3, 4, 5, 6]
+hitl = false
+risk = "low"

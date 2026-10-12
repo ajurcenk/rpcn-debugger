@@ -1,0 +1,56 @@
+# initiative-rpcn-debugger: epics in build order
+
+[[epic]]
+id = 1
+slug = "epic-platform-baseline"
+title = "Repo, task runner and test harness ready"
+covers = []
+
+[[epic]]
+id = 2
+slug = "epic-tracer"
+title = "Step a captured batch through a pipeline in VSCode"
+covers = ["CAP-1", "CAP-3", "CAP-4", "CAP-11", "CAP-12"]
+after = [{ epic = 1, needs = "scaffold, task ci, the equivalence harness and the DAP test client" }]
+
+[[epic]]
+id = 3
+slug = "epic-safe-against-real-systems"
+title = "Debug against real systems without harming them"
+covers = ["CAP-2", "CAP-11"]
+after = [{ epic = 1, needs = "the Redpanda testcontainers job (package test/integration, build tag integration)" }, { epic = 2, needs = "the rewrite capture config, capture and rpcn_debug_sink" }]
+
+[[epic]]
+id = 4
+slug = "epic-concurrency"
+title = "Concurrent branches as threads"
+covers = ["CAP-9", "CAP-3", "CAP-12"]
+after = [{ epic = 2, needs = "Session.Arrive, frames in ctx and the pause gate" }, { epic = 3, needs = "no parallel edits to the rewrite and the stepper" }]
+
+[[epic]]
+id = 5
+slug = "epic-breakpoints-and-evaluation"
+title = "Stop where it matters and ask Bloblang questions"
+covers = ["CAP-5", "CAP-6", "CAP-9"]
+after = [{ epic = 4, needs = "per-thread step state" }]
+
+[[epic]]
+id = 6
+slug = "epic-bloblang-statement-stepping"
+title = "Step inside a mapping"
+covers = ["CAP-7"]
+after = [{ epic = 5, needs = "the evaluator and the breakpoint resolver" }]
+
+[[epic]]
+id = 7
+slug = "epic-edit-restart-replay"
+title = "Change the message, change the config, try again"
+covers = ["CAP-8", "CAP-10"]
+after = [{ epic = 3, needs = "input classes that replay must bypass" }, { epic = 5, needs = "the breakpoint resolver" }, { epic = 6, needs = "statement lines for re-resolution" }]
+
+[[epic]]
+id = 8
+slug = "epic-local-release"
+title = "Install and use it on any machine"
+covers = ["CAP-1", "CAP-13"]
+after = [{ epic = 1, needs = "the components/all link spike results" }, { epic = 3, needs = "the safety behaviour the demo exercises" }, { epic = 6, needs = "statement stepping for the demo" }, { epic = 7, needs = "Restart for the demo" }]
