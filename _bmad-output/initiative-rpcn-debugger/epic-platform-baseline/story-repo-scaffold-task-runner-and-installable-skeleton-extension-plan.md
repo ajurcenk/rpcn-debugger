@@ -95,6 +95,8 @@ The project is greenfield: there is no source code.
 - The debugger contribution adds a minimal `initialConfigurations` entry (`type`, `request`, `name` only, no launch keys). Without it, VS Code lists a debugger under "create a launch.json" only when a YAML editor is active. It carries no schema or defaults, so AD-12 still holds; epic-tracer's generator may take it over.
 - The local VS Code is 1.103.2, below `engines.vscode ^1.120.0`, so `code --install-extension` refuses the `.vsix` here ("not compatible with VS Code '1.103.2'"). The manual picker check needs VS Code 1.120+.
 
+- 2026-10-12 acceptance: the user upgraded VS Code to 1.141.0, and the .vsix installed into their editor. In Run and Debug, "create a launch.json" offered "Redpanda Connect" and generated `{type: redpanda-connect, request: launch, name: Debug pipeline}` (user screenshot). AC 2 is met.
+
 ## Plan Change Log
 
 ## Review Triage Log
