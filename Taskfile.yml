@@ -19,6 +19,22 @@ tasks:
     cmds:
       - go build -ldflags "{{.LDFLAGS}}" -o bin/rpcn-debug ./cmd/rpcn-debug
 
+  lint:go:
+    desc: Lint the Go code (AD-2 public API only, AD-15 stdout belongs to DAP)
+    cmds:
+      - go tool -modfile=tools/go.mod golangci-lint run ./...
+
+  lint:gomod:
+    desc: Fail on replace directives for benthos/connect (AD-2)
+    cmds:
+      - |
+        modjson=$(go mod edit -json) || { echo "lint:gomod: cannot read go.mod" >&2; exit 1; }
+        bad=$(printf '%s' "$modjson" | jq -r '.Replace // [] | .[].Old.Path | select(test("^github\\.com/redpanda-data/(benthos|connect)(/|$)"))') || exit 1
+        if [ -n "$bad" ]; then
+          for p in $bad; do echo "AD-2: replace directive for $p is forbidden" >&2; done
+          exit 1
+        fi
+
   test:go:
     desc: Run the Go tests
     cmds:
@@ -43,6 +59,8 @@ tasks:
     desc: Build, test and package everything, non-interactively
     cmds:
       - task: build:go
+      - task: lint:go
+      - task: lint:gomod
       - task: test:go
       - task: build:ext
       - task: package:ext

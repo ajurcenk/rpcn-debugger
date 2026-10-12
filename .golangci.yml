@@ -1,0 +1,34 @@
+# golangci-lint v2 config. Run through `task lint:go` (pinned in tools/go.mod).
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - forbidigo
+  settings:
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^fmt\.Print.*$
+          msg: "AD-15: stdout belongs to DAP; log through the slog handler instead"
+        - pattern: ^os\.Stdout$
+          msg: "AD-15: stdout belongs to DAP; only the DAP encoder writes to Serve's out"
+    depguard:
+      rules:
+        public-api-only:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: github.com/redpanda-data
+              desc: "AD-2: only the public API of benthos/connect may be imported"
+          allow:
+            - github.com/redpanda-data/benthos/v4/public
+            - github.com/redpanda-data/connect/v4/public
+  exclusions:
+    rules:
+      # AD-15 binds the debugger packages; cmd/rpcn-debug prints --version on purpose.
+      - path-except: ^debugger/
+        linters:
+          - forbidigo

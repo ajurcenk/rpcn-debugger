@@ -18,6 +18,7 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 - Go 1.26 (the `go 1.26.6` toolchain is fetched automatically if needed)
 - Node.js 22 or later (required by `@vscode/vsce` 4)
 - [Task](https://taskfile.dev)
+- [jq](https://jqlang.org), used by `task lint:gomod`
 - Docker (used by integration tests in later milestones)
 - VS Code 1.120 or later, to install the extension
 
@@ -29,7 +30,14 @@ The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries a
 task ci
 ```
 
-This builds `bin/rpcn-debug`, runs the Go tests, compiles the extension and packages it as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task test:go`, `task build:ext` and `task package:ext`.
+This builds `bin/rpcn-debug`, lints the Go code, runs the Go tests, compiles the extension and packages it as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task build:ext` and `task package:ext`.
+
+The lint gates enforce two architecture rules:
+
+- `debugger/...` never writes to stdout, which belongs to DAP (forbidigo).
+- Only the `public/...` packages of benthos and connect are imported, and go.mod has no `replace` for them (depguard and `lint:gomod`).
+
+golangci-lint is pinned in `tools/go.mod` and runs as `go tool -modfile=tools/go.mod golangci-lint`, so you don't need to install it.
 
 The first build compiles every Connect component and takes a few minutes.
 
