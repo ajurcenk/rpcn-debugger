@@ -3,7 +3,7 @@ title: 'Repo scaffold, task runner and installable skeleton extension'
 type: 'chore'
 ticket: '1'
 created: '2026-10-12'
-status: 'built'
+status: done
 baseline_revision: 'd6791c6a493eb35ebb123c361406fc13fdd7c34d'
 route: 'full'
 route_source: 'auto'
