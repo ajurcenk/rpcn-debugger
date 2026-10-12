@@ -42,3 +42,4 @@ Not `output: real`/`none`, input classes or the group override (epic-safe-agains
 - Waits on epic-platform-baseline because: it needs the scaffold, `task ci`, the equivalence harness and the DAP test client.
 - Decision: E2 was split by outcome into tracer / safe against real systems / concurrency (user, 2026-10-09).
 - Decision: this epic owns the pause gate, the single root thread and ForkThread/ExitThread; epic-concurrency adds per-thread step state and the `concurrent: true` fork.
+- Handoff from 1.1: vscode/package.json has a hand-written `initialConfigurations` (type/request/name only). The launch-schema generator story decides whether Go emits it, so the AD-12 check doesn't flag it as drift.

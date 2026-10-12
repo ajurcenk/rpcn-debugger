@@ -3,14 +3,14 @@ title: 'Repo scaffold, task runner and installable skeleton extension'
 type: 'chore'
 ticket: '1'
 created: '2026-10-12'
-status: 'in-progress'
+status: 'built'
 baseline_revision: 'd6791c6a493eb35ebb123c361406fc13fdd7c34d'
 route: 'full'
 route_source: 'auto'
 risk: 'medium'
-review: ''
-review_source: ''
-lenses_ran: []
+review: 'quick'
+review_source: 'pinned'
+lenses_ran: ['quick']
 review_loop_iteration: 0
 context:
   - '{project-root}/_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md'
@@ -98,6 +98,14 @@ The project is greenfield: there is no source code.
 ## Plan Change Log
 
 ## Review Triage Log
+
+Pass 1 (quick): high 1, medium 1, low 0, false 0, maybe-false 1.
+
+| # | Finding | Verdict | Route | Evidence |
+|---|---|---|---|---|
+| 1 | CLAUDE.md still says there is no code, build, tests or git history | medium | defer | Confirmed: CLAUDE.md:7 says this, while the diff adds a Go module, a Taskfile, tests, an extension and git history. Agents reading it get a wrong picture. The fix edits an agent-context file, so it is deferred and offered to the user |
+| 2 | `initialConfigurations` in vscode/package.json conflicts with AD-12 (Go owns the launch schema and defaults) | maybe-false | reject (low if true) | The block holds only VS Code's standard `type`/`request`/`name`, none of the LaunchConfig keys, defaults or enums that AD-12 binds. Drift only happens if epic-tracer's schema check compares this block, which isn't designed yet. To settle: the epic-tracer generator story decides whether it emits `initialConfigurations`. A handoff note was added to epic-tracer's Notes |
+| 3 | AC 2 (debugger offered in "create a launch.json") was never verified: local VS Code is 1.103.2, and `engines.vscode` is `^1.120.0` | high | intent_gap | Confirmed by the Implementation Notes: the install is refused locally. The root cause is the frozen `engines.vscode ^1.120.0` against the user's installed VS Code. Settling it needs a human decision (update VS Code, or lower the minimum). The code itself is correct. **Resolved 2026-10-12:** the user will use VS Code 1.141.0, so the minimum `^1.120.0` stands and no code changes. Verified: the .vsix installs into a portable VS Code 1.141.0 (isolated user-data and extensions dirs) as ajurcenk.pipeline-debugger-for-redpanda-connect@0.0.1, with debugger redpanda-connect / "Redpanda Connect". The picker check in the GUI is left to the user |
 
 ## Design Notes
 
