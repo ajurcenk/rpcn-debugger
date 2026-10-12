@@ -3,8 +3,8 @@ title: 'Repo scaffold, task runner and installable skeleton extension'
 type: 'chore'
 ticket: '1'
 created: '2026-10-12'
-status: 'ready-for-dev'
-baseline_revision: ''
+status: 'in-progress'
+baseline_revision: 'd6791c6a493eb35ebb123c361406fc13fdd7c34d'
 route: 'full'
 route_source: 'auto'
 risk: 'medium'
@@ -69,15 +69,15 @@ The project is greenfield: there is no source code.
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] repo root: `git init -b main`; `git remote add origin git@github.com:ajurcenk/rpcn-debugger.git`; commit the existing planning and BMAD files as the baseline commit, and record its full hash in `baseline_revision`. This gives a revision to diff against.
-- [ ] `.gitignore`: ignore `bin/`, `vscode/node_modules/`, `vscode/out/`, `vscode/dist/`, `*.vsix` and `_bmad/render/`. Build outputs and render cache stay out of git.
-- [ ] `go.mod` / `go.sum`: the module, go 1.26.6, the connect/benthos pins via `go get` and `go mod tidy`. AD-2 pins.
-- [ ] `debugger/doc.go` and `debugger/{core,engine,rewrite,blobl,dap}/doc.go`: a package comment each, naming its unit from the spine. This is the Structural Seed layout.
-- [ ] `cmd/rpcn-debug/main.go`: flags with `--version`. Builds the env via `schema.Standard(version, date).Environment()` and blank-imports `components/all`. The no-args stub goes to stderr, exit 1. This is the AD-1 stock binary.
-- [ ] `cmd/rpcn-debug/version.go`, `version_test.go`: read the connect/benthos versions from `runtime/debug.ReadBuildInfo`, with `version`/`date` set by ldflags. The test asserts that the connect version reported is v4.112.0.
-- [ ] `vscode/package.json`, `tsconfig.json`, `src/extension.ts`, `LICENSE`, `README.md`, `.vscodeignore`: the skeleton extension. `contributes.debuggers` has type/label/`languages: ["yaml"]`; `activate` is a no-op. B7.
-- [ ] `Taskfile.yml`: the tasks `build:go` (to `bin/rpcn-debug`, with ldflags), `test:go`, `build:ext` (`npm ci`, `tsc`), `package:ext` (`vsce package --no-dependencies -o dist/`), and `ci` (all of these in order). This is the `task ci` contract for 1.2 to 1.5.
-- [ ] `LICENSE` (MIT, ajurcenk, 2026) and `README.md`: prerequisites (Go 1.26, Node ≥ 22, Task, Docker, plus any CGO or system libraries that `components/all` turns out to need), `task ci`, and how to install the `.vsix`.
+- [x] repo root: `git init -b main`; `git remote add origin git@github.com:ajurcenk/rpcn-debugger.git`; commit the existing planning and BMAD files as the baseline commit, and record its full hash in `baseline_revision`. This gives a revision to diff against.
+- [x] `.gitignore`: ignore `bin/`, `vscode/node_modules/`, `vscode/out/`, `vscode/dist/`, `*.vsix` and `_bmad/render/`. Build outputs and render cache stay out of git.
+- [x] `go.mod` / `go.sum`: the module, go 1.26.6, the connect/benthos pins via `go get` and `go mod tidy`. AD-2 pins.
+- [x] `debugger/doc.go` and `debugger/{core,engine,rewrite,blobl,dap}/doc.go`: a package comment each, naming its unit from the spine. This is the Structural Seed layout.
+- [x] `cmd/rpcn-debug/main.go`: flags with `--version`. Builds the env via `schema.Standard(version, date).Environment()` and blank-imports `components/all`. The no-args stub goes to stderr, exit 1. This is the AD-1 stock binary.
+- [x] `cmd/rpcn-debug/version.go`, `version_test.go`: read the connect/benthos versions from `runtime/debug.ReadBuildInfo`, with `version`/`date` set by ldflags. The test asserts that the connect version reported is v4.112.0.
+- [x] `vscode/package.json`, `tsconfig.json`, `src/extension.ts`, `LICENSE`, `README.md`, `.vscodeignore`: the skeleton extension. `contributes.debuggers` has type/label/`languages: ["yaml"]`; `activate` is a no-op. B7.
+- [x] `Taskfile.yml`: the tasks `build:go` (to `bin/rpcn-debug`, with ldflags), `test:go`, `build:ext` (`npm ci`, `tsc`), `package:ext` (`vsce package --no-dependencies -o dist/`), and `ci` (all of these in order). This is the `task ci` contract for 1.2 to 1.5.
+- [x] `LICENSE` (MIT, ajurcenk, 2026) and `README.md`: prerequisites (Go 1.26, Node ≥ 22, Task, Docker, plus any CGO or system libraries that `components/all` turns out to need), `task ci`, and how to install the `.vsix`.
 
 **Acceptance Criteria:**
 - Given a fresh clone, when `task ci` runs, then it exits 0 and a single `vscode/dist/pipeline-debugger-for-redpanda-connect-*.vsix` exists.
@@ -86,6 +86,14 @@ The project is greenfield: there is no source code.
 - Given the repo, when `git remote -v` runs, then `origin` is the user's GitHub remote, and nothing has been pushed.
 
 ## Implementation Notes
+
+- Git init, remote and baseline commit already existed at `d6791c6` when implementation started; nothing was redone.
+- `go mod tidy` initially failed with an ambiguous import of `github.com/containerd/containerd/api/services/content/v1` (containerd v1.7.12 from connect vs `containerd/api` v1.11.1 from iceberg-go's tests). `go get github.com/containerd/containerd@v1.7.36` (which splits `api/` out) resolves it; tidy then drops containerd from `go.mod` entirely, and plain `go mod tidy` is clean. containerd isn't linked into the binary. No `replace`, no vendoring.
+- Connect's own `replace github.com/99designs/keyring => github.com/Jeffail/keyring` is not inherited by consumers; keyring isn't linked into `rpcn-debug`, so it doesn't matter today.
+- `CGO_ENABLED=0` is set for all Taskfile tasks; the full build succeeds pure Go (binary: ~467 MB unstripped, ~338 MB with the Taskfile's `-s -w`; a cold build took ~2m20s here).
+- `vsce` requires `activationEvents` when `main` is set, so the manifest declares `onDebugResolve:redpanda-connect`.
+- The debugger contribution adds a minimal `initialConfigurations` entry (`type`, `request`, `name` only, no launch keys). Without it, VS Code lists a debugger under "create a launch.json" only when a YAML editor is active. It carries no schema or defaults, so AD-12 still holds; epic-tracer's generator may take it over.
+- The local VS Code is 1.103.2, below `engines.vscode ^1.120.0`, so `code --install-extension` refuses the `.vsix` here ("not compatible with VS Code '1.103.2'"). The manual picker check needs VS Code 1.120+.
 
 ## Plan Change Log
 

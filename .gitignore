@@ -1,0 +1,9 @@
+# Build outputs
+bin/
+vscode/node_modules/
+vscode/out/
+vscode/dist/
+*.vsix
+
+# BMAD render cache
+_bmad/render/

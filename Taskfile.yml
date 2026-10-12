@@ -1,0 +1,48 @@
+# https://taskfile.dev
+version: '3'
+
+env:
+  # The stock binary is pure Go: the only CGO components in Connect v4.112.0
+  # sit behind the x_benthos_extra build tag, which is never set.
+  CGO_ENABLED: '0'
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  DATE:
+    sh: date -u +%Y-%m-%dT%H:%M:%SZ
+  LDFLAGS: -s -w -X main.version={{.VERSION}} -X main.date={{.DATE}}
+
+tasks:
+  build:go:
+    desc: Build the stock rpcn-debug binary into bin/
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/rpcn-debug ./cmd/rpcn-debug
+
+  test:go:
+    desc: Run the Go tests
+    cmds:
+      - go test ./...
+
+  build:ext:
+    desc: Install the extension's npm dependencies and compile it
+    dir: vscode
+    cmds:
+      - npm ci --no-audit --no-fund
+      - npx --no-install tsc -p ./
+
+  package:ext:
+    desc: Package the extension as a .vsix into vscode/dist/
+    dir: vscode
+    cmds:
+      - rm -rf dist
+      - mkdir -p dist
+      - npx --no-install vsce package --no-dependencies -o dist/
+
+  ci:
+    desc: Build, test and package everything, non-interactively
+    cmds:
+      - task: build:go
+      - task: test:go
+      - task: build:ext
+      - task: package:ext

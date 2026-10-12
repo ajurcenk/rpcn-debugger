@@ -1,0 +1,49 @@
+{
+  "name": "pipeline-debugger-for-redpanda-connect",
+  "displayName": "Pipeline Debugger for Redpanda Connect",
+  "description": "Step a captured batch through a Redpanda Connect pipeline in the VS Code debugger.",
+  "version": "0.0.1",
+  "publisher": "ajurcenk",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ajurcenk/rpcn-debugger.git"
+  },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebugResolve:redpanda-connect"
+  ],
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "redpanda-connect",
+        "label": "Redpanda Connect",
+        "languages": [
+          "yaml"
+        ],
+        "initialConfigurations": [
+          {
+            "type": "redpanda-connect",
+            "request": "launch",
+            "name": "Debug pipeline"
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package --no-dependencies -o dist/"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.120.0",
+    "@vscode/vsce": "4.0.0",
+    "typescript": "6.0.3"
+  }
+}
