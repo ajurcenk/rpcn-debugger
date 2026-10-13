@@ -2,7 +2,8 @@
 // thin binary (AD-1): it builds the standard Connect environment with every
 // component compiled in and hands it to the debugger package.
 //
-// stdout belongs to DAP (AD-15): nothing but the --version output is ever
+// stdout belongs to DAP (AD-15): with no arguments the binary serves DAP over
+// stdin/stdout, and nothing but the DAP stream or the --version output is ever
 // written to it.
 package main
 
@@ -15,16 +16,18 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 	"github.com/redpanda-data/connect/v4/public/schema"
 
+	"github.com/ajurcenk/rpcn-debugger/debugger"
+
 	_ "github.com/redpanda-data/connect/v4/public/components/all"
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
 // run executes the command and returns its exit code. stdout receives only
-// the --version output.
-func run(args []string, stdout, stderr io.Writer) int {
+// the DAP stream or the --version output.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("rpcn-debug", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	showVersion := fs.Bool("version", false, "print the version and exit")
@@ -41,11 +44,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	env := standardEnvironment()
-	_ = env // handed to debugger.Serve once it exists (entry 1.4).
-
-	_, _ = fmt.Fprintln(stderr, "rpcn-debug: the DAP server is not implemented yet")
-	return 1
+	if err := debugger.Serve(standardEnvironment(), stdin, stdout); err != nil {
+		_, _ = fmt.Fprintf(stderr, "rpcn-debug: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // standardEnvironment builds the stock Connect environment (AD-1).

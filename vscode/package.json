@@ -20,6 +20,17 @@
     "onDebugResolve:redpanda-connect"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Redpanda Connect Debugger",
+      "properties": {
+        "rpcnDebug.binaryPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Absolute path to the `rpcn-debug` binary that runs debug sessions, for example `<repo>/bin/rpcn-debug`. Machine-scoped, so a workspace can't override it."
+        }
+      }
+    },
     "debuggers": [
       {
         "type": "redpanda-connect",
@@ -39,10 +50,13 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "package": "vsce package --no-dependencies -o dist/"
+    "package": "vsce package --no-dependencies -o dist/",
+    "test": "tsc -p ./ && node --test \"out/test/**/*.test.js\""
   },
   "devDependencies": {
+    "@types/node": "22.20.5",
     "@types/vscode": "1.120.0",
+    "@vscode/debugadapter-testsupport": "1.68.0",
     "@vscode/vsce": "4.0.0",
     "typescript": "6.0.3"
   }

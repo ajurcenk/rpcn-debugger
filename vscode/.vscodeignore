@@ -4,3 +4,4 @@ dist/**
 out/**/*.map
 tsconfig.json
 **/*.ts
+out/test/**

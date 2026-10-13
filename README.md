@@ -2,7 +2,7 @@
 
 A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-connect/) pipelines in VS Code. It captures one batch from a pipeline's input and steps it through the processors over the Debug Adapter Protocol.
 
-> **Status: skeleton.** The repo builds a stock `rpcn-debug` binary and an installable extension that registers the `Redpanda Connect` debugger. The DAP server isn't implemented yet, so a debug session can't start.
+> **Status: skeleton.** The repo builds a stock `rpcn-debug` binary and an installable extension that registers the `Redpanda Connect` debugger. The DAP server is a seed: it answers `initialize` and `disconnect`, and a launch ends at once, so a debug session starts and ends without stepping anything yet.
 
 ## Layout
 
@@ -30,7 +30,9 @@ The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries a
 task ci
 ```
 
-This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit and integration tests, compiles the extension and packages it as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:integration`, `task build:ext` and `task package:ext`.
+This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit and integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
+
+`task test:ext` starts the binary named by `RPCN_DEBUG_BIN` (default `../bin/rpcn-debug`, relative to `vscode/`), so run `task build:go` and `task build:ext` first.
 
 The lint gates enforce two architecture rules:
 
@@ -53,6 +55,14 @@ code --install-extension vscode/dist/pipeline-debugger-for-redpanda-connect-*.vs
 ```
 
 Or, in VS Code, run **Extensions: Install from VSIX...** and pick the file. "Redpanda Connect" then appears in the debugger list under **Run and Debug > create a launch.json file**.
+
+The extension doesn't bundle the binary yet. Point the `rpcnDebug.binaryPath` setting at the one you built, as an absolute path to `bin/rpcn-debug` in this repo. Set it in your user settings (**Preferences: Open User Settings (JSON)**):
+
+```json
+"rpcnDebug.binaryPath": "/path/to/rpcn-debugger/bin/rpcn-debug"
+```
+
+The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't change which binary VS Code runs. If it is unset, starting a session shows an error asking you to set it. With it set, pressing F5 on the `Debug pipeline` configuration starts a session that ends at once.
 
 ## License
 

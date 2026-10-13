@@ -60,6 +60,15 @@ tasks:
       - npm ci --no-audit --no-fund
       - npx --no-install tsc -p ./
 
+  test:ext:
+    desc: Run the extension's DAP test against the built rpcn-debug binary (needs build:go and build:ext)
+    dir: vscode
+    env:
+      # Relative to vscode/. Override to test another binary.
+      RPCN_DEBUG_BIN: '{{.RPCN_DEBUG_BIN | default "../bin/rpcn-debug"}}'
+    cmds:
+      - npm test
+
   package:ext:
     desc: Package the extension as a .vsix into vscode/dist/
     dir: vscode
@@ -77,4 +86,5 @@ tasks:
       - task: test:go
       - task: test:integration
       - task: build:ext
+      - task: test:ext
       - task: package:ext

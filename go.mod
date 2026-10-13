@@ -3,6 +3,7 @@ module github.com/ajurcenk/rpcn-debugger
 go 1.26.6
 
 require (
+	github.com/google/go-dap v0.12.1-0.20260926015354-7505f696918e
 	github.com/redpanda-data/benthos/v4 v4.81.0
 	github.com/redpanda-data/connect/v4 v4.112.0
 	github.com/testcontainers/testcontainers-go v0.44.0
