@@ -19,7 +19,7 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 - Node.js 22 or later (required by `@vscode/vsce` 4)
 - [Task](https://taskfile.dev)
 - [jq](https://jqlang.org), used by `task lint:gomod`
-- Docker (used by integration tests in later milestones)
+- Docker, used by the integration tests (`task test:integration`), which start a Redpanda container. The task keeps testcontainers' Ryuk reaper on and fails if a test container is left behind
 - VS Code 1.120 or later, to install the extension
 
 The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries are needed.
@@ -30,7 +30,7 @@ The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries a
 task ci
 ```
 
-This builds `bin/rpcn-debug`, lints the Go code, runs the Go tests, compiles the extension and packages it as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task build:ext` and `task package:ext`.
+This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit and integration tests, compiles the extension and packages it as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:integration`, `task build:ext` and `task package:ext`.
 
 The lint gates enforce two architecture rules:
 

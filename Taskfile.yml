@@ -40,6 +40,19 @@ tasks:
     cmds:
       - go test ./...
 
+  test:integration:
+    desc: Run the integration tests against Docker containers (needs Docker)
+    env:
+      # Ryuk removes the containers if the test binary dies before t.Cleanup
+      # runs, so it stays on. It exits 1s after the test disconnects.
+      TESTCONTAINERS_RYUK_DISABLED: 'false'
+      TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT: 1s
+    cmds:
+      - go test -tags integration -count=1 -timeout 10m ./test/integration/...
+      - |
+        left=$(docker ps -aq --filter label=rpcn-debugger.test=integration) || exit 1
+        if [ -n "$left" ]; then echo "test:integration: containers left behind: $left" >&2; exit 1; fi
+
   build:ext:
     desc: Install the extension's npm dependencies and compile it
     dir: vscode
@@ -62,5 +75,6 @@ tasks:
       - task: lint:go
       - task: lint:gomod
       - task: test:go
+      - task: test:integration
       - task: build:ext
       - task: package:ext

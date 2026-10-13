@@ -1,6 +1,11 @@
 # golangci-lint v2 config. Run through `task lint:go` (pinned in tools/go.mod).
 version: "2"
 
+run:
+  # Lint the integration tests too.
+  build-tags:
+    - integration
+
 linters:
   default: none
   enable:
