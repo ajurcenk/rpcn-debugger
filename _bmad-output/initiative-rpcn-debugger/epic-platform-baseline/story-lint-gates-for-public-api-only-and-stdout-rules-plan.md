@@ -3,7 +3,7 @@ title: 'Lint gates for public-API-only and stdout rules'
 type: 'chore'
 ticket: '2'
 created: '2026-10-12'
-status: 'built'
+status: done
 baseline_revision: 'b0c12c09eaf404edca22347295c5eb08e61ee7ab'
 route: 'oneshot'
 route_source: 'auto'
