@@ -7,3 +7,6 @@ vscode/dist/
 
 # BMAD render cache
 _bmad/render/
+
+# Editor settings (per developer)
+.vscode/

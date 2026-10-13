@@ -3,7 +3,7 @@ title: 'Redpanda container integration-test job'
 type: 'chore'
 ticket: '3'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '48151198777e2523f8f1862a730380f0c433af58'
 route: 'oneshot'
 route_source: 'auto'

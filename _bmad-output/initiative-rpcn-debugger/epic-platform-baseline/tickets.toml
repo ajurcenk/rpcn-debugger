@@ -66,7 +66,7 @@ covers = ["B6"]
 after = [1]
 hitl = false
 risk = "medium"
-unknown = "Is a Redpanda enterprise or trial license available for the timing test? Without one the spike only records how enterprise components fail."
+notes = ["Decision: a Redpanda enterprise license is available locally at /etc/redpanda/redpanda.license (user, 2026-10-13). The spike reads it from that path at run time; the license contents are never copied into the repo, committed, or put in launch.json."]
 
 [[entry]]
 id = 7

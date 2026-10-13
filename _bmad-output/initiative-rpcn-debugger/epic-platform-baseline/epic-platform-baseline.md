@@ -57,4 +57,4 @@ Platform baseline: scaffold, task runner, test tooling. No debugger behaviour.
 - Decision: entries 2, 3 and 4 are chained because they share the Taskfile and go.mod; 5 and 6 can run alongside them (2026-10-12).
 - Decision: MIT licence (user, 2026-10-12).
 - Decision: the breakdown was approved (user, 2026-10-12).
-- Unknown: whether a Redpanda enterprise or trial license is available for spike 6.
+- Decision: a Redpanda enterprise license is available locally at `/etc/redpanda/redpanda.license` for spike 6. It is read from that path and never committed (user, 2026-10-13).
