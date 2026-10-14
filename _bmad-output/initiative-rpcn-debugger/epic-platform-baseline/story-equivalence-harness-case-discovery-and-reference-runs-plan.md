@@ -3,7 +3,7 @@ title: 'Equivalence harness: case discovery and reference runs'
 type: 'chore'
 ticket: '5'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: 'f0540587a484eaabaf6374f7c34173131693b46d'
 route: 'full'
 route_source: 'auto'
