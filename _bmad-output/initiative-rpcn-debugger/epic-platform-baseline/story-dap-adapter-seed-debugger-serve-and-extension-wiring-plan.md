@@ -3,7 +3,7 @@ title: 'DAP adapter seed, debugger.Serve and extension wiring'
 type: 'feature'
 ticket: '4'
 created: '2026-10-13'
-status: 'built'
+status: done
 baseline_revision: '9fdb975f532b7b0417550b1ecface50ded071814'
 route: 'full'
 route_source: 'auto'
@@ -100,6 +100,8 @@ context:
 - `cmd/rpcn-debug/version_test.go` parses the DAP frames by hand, so no go-dap import exists outside `debugger/dap`.
 
 - Matrix audit (orchestrator): the "binaryPath unset" row had no test. The setting check moved into `vscode/src/binaryPath.ts` (no `vscode` import) and is tested by `src/test/binaryPath.test.ts` under `node --test`; `extension.ts` calls it.
+
+- 2026-10-14 acceptance: the user installed the .vsix in VS Code 1.141.0, set `rpcnDebug.binaryPath` in user settings, and pressed F5 on `Debug pipeline`. The session started and ended with no error dialog, which meets AC 2.
 
 ## Review Triage Log
 
