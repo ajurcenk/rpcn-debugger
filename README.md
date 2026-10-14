@@ -11,6 +11,8 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 | `debugger/` | The Go library: the public entry point, and the `core`, `engine`, `rewrite`, `blobl` and `dap` packages |
 | `cmd/rpcn-debug/` | The stock binary: every Connect component, built on the library |
 | `vscode/` | The VS Code extension |
+| `test/equivalence/` | The equivalence harness: discovers the corpus cases and runs each pipeline without the debugger |
+| `testdata/equivalence/` | The equivalence corpus: one directory per case, `<name>/pipeline.yaml` |
 | `Taskfile.yml` | Build, test and package tasks |
 
 ## Prerequisites
@@ -30,7 +32,9 @@ The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries a
 task ci
 ```
 
-This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit and integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
+This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit tests, the equivalence cases and the integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:equivalence`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
+
+`task test:equivalence` runs every case in `testdata/equivalence/` through its own input and processors, with no debugger, and lists each case as a subtest. To add a case, create `testdata/equivalence/<name>/pipeline.yaml`; its `output` is replaced by a collector, so any output will do.
 
 `task test:ext` starts the binary named by `RPCN_DEBUG_BIN` (default `../bin/rpcn-debug`, relative to `vscode/`), so run `task build:go` and `task build:ext` first.
 

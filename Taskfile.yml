@@ -40,6 +40,11 @@ tasks:
     cmds:
       - go test ./...
 
+  test:equivalence:
+    desc: Run the AD-8 equivalence cases in testdata/equivalence/ (reference runs), listing each case
+    cmds:
+      - go test -count=1 -v -run '^TestCases$' ./test/equivalence/
+
   test:integration:
     desc: Run the integration tests against Docker containers (needs Docker)
     env:
@@ -84,6 +89,7 @@ tasks:
       - task: lint:go
       - task: lint:gomod
       - task: test:go
+      - task: test:equivalence
       - task: test:integration
       - task: build:ext
       - task: test:ext

@@ -1,0 +1,18 @@
+# Sample equivalence case: three generated messages through one mapping.
+input:
+  generate:
+    count: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  # One thread keeps the messages in input order; more may reorder them.
+  threads: 1
+  processors:
+    - mapping: |
+        root.n = this.n
+        root.doubled = this.n * 2
+
+output:
+  drop: {}
