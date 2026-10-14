@@ -7,10 +7,11 @@ paradigm: 'hexagonal (ports & adapters) around an in-process Redpanda Connect en
 scope: 'Redpanda Connect VSCode visual debugger: capture one batch from a pipeline input, step it through the processors (and Bloblang statements), and show the message state in VSCode over DAP'
 status: final
 created: '2026-10-08'
-updated: '2026-10-09'
+updated: '2026-10-14'
 binds: [U-CORE, U-REWRITE, U-STEP, U-BLOBL, U-DAP, U-EXT, U-REL]
 sources:
   - 'analyst handoff + spikes 2026-10-08 (scratchpad/spike: main.go, nested/, blobl/)'
+  - 'spike 1.6, 2026-10-14 (epic-platform-baseline/spike-components-all-link-size-cgo-and-license-timing-plan.md)'
   - '.memlog.md'
   - 'reviews/review-rubric.md, reviews/review-verification.md, reviews/review-adversary.md'
 companions: []
@@ -327,11 +328,11 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 ### AD-22: Secrets and captured data [ADOPTED]
 
 - **Binds:** U-DAP, U-EXT, U-STEP, U-CORE, U-REWRITE
-- **Prevents:** credentials in committed `launch.json`; production data left in the workspace; env vars resolved differently by different units.
+- **Prevents:** credentials in committed `launch.json`; production data left in the workspace; env vars resolved differently by different units; components built before the license is applied; a session hanging on an unlicensed resource.
 - **Rule:**
   - **Credentials in `launch.json`:** `env` values accept `${env:NAME}` references, and `envFile` names a file. `license` accepts only a file path or an env reference, never a literal. The schema says so.
   - **Env resolution:** the engine resolves `${VAR}` in the pipeline through one lookup that the Session builds, in this order: process env, then `envFile`, then `env`. It is set with `StreamBuilder.SetEnvVarLookupFunc`.
-  - **License:** read from `license`, then `REDPANDA_LICENSE`, then `REDPANDA_LICENSE_FILEPATH`. It is applied through `public/license.StoreCustomLicenseBytes`.
+  - **License:** read from `license`, then `REDPANDA_LICENSE`, then `REDPANDA_LICENSE_FILEPATH`, then `/etc/redpanda/redpanda.license`. It is applied with `public/license.StoreCustomLicenseBytes(strm.Resources(), …)` after `Build()` and before `Run()`, on every stream the Session builds. A failure to obtain an enterprise `processor_resources` component is a session error `LICENSE_REQUIRED`, never a silent retry.
   - **Capture files:** written only on `SaveCapture`, with mode `0600`. The first save creates `.rpcn-debug/.gitignore` containing `*`.
   - **Credentials for the input system:** only from the pipeline config. The debugger adds none.
   - **Evaluate** is unrestricted (it's a local development tool), and the docs say so.
@@ -448,8 +449,8 @@ sequenceDiagram
 
 | Question | Blocks | Revisit when |
 | --- | --- | --- |
-| License timing: `processor_resources` are built during `Build()`, possibly before `StoreCustomLicenseBytes` can run | U-REL, enterprise components | First U-REL spike with `components/all` |
+| **Resolved (spike 1.6):** license timing. `Build()` constructs nothing; inputs and processors are built in `Run()`, and `processor_resources` lazily. Applying `StoreCustomLicenseBytes(strm.Resources(), …)` between `Build()` and `Run()` licenses all of them. Without a license, `processor_resources` don't fail `Run()`: each message logs ERROR and retries | U-REL, enterprise components | Closed |
 | Stable message identity across `group_by` reordering, for diffs and tests, without adding metadata that changes the output | U-CORE diffs, webview | Before the message-diff feature |
-| Binary size and CGO needs of `components/all` across OS/arch | U-REL | First release build |
+| **Resolved (spike 1.6):** binary size and CGO. Stripped `rpcn-debug` is 310–346 MB on linux/darwin amd64/arm64 and windows/amd64 (linux/amd64 is 92 MB gzipped). All targets build with `CGO_ENABLED=0`, and only the `tigerbeetle_cdc` input is lost without CGO | U-REL | Closed |
 | Upstream goal (the user mix is confirmed: mostly stock `rpk connect` on laptops) | AD-1 emphasis | If upstream `rpk connect debug` becomes the main channel |
 | Hexagonal ports were taken without stated roadmap priorities | AD-3 port surface | If no second frontend or replay use appears within 3 releases |
