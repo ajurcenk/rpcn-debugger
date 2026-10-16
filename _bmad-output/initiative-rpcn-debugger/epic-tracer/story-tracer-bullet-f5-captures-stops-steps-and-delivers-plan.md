@@ -3,7 +3,7 @@ title: 'Tracer bullet: F5 captures, stops, steps and delivers'
 type: 'feature'
 ticket: '1'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: '1926a78bb88c550e894a8c2cf0af11301090f964'
 route: 'full'
 route_source: 'auto'
@@ -129,6 +129,8 @@ context:
 - **Ending while stopped.** `Arrive` returns `ErrSessionEnded`; the stepper then returns no batches, so nothing reaches the sink. The step stream's producer call uses its own context: abandoning the transaction on ctx end stalled `StopWithin` for ~4 s (caught by `TestServeTracerSample/disconnect`).
 - **Gate scope.** The gate is owned by the Session and shared by every stepper of its debuggee (one session per `Serve`), not a package global.
 - `cwd` is used only to resolve a relative `pipeline`.
+
+- 2026-10-16 acceptance (user): in VS Code 1.141.0 with the installed .vsix, F5 on `testdata/tracer/pipeline.yaml` stopped at the mapping, Variables › Batch showed the message, and Step Over ended the session. AC 1 is met.
 
 ## Review Triage Log
 

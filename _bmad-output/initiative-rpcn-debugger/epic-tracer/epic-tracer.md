@@ -5,6 +5,7 @@ parent: initiative-rpcn-debugger
 covers: [CAP-1, CAP-3, CAP-4, CAP-11, CAP-12]
 after: []
 assignee: ""
+status: in-progress
 risk: high
 ---
 
