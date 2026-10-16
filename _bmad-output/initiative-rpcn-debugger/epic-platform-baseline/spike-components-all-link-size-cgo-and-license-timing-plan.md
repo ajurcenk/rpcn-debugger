@@ -3,7 +3,7 @@ title: 'components/all link: size, CGO and license timing'
 type: 'chore'
 ticket: '6'
 created: '2026-10-14'
-status: 'built'
+status: done
 baseline_revision: '781400f9e4c17a4a6d006397f4bcf69c9f119bbf'
 route: 'oneshot'
 route_source: 'auto'
