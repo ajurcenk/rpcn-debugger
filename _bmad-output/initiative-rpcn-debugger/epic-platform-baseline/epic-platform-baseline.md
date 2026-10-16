@@ -5,7 +5,7 @@ parent: initiative-rpcn-debugger
 covers: []
 after: []
 assignee: ""
-status: in-progress
+status: done
 risk: medium
 ---
 
@@ -58,3 +58,4 @@ Platform baseline: scaffold, task runner, test tooling. No debugger behaviour.
 - Decision: MIT licence (user, 2026-10-12).
 - Decision: the breakdown was approved (user, 2026-10-12).
 - Decision: a Redpanda enterprise license is available locally at `/etc/redpanda/redpanda.license` for spike 6. It is read from that path and never committed (user, 2026-10-13).
+- Closed 2026-10-16 (user): all 7 entries done; Done-when 1–5 met. `task ci` is green, the .vsix F5 check passed in VS Code 1.141.0, spike answers are in the spine, and `main` is pushed to github.com/ajurcenk/rpcn-debugger.
