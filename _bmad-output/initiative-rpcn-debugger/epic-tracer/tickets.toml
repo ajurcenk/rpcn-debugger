@@ -1,0 +1,122 @@
+# epic-tracer: entries in build order. The table order is the build order; ids are permanent.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Tracer bullet: F5 captures, stops, steps and delivers"
+description = "The thinnest path through every layer, for a `generate` + one `mapping` pipeline. The extension passes `pipeline`. The rewrite wraps only `pipeline.processors` in a minimal `rpcn_debug_stepper`. The capture config runs the input with `AddBatchConsumerFunc`, never acks (the consumer returns an error) and stops the input. The stepper calls a minimal `core.Session.Arrive` under the pause gate. The DAP server handles launch, configurationDone, threads, stackTrace, scopes, variables (content only), next and continue. A minimal `rpcn_debug_sink` delivers, then the session terminates."
+verify = "In VS Code, F5 on the sample pipeline stops before the mapping with its line highlighted and the message content shown, and Step Over delivers and ends the session; a TS DAP test drives the same path against `bin/rpcn-debug`."
+covers = ["CAP-1", "CAP-3", "CAP-4", "CAP-11"]
+after = ["1.1", "1.4"]
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Contracts: closed protocol, error registry, Snapshot and Variables tree"
+description = "`debugger/core` gets the full closed AD-3 command/event set (`protocol.go`), the `errors.go` registry with stable DAP numbers, the full AD-11 Snapshot (lossless metadata types, `internal`, `skipped`, optional `bloblang`), and the `LineMap`/`Translate` interfaces (AD-6, AD-16) that entry 5 implements. The DAP server renders Batches › Message › content / metadata / error, with byte metadata shown as text and `__` keys in a collapsed internal scope, and `SetBreakpoints` answers every breakpoint unverified."
+verify = "Unit tests round-trip every metadata type losslessly through Snapshot, and a DAP test shows the Variables tree, the internal scope and unverified breakpoints."
+covers = ["CAP-4"]
+after = [1]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Launch contract: LaunchConfig, generated schema and extension wiring"
+description = "`dap.LaunchConfig` covers the keys this epic serves: `pipeline`, `cwd`, `maxMessages` (default 10), `env` (values accept `${env:NAME}`) and `envFile`. Relative paths resolve against `cwd`, and an unknown key or value is `LAUNCH_INVALID` (AD-12, AD-22). The capture truncates the batch to `maxMessages` (the default comes from LaunchConfig). A Go generator writes `configurationAttributes` into vscode/package.json, and `task ci` fails on drift. This entry decides whether Go also emits `initialConfigurations` (the handoff from 1.1). The extension extends entry 1's `pipeline` fill: it adds only a missing `pipeline` (the active editor) and `cwd` (the workspace folder)."
+verify = "`task ci` fails when package.json and LaunchConfig drift; a DAP test gets `LAUNCH_INVALID` for an unknown key and sees a 12-message input truncated to 10."
+covers = ["CAP-1"]
+after = [2]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Rewrite: step and capture configs for every non-concurrent parent"
+description = "`debugger/rewrite` produces the capture config (the input block only, `input.processors` removed) and the step config. The step config wraps `input`/`pipeline`/`output` processors, `branch`, `switch` cases, `try`, `catch`, `for_each`, `while`, `group_by` groups, non-parallel `retry`, and `processor_resources` lists. Each stepper gets a dense `id` plus `parent`, `mode` (AD-7 table), `strict` and `lines`, and `LineMap` (keyed by stepperId, childIndex) implements entry 2's interface. This entry owns the stepper config spec in `debugger/engine`: the stepper accepts the new fields (entry 7 acts on them). The rewrite also drops `metrics`/`tracer`/`http`/`logger`, rejects `stdin` and redirects `stdout`/`stderr` outputs. It leaves unknown and concurrent parents (`workflow`, `parallel`, `retry` with `parallel: true`) as opaque steps with a warning, wraps nothing below them, and leaves any `processor_resources` entry referenced from inside a concurrent parent unwrapped, with a warning."
+verify = "Golden tests of rewritten YAML and LineMap entries for each wrapped parent, strict mode, `processor_resources`, an unknown parent, a concurrent parent with a nested `branch`, and the stdio rules; the tracer pipeline still runs end to end."
+covers = ["CAP-3", "CAP-12"]
+after = [2]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Session stepping semantics, frames and threads"
+description = "`core.Session` implements the AD-10 stop positions (including `childIndex = n`, reported at the parent's key line), Next/StepIn/StepOut/Continue/Pause with process-wide resumes, one Snapshot per live frame, and the ctx frame-stack key with `ForkThread`/`ExitThread` and a single root thread (AD-9, AD-17). DAP stackTrace shows frames with `repeatLabel` and the YAML line. In this epic, Step In on a `mapping`/`mutation`/`bloblang` processor behaves as Step Over (statement stepping arrives in epic-bloblang-statement-stepping). The stepper's `Arrive` call is updated to the new contract."
+verify = "Session unit tests with a fake stepper cover each step command and stop position, and a DAP test shows a labelled call stack and Pause stopping at the next Arrive."
+covers = ["CAP-3"]
+after = [3, 5]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 4
+type = "story"
+title = "One logging handler and env lookup"
+description = "`Serve` builds the single AD-15 slog handler, sending to stderr and to DAP Output events. It translates engine paths and Bloblang error lines through `Translate` (implemented by entry 5) and is installed on every StreamBuilder the Session builds. The entry settles the Serve log-destination handoff from 1.4/1.7. `${VAR}` resolves through process env, then `envFile`, then `env`, via one lookup the Session builds with `SetEnvVarLookupFunc` (AD-22), using entry 3's LaunchConfig keys."
+verify = "A processor error in a test pipeline appears as a DAP Output event with the user's YAML path, never the rewritten one, and a `${VAR}` set in `env` overrides `envFile` and the process env."
+covers = ["CAP-1"]
+after = [3, 5, 6]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 7
+type = "story"
+title = "Stepper modes, nested parents and ctx propagation"
+description = "`rpcn_debug_stepper` acts on entry 5's config fields. It implements the `all` and `try` modes with strict skip and multi-batch in/out (AD-7), and passes a deep-copied batch at every Arrive (AD-19). It pushes a frame in ctx, forks the root thread when ctx has none, and logs `CTX_LOST` (AD-17). It computes `[msg i/n]`, `[attempt i/max]`, `[loop i]` and `[group i]` labels, takes a `processor_resources` frame's `callSite` from the frame stack (AD-16), and emits AttemptStarted and MessagesSkipped. It also emits the AD-8 time-budget warning. This entry owns the scripted DAP stepping helper that entry 9 reuses."
+verify = "A scripted DAP test per in-scope AD-7 parent reaches every child at its YAML line with the right labels, and a stop inside a `retry` with backoff emits the time-budget warning."
+covers = ["CAP-3", "CAP-12"]
+after = [4]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 8
+type = "story"
+title = "Delivery at rpcn_debug_sink (dry-run)"
+description = "The full dry-run `rpcn_debug_sink` receives batches after `output.processors` with MaxInFlight 1 and no output-level batching. It emits `Delivered{Snapshot}`, which the DAP server prints to the Debug Console as an Output event per batch (content, metadata, error), and logs the output-batching warning when the output configures `batching` (AD-21)."
+verify = "A DAP test sees one Delivered Output event per output batch, including the batches split by `group_by`, and the batching warning when the output configures `batching`."
+covers = ["CAP-11"]
+after = [7]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 9
+type = "story"
+title = "Equivalence corpus and scripted Step Over driver"
+description = "The 1.5 harness gains the debugger-side run, collected at `rpcn_debug_sink` and compared with `RunReference` on content, metadata, errors, batch boundaries and order. It gains a Step Over driver that reuses entry 7's scripted DAP helper. The corpus gets one case per in-scope AD-7 row, strict mode, one CTX_LOST case per parent, a `processor_resources` case and an opaque-parent case."
+verify = "`task ci` runs every case twice, with no pauses and with Step Over at every stop, and both match the reference run."
+covers = ["CAP-12"]
+after = [7, 8, "1.5"]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 10
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1–9; scope pushed out of another entry becomes a new entry."
+verify = "`task ci` is green with no behaviour change."
+covers = []
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 11
+type = "story"
+title = "VS Code acceptance run"
+description = "With the installed `.vsix` and stock `rpcn-debug`, a person walks a demo pipeline that uses every in-scope parent. They check line highlight, repeat labels, the Variables tree and internal scope, Debug Console delivery and the warnings."
+verify = "The user ticks a checklist of the epic's Done when items 1, 2 and 6 in VS Code."
+covers = ["CAP-1", "CAP-3", "CAP-4", "CAP-11"]
+after = [10]
+hitl = true
+risk = "low"

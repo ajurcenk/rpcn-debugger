@@ -38,3 +38,4 @@ The concurrent AD-7 rows only. The 'except at breakpoints' half of CAP-9 is prov
 
 - Waits on epic-tracer because: it needs Session.Arrive, frames in ctx and the gate.
 - Waits on epic-safe-against-real-systems because: both change the rewrite and the stepper, so they must not run in parallel.
+- Handoff from epic-tracer inception (2026-10-16): epic-tracer runs `workflow` branches, `parallel` and `retry` with `parallel: true` as opaque steps with nothing wrapped below them. It also leaves any `processor_resources` entry referenced from inside them unwrapped, with a warning. This epic wraps them and lifts both restrictions.

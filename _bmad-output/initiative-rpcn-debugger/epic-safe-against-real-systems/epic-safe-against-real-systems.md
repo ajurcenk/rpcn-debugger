@@ -21,7 +21,7 @@ A developer can point the debugger at a production topic and leave the productio
 ## Done when
 
 1. Input classes apply (AD-5): side-effecting inputs are refused without `allowSideEffects`, with a warning naming the effect; rejected inputs are refused with a replay hint; unknown inputs are treated as side-effecting.
-2. Consumer-group fields are overridden to `rpcn-debug-<os-user>`, recursing into `broker`/`sequence`, unless `keepConsumerGroup` is set. `metrics`, `tracer`, `http` and `logger` are dropped. In stdio mode `stdin` is rejected and `stdout`/`stderr` outputs are redirected (AD-15).
+2. Consumer-group fields are overridden to `rpcn-debug-<os-user>`, recursing into `broker`/`sequence`, unless `keepConsumerGroup` is set.
 3. `output: real` forwards each batch to the user's output, and `output: none` discards them (AD-21).
 4. The never-ack integration test against a Redpanda container shows no committed offsets for the production or the debug group, and a rerun captures the same messages.
 5. The equivalence corpus is still green.
@@ -41,3 +41,4 @@ Not replay itself (epic-edit-restart-replay). The rejected-input hint names the 
 - Waits on epic-tracer because: it extends the rewrite's capture config, the capture and the sink.
 - Handoff: epic-edit-restart-replay must let a replay session bypass the input-class rejection.
 - Waits on epic-platform-baseline because: the never-ack test goes into its Redpanda job (package test/integration, build tag `integration`, entry 1.3).
+- Decision: dropping `metrics`/`tracer`/`http`/`logger` and the stdio rules (AD-5, AD-15) moved to epic-tracer entry 5; this epic keeps the consumer-group override (user, 2026-10-16).
