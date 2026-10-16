@@ -46,12 +46,11 @@ func TestServe(t *testing.T) {
 			},
 		},
 		{
-			name:  "F5 launch",
+			name:  "launch without pipeline",
 			input: request(1, "initialize") + request(2, "launch") + request(3, "disconnect"),
 			want: []want{
 				{"response", "initialize", 1, true},
-				{"response", "launch", 2, true},
-				{"event", "terminated", 0, false},
+				{"response", "launch", 2, false},
 				{"response", "disconnect", 3, true},
 			},
 		},
@@ -66,9 +65,9 @@ func TestServe(t *testing.T) {
 		},
 		{
 			name:  "unknown request",
-			input: request(1, "threads") + request(2, "noSuchCommand") + request(3, "disconnect"),
+			input: request(1, "stepIn") + request(2, "noSuchCommand") + request(3, "disconnect"),
 			want: []want{
-				{"response", "threads", 1, false},
+				{"response", "stepIn", 1, false},
 				{"response", "noSuchCommand", 2, false},
 				{"response", "disconnect", 3, true},
 			},
@@ -109,7 +108,7 @@ func TestServe(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out, logs bytes.Buffer
 			log := slog.New(slog.NewTextHandler(&logs, nil))
-			err := Serve(strings.NewReader(tc.input), &out, log)
+			err := Serve(strings.NewReader(tc.input), &out, log, newFakeEngine())
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("Serve error = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -160,7 +159,7 @@ func checkMessage(t *testing.T, i int, raw []byte, w want) {
 		t.Errorf("message %d = %s, want command %q request_seq %d success %v",
 			i, raw, w.command, w.requestSeq, w.success)
 	}
-	if !w.success && !strings.Contains(m.Message, w.command) {
+	if !w.success && w.command != "launch" && !strings.Contains(m.Message, w.command) {
 		t.Errorf("message %d: error message %q does not name %q", i, m.Message, w.command)
 	}
 	if w.command == "initialize" {
@@ -168,8 +167,8 @@ func checkMessage(t *testing.T, i int, raw []byte, w want) {
 		if err := json.Unmarshal(m.Body, &caps); err != nil {
 			t.Fatalf("message %d: body %s: %v", i, m.Body, err)
 		}
-		if len(caps) != 0 {
-			t.Errorf("initialize capabilities = %s, want empty", m.Body)
+		if len(caps) != 1 || caps["supportsConfigurationDoneRequest"] != true {
+			t.Errorf("initialize capabilities = %s, want only supportsConfigurationDoneRequest", m.Body)
 		}
 	}
 }

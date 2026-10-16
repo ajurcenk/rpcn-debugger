@@ -1,0 +1,10 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+
+output:
+  drop: {}

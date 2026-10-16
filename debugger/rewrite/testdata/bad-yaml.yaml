@@ -1,0 +1,4 @@
+input:
+  generate:
+    count: 1
+  mapping: : nope

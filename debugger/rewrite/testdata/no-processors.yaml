@@ -1,0 +1,8 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = "x"'
+
+output:
+  drop: {}

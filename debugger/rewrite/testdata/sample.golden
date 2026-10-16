@@ -1,0 +1,18 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: |
+        root.greeting = "hello"
+        root.n = 1
+# resources
+# stepper
+rpcn_debug_stepper:
+    id: 0
+    lines: [13]
+    processors:
+        - mapping: |
+            root = this
+            root.doubled = this.n * 2
+# children
+pipeline.processors[0] line 13

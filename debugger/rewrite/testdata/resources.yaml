@@ -1,0 +1,20 @@
+input:
+  label: in
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"a": 1}'
+
+pipeline:
+  threads: 1
+  processors:
+    - resource: double
+    - log:
+        message: hi
+
+processor_resources:
+  - label: double
+    mapping: 'root.a = this.a * 2'
+
+output:
+  drop: {}

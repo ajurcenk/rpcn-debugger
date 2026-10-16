@@ -1,0 +1,12 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+# stepper
+rpcn_debug_stepper:
+    id: 0
+    lines: []
+    processors: []
+# children

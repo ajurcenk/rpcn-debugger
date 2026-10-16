@@ -2,7 +2,7 @@
 
 A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-connect/) pipelines in VS Code. It captures one batch from a pipeline's input and steps it through the processors over the Debug Adapter Protocol.
 
-> **Status: skeleton.** The repo builds a stock `rpcn-debug` binary and an installable extension that registers the `Redpanda Connect` debugger. The DAP server is a seed: it answers `initialize` and `disconnect`, and a launch ends at once, so a debug session starts and ends without stepping anything yet.
+> **Status: tracer bullet.** A launch captures one batch from the pipeline's input without acknowledging it, stops before the first of `pipeline.processors`, shows the stop's line and each message's content, and on Step Over or Continue runs the batch to the end and terminates. Breakpoints, Step In/Out, nested processors and the input/output processors come later.
 
 ## Layout
 
@@ -13,6 +13,7 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 | `vscode/` | The VS Code extension |
 | `test/equivalence/` | The equivalence harness: discovers the corpus cases and runs each pipeline without the debugger |
 | `testdata/equivalence/` | The equivalence corpus: one directory per case, `<name>/pipeline.yaml` |
+| `testdata/tracer/` | The sample pipeline to try the debugger on |
 | `Taskfile.yml` | Build, test and package tasks |
 
 ## Prerequisites
@@ -66,7 +67,11 @@ The extension doesn't bundle the binary yet. Point the `rpcnDebug.binaryPath` se
 "rpcnDebug.binaryPath": "/path/to/rpcn-debugger/bin/rpcn-debug"
 ```
 
-The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't change which binary VS Code runs. If it is unset, starting a session shows an error asking you to set it. With it set, pressing F5 on the `Debug pipeline` configuration starts a session that ends at once.
+The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't change which binary VS Code runs. If it is unset, starting a session shows an error asking you to set it.
+
+## Try it
+
+Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables**; Step Over ends the session.
 
 ## License
 

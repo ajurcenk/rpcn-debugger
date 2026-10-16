@@ -1,0 +1,1 @@
+error: line 3: the stdin input can't be debugged: stdin carries the debugger's DAP stream

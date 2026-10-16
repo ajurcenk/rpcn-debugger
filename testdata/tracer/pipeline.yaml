@@ -1,0 +1,18 @@
+# Tracer sample: one generated message through one mapping. Open this file
+# in VS Code and press F5: the debugger stops before the mapping.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.greeting = "hello"
+      root.n = 1
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.doubled = this.n * 2
+
+output:
+  drop: {}

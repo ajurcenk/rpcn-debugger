@@ -1,0 +1,7 @@
+input:
+  label: in
+  stdin: {}
+
+pipeline:
+  processors:
+    - mapping: root = this
