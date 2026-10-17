@@ -1,6 +1,7 @@
 package debugger
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -46,7 +47,19 @@ func loadPipeline(path string) (engine.Configs, core.LineMap, error) {
 	}
 	plan, err := rewrite.Rewrite(raw)
 	if err != nil {
+		// Keep the rewrite's Line and UserPath.
+		var ce core.Error
+		if errors.As(err, &ce) {
+			ce.Message = path + ": " + ce.Message
+			return engine.Configs{}, nil, ce
+		}
 		return engine.Configs{}, nil, core.NewError(core.CodePipelineInvalid, "%s: %v", path, err)
 	}
-	return engine.Configs{Input: plan.Input, Resources: plan.Resources, Stepper: plan.Stepper}, plan, nil
+	return engine.Configs{
+		Input:     plan.Input,
+		Resources: plan.Resources,
+		Steppers:  plan.Steppers,
+		Warnings:  plan.Warnings,
+		Strict:    plan.Strict,
+	}, plan, nil
 }

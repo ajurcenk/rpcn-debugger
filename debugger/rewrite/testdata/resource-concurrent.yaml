@@ -1,0 +1,32 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - workflow:
+        branch_resources: [b]
+    - parallel:
+        processors:
+          - resource: r
+    - resource: free
+
+processor_resources:
+  - label: b
+    branch:
+      processors:
+        - resource: via_b
+  - label: r
+    try:
+      - mapping: 'root = this'
+  - label: via_b
+    for_each:
+      - mapping: 'root = this'
+  - label: free
+    catch:
+      - mapping: 'root = this'
+
+output:
+  drop: {}

@@ -1,0 +1,22 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"a": 1}'
+
+pipeline:
+  processors:
+    - resource: enrich
+
+processor_resources:
+  - label: enrich
+    branch:
+      request_map: 'root = this.a'
+      processors:
+        - mapping: 'root = this * 2'
+      result_map: 'root.b = this'
+  - label: plain
+    mapping: 'root = this'
+
+output:
+  drop: {}

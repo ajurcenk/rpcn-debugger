@@ -1,0 +1,39 @@
+# Nested demo: one generated message through input.processors, a branch and
+# a switch inside pipeline.processors, and output.processors. Open this file
+# in VS Code and press F5: the debugger stops before the first
+# input.processors child.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+  processors:
+    - mapping: |
+        root = this
+        root.from_input = true
+
+pipeline:
+  processors:
+    - branch:
+        request_map: root = this.n
+        processors:
+          - mapping: root = this * 10
+        result_map: root.branched = this
+    - switch:
+        - check: this.n == 1
+          processors:
+            - mapping: |
+                root = this
+                root.case = "one"
+        - processors:
+            - mapping: |
+                root = this
+                root.case = "other"
+
+output:
+  processors:
+    - mapping: |
+        root = this
+        root.from_output = true
+  drop: {}

@@ -273,3 +273,109 @@ func checkVariables(t *testing.T, c *wire, frameID int) {
 		t.Errorf("internal = %+v", internal)
 	}
 }
+
+// launchAndStop launches pipeline, starts it and returns the first frame
+// it stops at, failing on any event before the stop other than the
+// expected outputs.
+func launchAndStop(t *testing.T, c *wire, pipeline string, outputs int) (frames []stackFrame, out []string) {
+	t.Helper()
+	c.send("initialize", map[string]any{"adapterID": "redpanda-connect"})
+	c.next("response", "initialize")
+	c.send("launch", map[string]any{"pipeline": pipeline})
+	for range outputs {
+		var body struct {
+			Category string `json:"category"`
+			Output   string `json:"output"`
+		}
+		_ = json.Unmarshal(c.next("event", "output").Body, &body)
+		if body.Category != "console" {
+			t.Errorf("output category = %q, want console", body.Category)
+		}
+		out = append(out, body.Output)
+	}
+	if m := c.next("response", "launch"); !m.Success {
+		t.Fatalf("launch failed: %s", m.Message)
+	}
+	c.next("event", "initialized")
+	c.send("configurationDone", map[string]any{})
+	c.next("response", "configurationDone")
+	c.next("event", "stopped")
+	c.send("stackTrace", map[string]any{"threadId": 1})
+	var st struct {
+		StackFrames []stackFrame `json:"stackFrames"`
+	}
+	_ = json.Unmarshal(c.next("response", "stackTrace").Body, &st)
+	return st.StackFrames, out
+}
+
+type stackFrame struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Line   int    `json:"line"`
+	Source struct {
+		Path string `json:"path"`
+	} `json:"source"`
+}
+
+func continueToEnd(t *testing.T, c *wire) {
+	t.Helper()
+	c.send("continue", map[string]any{"threadId": 1})
+	c.next("response", "continue")
+	c.next("event", "terminated")
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+}
+
+// F5 on the nested demo stops before the first input.processors child,
+// with no warning, and Continue delivers.
+func TestServeNested(t *testing.T) {
+	pipeline, err := filepath.Abs(filepath.Join("..", "testdata", "tracer", "nested.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	frames, _ := launchAndStop(t, c, pipeline, 0)
+	if len(frames) != 1 || frames[0].Line != 12 || frames[0].Source.Path != pipeline {
+		t.Fatalf("stack = %+v, want one frame at %s:12", frames, pipeline)
+	}
+	continueToEnd(t, c)
+}
+
+// A parallel processor is opaque: the launch warns, naming it and its
+// line, and the session still runs.
+func TestServeParallelWarns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "parallel.yaml")
+	src := "input:\n  generate: {count: 1, interval: \"\", mapping: 'root = {}'}\npipeline:\n  processors:\n    - parallel:\n        processors:\n          - mapping: 'root.a = 1'\noutput:\n  drop: {}\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	frames, out := launchAndStop(t, c, path, 1)
+	if !strings.Contains(out[0], "parallel") || !strings.Contains(out[0], "line 5") {
+		t.Errorf("warning = %q, want one naming parallel and line 5", out[0])
+	}
+	if len(frames) != 1 || frames[0].Line != 5 {
+		t.Fatalf("stack = %+v, want one frame at line 5", frames)
+	}
+	continueToEnd(t, c)
+}
+
+// A rewrite error keeps its line through to the DAP error.
+func TestServeStdinInBroker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stdin.yaml")
+	src := "input:\n  broker:\n    inputs:\n      - stdin: {}\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	c.send("initialize", map[string]any{})
+	c.next("response", "initialize")
+	c.send("launch", map[string]any{"pipeline": path})
+	m := c.next("response", "launch")
+	if m.Success || errorID(m) != core.Number(core.CodePipelineInvalid) || !strings.Contains(m.Message, path) ||
+		!strings.Contains(m.Message, "input.broker.inputs[0].stdin, line 4") {
+		t.Errorf("launch = %+v, want PIPELINE_INVALID at input.broker.inputs[0].stdin, line 4", m)
+	}
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+}

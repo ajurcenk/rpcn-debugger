@@ -1,0 +1,72 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [7]
+    processors:
+        - mapping: 'root.from_base = true'
+# stepper 1
+rpcn_debug_stepper:
+    id: 1
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [11, 12]
+    processors:
+        - mapping: 'root.a = 1'
+        - branch:
+            processors:
+                - rpcn_debug_stepper:
+                    id: 2
+                    parent: 1
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [14]
+                    processors:
+                        - mapping: 'root = this'
+# stepper 2
+rpcn_debug_stepper:
+    id: 3
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [33]
+    processors:
+        - branch:
+            processors:
+                - rpcn_debug_stepper:
+                    id: 4
+                    parent: 3
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [36]
+                    processors:
+                        - mapping: 'root.c = 1'
+            request_map: 'root = this'
+            result_map: 'root.b = this'
+# warnings
+# lines
+(0, 0) input.processors[0] line 7
+(0, 1) input.processors line 6
+(1, 0) pipeline.processors[0] line 11
+(1, 1) pipeline.processors[1] line 12
+(1, 2) pipeline.processors line 10
+(2, 0) pipeline.processors[1].branch.processors[0] line 14
+(2, 1) pipeline.processors[1].branch.processors line 13
+(3, 0) output.processors[0] line 33
+(3, 1) output.processors line 32
+(4, 0) output.processors[0].branch.processors[0] line 36
+(4, 1) output.processors[0].branch.processors line 35

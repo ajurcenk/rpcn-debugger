@@ -1,0 +1,14 @@
+x: &m 'root = 2'
+
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - mapping: *m
+
+output:
+  drop: {}

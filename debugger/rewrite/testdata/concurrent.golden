@@ -1,0 +1,34 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9, 10, 16]
+    processors:
+        - mapping: 'root.a = 1'
+        - parallel:
+            cap: 2
+            processors:
+                - branch:
+                    processors:
+                        - mapping: 'root = this'
+        - retry:
+            parallel: true
+            processors:
+                - mapping: 'root.r = 1'
+# warnings
+pipeline.processors[1].parallel (line 10): parallel runs its processors concurrently, so it runs as one step and nothing inside it is stepped
+pipeline.processors[2].retry (line 16): retry with parallel: true runs its processors concurrently, so it runs as one step and nothing inside it is stepped
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors[1] line 10
+(0, 2) pipeline.processors[2] line 16
+(0, 3) pipeline.processors line 8

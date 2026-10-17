@@ -1,0 +1,28 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9, 15]
+    processors:
+        - openai_chat_completion:
+            model: gpt-4o
+            tools:
+                - name: lookup
+                  processors:
+                    - mapping: 'root = this'
+        - mapping: 'root = this'
+# warnings
+pipeline.processors[0].openai_chat_completion (line 9): openai_chat_completion is not a parent processor the debugger knows, so it runs as one step and nothing inside it is stepped
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors[1] line 15
+(0, 2) pipeline.processors line 8

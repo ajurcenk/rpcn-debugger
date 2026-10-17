@@ -1,0 +1,22 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - mapping: 'root.a = 1'
+    - parallel:
+        cap: 2
+        processors:
+          - branch:
+              processors:
+                - mapping: 'root = this'
+    - retry:
+        parallel: true
+        processors:
+          - mapping: 'root.r = 1'
+
+output:
+  drop: {}

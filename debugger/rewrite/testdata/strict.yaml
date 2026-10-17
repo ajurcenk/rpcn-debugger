@@ -1,0 +1,16 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - try:
+        - mapping: 'root.a = 1'
+
+error_handling:
+  strict: true
+
+output:
+  drop: {}

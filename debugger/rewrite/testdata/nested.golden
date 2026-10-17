@@ -1,0 +1,174 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"n": 1}'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9, 14, 20, 23, 26, 28, 32, 36, 40]
+    processors:
+        - branch:
+            request_map: 'root = this.n'
+            processors:
+                - rpcn_debug_stepper:
+                    id: 1
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [12]
+                    processors:
+                        - mapping: 'root = this * 10'
+            result_map: 'root.branched = this'
+        - switch:
+            - check: 'this.n == 1'
+              processors:
+                - rpcn_debug_stepper:
+                    id: 2
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [17]
+                    processors:
+                        - mapping: 'root.case = "one"'
+            - processors:
+                - rpcn_debug_stepper:
+                    id: 3
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [19]
+                    processors:
+                        - mapping: 'root.case = "other"'
+        - try:
+            - rpcn_debug_stepper:
+                id: 4
+                parent: 0
+                mode: try
+                strict: false
+                concurrent: false
+                lines: [21, 22]
+                processors:
+                    - mapping: 'root.tried = true'
+                    - mapping: 'root.tried_again = true'
+        - catch:
+            - rpcn_debug_stepper:
+                id: 5
+                parent: 0
+                mode: all
+                strict: false
+                concurrent: false
+                lines: [24]
+                processors:
+                    - log:
+                        message: 'caught'
+        - for_each:
+            - rpcn_debug_stepper:
+                id: 6
+                parent: 0
+                mode: all
+                strict: false
+                concurrent: false
+                lines: [27]
+                processors:
+                    - mapping: 'root.each = true'
+        - while:
+            check: 'this.loops.or(0) < 2'
+            processors:
+                - rpcn_debug_stepper:
+                    id: 7
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [31]
+                    processors:
+                        - mapping: 'root.loops = this.loops.or(0) + 1'
+        - group_by:
+            - check: 'this.n == 1'
+              processors:
+                - rpcn_debug_stepper:
+                    id: 8
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [35]
+                    processors:
+                        - mapping: 'root.group = 0'
+        - retry:
+            max_retries: 2
+            processors:
+                - rpcn_debug_stepper:
+                    id: 9
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [39]
+                    processors:
+                        - mapping: 'root.retried = true'
+        - label: outer
+          branch:
+            processors:
+                - rpcn_debug_stepper:
+                    id: 10
+                    parent: 0
+                    mode: all
+                    strict: false
+                    concurrent: false
+                    lines: [43]
+                    processors:
+                        - try:
+                            - rpcn_debug_stepper:
+                                id: 11
+                                parent: 10
+                                mode: try
+                                strict: false
+                                concurrent: false
+                                lines: [44]
+                                processors:
+                                    - mapping: 'root = this'
+# warnings
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors[1] line 14
+(0, 2) pipeline.processors[2] line 20
+(0, 3) pipeline.processors[3] line 23
+(0, 4) pipeline.processors[4] line 26
+(0, 5) pipeline.processors[5] line 28
+(0, 6) pipeline.processors[6] line 32
+(0, 7) pipeline.processors[7] line 36
+(0, 8) pipeline.processors[8] line 40
+(0, 9) pipeline.processors line 8
+(1, 0) pipeline.processors[0].branch.processors[0] line 12
+(1, 1) pipeline.processors[0].branch.processors line 11
+(2, 0) pipeline.processors[1].switch[0].processors[0] line 17
+(2, 1) pipeline.processors[1].switch[0].processors line 16
+(3, 0) pipeline.processors[1].switch[1].processors[0] line 19
+(3, 1) pipeline.processors[1].switch[1].processors line 18
+(4, 0) pipeline.processors[2].try[0] line 21
+(4, 1) pipeline.processors[2].try[1] line 22
+(4, 2) pipeline.processors[2].try line 20
+(5, 0) pipeline.processors[3].catch[0] line 24
+(5, 1) pipeline.processors[3].catch line 23
+(6, 0) pipeline.processors[4].for_each[0] line 27
+(6, 1) pipeline.processors[4].for_each line 26
+(7, 0) pipeline.processors[5].while.processors[0] line 31
+(7, 1) pipeline.processors[5].while.processors line 30
+(8, 0) pipeline.processors[6].group_by[0].processors[0] line 35
+(8, 1) pipeline.processors[6].group_by[0].processors line 34
+(9, 0) pipeline.processors[7].retry.processors[0] line 39
+(9, 1) pipeline.processors[7].retry.processors line 38
+(10, 0) pipeline.processors[8].branch.processors[0] line 43
+(10, 1) pipeline.processors[8].branch.processors line 42
+(11, 0) pipeline.processors[8].branch.processors[0].try[0] line 44
+(11, 1) pipeline.processors[8].branch.processors[0].try line 43

@@ -1,0 +1,44 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [7]
+    processors:
+        - mapping: 'root = this + 1'
+# stepper 1
+rpcn_debug_stepper:
+    id: 1
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [11]
+    processors:
+        - mapping: 'root = this * 2'
+# stepper 2
+rpcn_debug_stepper:
+    id: 2
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [15]
+    processors:
+        - mapping: 'root = this - 1'
+# warnings
+# lines
+(0, 0) input.processors[0] line 7
+(0, 1) input.processors line 6
+(1, 0) pipeline.processors[0] line 11
+(1, 1) pipeline.processors line 10
+(2, 0) output.processors[0] line 15
+(2, 1) output.processors line 14

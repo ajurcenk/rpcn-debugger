@@ -1,1 +1,4 @@
-error: line 3: the stdin input can't be debugged: stdin carries the debugger's DAP stream
+error: the stdin input can't be debugged: stdin carries the debugger's DAP stream
+code: PIPELINE_INVALID
+line: 3
+path: input.stdin

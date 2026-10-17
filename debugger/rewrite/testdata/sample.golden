@@ -9,13 +9,19 @@ generate:
         meta kafka_key = "k1".bytes()
         meta __rpcn_internal = "x"
 # resources
-# stepper
+# stepper 0
 rpcn_debug_stepper:
     id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
     lines: [16]
     processors:
         - mapping: |
             root = this
             root.doubled = this.n * 2
-# children
-pipeline.processors[0] line 16
+# warnings
+# lines
+(0, 0) pipeline.processors[0] line 16
+(0, 1) pipeline.processors line 15

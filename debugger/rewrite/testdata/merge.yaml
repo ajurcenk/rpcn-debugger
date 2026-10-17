@@ -1,0 +1,37 @@
+base_input: &bi
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+  processors:
+    - mapping: 'root.from_base = true'
+
+base_pipeline: &bp
+  processors:
+    - mapping: 'root.a = 1'
+    - branch:
+        processors:
+          - mapping: 'root = this'
+
+base_branch: &bb
+  request_map: 'root = this'
+  result_map: 'root.b = this'
+
+extra: &ex
+  threads: 1
+  processors:
+    - mapping: 'root.lost = true'
+
+input:
+  <<: *bi
+
+pipeline:
+  <<: [*bp, *ex]
+
+output:
+  processors:
+    - branch:
+        <<: *bb
+        processors:
+          - mapping: 'root.c = 1'
+  drop: {}

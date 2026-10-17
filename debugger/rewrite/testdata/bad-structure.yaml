@@ -1,0 +1,7 @@
+input:
+  generate:
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    mapping: 'root = this'

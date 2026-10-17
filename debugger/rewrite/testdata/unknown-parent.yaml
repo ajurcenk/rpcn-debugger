@@ -1,0 +1,15 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - my_plugin:
+        processors:
+          - mapping: 'root = this'
+    - mapping: 'root = this'
+
+output:
+  drop: {}

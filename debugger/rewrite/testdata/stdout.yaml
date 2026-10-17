@@ -1,0 +1,15 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  broker:
+    outputs:
+      - stdout: {}
+      - stderr: {}

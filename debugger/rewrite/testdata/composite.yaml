@@ -1,0 +1,29 @@
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+        processors:
+          - mapping: 'root.per_input = true'
+  processors:
+    - mapping: 'root.top = true'
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  broker:
+    outputs:
+      - drop: {}
+        processors:
+          - mapping: 'root.out = 1'
+      - switch:
+          cases:
+            - check: 'true'
+              output:
+                drop: {}
+                processors:
+                  - mapping: 'root.case = 1'

@@ -1,0 +1,47 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"n": 1}'
+
+pipeline:
+  processors:
+    - branch:
+        request_map: 'root = this.n'
+        processors:
+          - mapping: 'root = this * 10'
+        result_map: 'root.branched = this'
+    - switch:
+        - check: 'this.n == 1'
+          processors:
+            - mapping: 'root.case = "one"'
+        - processors:
+            - mapping: 'root.case = "other"'
+    - try:
+        - mapping: 'root.tried = true'
+        - mapping: 'root.tried_again = true'
+    - catch:
+        - log:
+            message: 'caught'
+    - for_each:
+        - mapping: 'root.each = true'
+    - while:
+        check: 'this.loops.or(0) < 2'
+        processors:
+          - mapping: 'root.loops = this.loops.or(0) + 1'
+    - group_by:
+        - check: 'this.n == 1'
+          processors:
+            - mapping: 'root.group = 0'
+    - retry:
+        max_retries: 2
+        processors:
+          - mapping: 'root.retried = true'
+    - label: outer
+      branch:
+        processors:
+          - try:
+              - mapping: 'root = this'
+
+output:
+  drop: {}

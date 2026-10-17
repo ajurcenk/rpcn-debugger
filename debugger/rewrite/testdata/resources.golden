@@ -8,14 +8,20 @@ generate:
 processor_resources:
     - label: double
       mapping: 'root.a = this.a * 2'
-# stepper
+# stepper 0
 rpcn_debug_stepper:
     id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
     lines: [11, 12]
     processors:
         - resource: double
         - log:
             message: hi
-# children
-pipeline.processors[0] line 11
-pipeline.processors[1] line 12
+# warnings
+# lines
+(0, 0) pipeline.processors[0] line 11
+(0, 1) pipeline.processors[1] line 12
+(0, 2) pipeline.processors line 10

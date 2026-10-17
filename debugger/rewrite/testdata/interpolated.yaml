@@ -1,0 +1,25 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - retry:
+        parallel: ${PARALLEL}
+        processors:
+          - resource: r
+    - try:
+        - mapping: 'root.a = 1'
+
+processor_resources:
+  - label: r
+    for_each:
+      - mapping: 'root = this'
+
+error_handling:
+  strict: ${STRICT}
+
+output:
+  drop: {}

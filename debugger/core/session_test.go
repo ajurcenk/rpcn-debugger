@@ -21,17 +21,21 @@ func (l lines) Position(stepperID, childIndex int) (Position, bool) {
 // fakeEngine arrives once per child for one batch, then reports delivered.
 type fakeEngine struct {
 	checkErr  error
+	warnings  []string
 	startErr  error
 	children  int
 	batch     []Batch
 	delivered chan []Batch
 }
 
-func (e *fakeEngine) Check(string, string) (LineMap, error) {
+func (e *fakeEngine) Check(string, string) (CheckResult, error) {
 	if e.checkErr != nil {
-		return nil, e.checkErr
+		return CheckResult{}, e.checkErr
 	}
-	return lines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 12}}, nil
+	return CheckResult{
+		Lines:    lines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 12}},
+		Warnings: e.warnings,
+	}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, _, _ string, a Arriver) error {
@@ -224,7 +228,10 @@ func TestRelativeCwdGivesAbsolutePipeline(t *testing.T) {
 
 type pathEngine struct{ got *string }
 
-func (e *pathEngine) Check(p, _ string) (LineMap, error) { *e.got = p; return lines{}, nil }
+func (e *pathEngine) Check(p, _ string) (CheckResult, error) {
+	*e.got = p
+	return CheckResult{Lines: lines{}}, nil
+}
 func (e *pathEngine) Start(context.Context, string, string, Arriver) error {
 	return nil
 }
@@ -356,4 +363,21 @@ func TestSetBreakpointsUnverified(t *testing.T) {
 		t.Errorf("SetExceptionBreakpoints = %v, %v", res, err)
 	}
 	_ = do(s, Terminate{})
+}
+
+// Launch warnings reach the frontend as console Output events, before the
+// run starts.
+func TestLaunchWarnings(t *testing.T) {
+	e := newEngine()
+	e.warnings = []string{"pipeline.processors[0].parallel (line 9): parallel runs its processors concurrently"}
+	rec := newRecorder()
+	s := NewSession(e, rec)
+	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := rec.next(t); ev.kind != "output" || ev.detail != "Warning: "+e.warnings[0]+"\n" {
+		t.Fatalf("event = %+v, want the warning as output", ev)
+	}
+	rec.none(t)
+	s.terminate()
 }

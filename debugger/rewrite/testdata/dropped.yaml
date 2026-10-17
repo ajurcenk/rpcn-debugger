@@ -1,0 +1,24 @@
+http:
+  address: 0.0.0.0:4195
+
+logger:
+  level: DEBUG
+
+metrics:
+  prometheus: {}
+
+tracer:
+  jaeger: {}
+
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  drop: {}

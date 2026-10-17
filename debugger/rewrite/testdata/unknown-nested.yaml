@@ -1,0 +1,18 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - openai_chat_completion:
+        model: gpt-4o
+        tools:
+          - name: lookup
+            processors:
+              - mapping: 'root = this'
+    - mapping: 'root = this'
+
+output:
+  drop: {}

@@ -1,0 +1,16 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+  processors:
+    - mapping: 'root = this + 1'
+
+pipeline:
+  processors:
+    - mapping: 'root = this * 2'
+
+output:
+  processors:
+    - mapping: 'root = this - 1'
+  drop: {}

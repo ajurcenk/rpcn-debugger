@@ -1,0 +1,39 @@
+# input
+broker:
+    inputs:
+        - generate:
+            count: 1
+            interval: ""
+            mapping: 'root = {}'
+          processors:
+            - mapping: 'root.per_input = true'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [11]
+    processors:
+        - mapping: 'root.top = true'
+# stepper 1
+rpcn_debug_stepper:
+    id: 1
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [15]
+    processors:
+        - mapping: 'root = this'
+# warnings
+input.broker.inputs[0].processors (line 8): this processor list runs during capture, not stepped
+output.broker.outputs[0].processors (line 21): this processor list is not run in dry-run
+output.broker.outputs[1].switch.cases[0].output.processors (line 28): this processor list is not run in dry-run
+# lines
+(0, 0) input.processors[0] line 11
+(0, 1) input.processors line 10
+(1, 0) pipeline.processors[0] line 15
+(1, 1) pipeline.processors line 14

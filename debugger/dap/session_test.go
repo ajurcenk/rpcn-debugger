@@ -46,11 +46,11 @@ func jsonMessage(i int, content string) core.Message {
 	}, Metadata: []core.Meta{}}
 }
 
-func (e *fakeEngine) Check(string, string) (core.LineMap, error) {
+func (e *fakeEngine) Check(string, string) (core.CheckResult, error) {
 	if e.checkErr != nil {
-		return nil, e.checkErr
+		return core.CheckResult{}, e.checkErr
 	}
-	return fakeLines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13}}, nil
+	return core.CheckResult{Lines: fakeLines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13}}}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, _, _ string, a core.Arriver) error {

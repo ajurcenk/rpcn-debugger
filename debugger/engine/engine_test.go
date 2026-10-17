@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,7 +20,10 @@ import (
 	"github.com/ajurcenk/rpcn-debugger/debugger/rewrite"
 )
 
-var samplePipeline = filepath.Join("..", "..", "testdata", "tracer", "pipeline.yaml")
+var (
+	samplePipeline = filepath.Join("..", "..", "testdata", "tracer", "pipeline.yaml")
+	nestedPipeline = filepath.Join("..", "..", "testdata", "tracer", "nested.yaml")
+)
 
 func load(path string) (engine.Configs, core.LineMap, error) {
 	raw, err := os.ReadFile(path)
@@ -30,7 +34,7 @@ func load(path string) (engine.Configs, core.LineMap, error) {
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	return engine.Configs{Input: p.Input, Resources: p.Resources, Stepper: p.Stepper}, p, nil
+	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict}, p, nil
 }
 
 func writePipeline(t *testing.T, src string) string {
@@ -82,11 +86,14 @@ func standard() *service.Environment { return service.NewEnvironment() }
 func TestSampleStepsAndDelivers(t *testing.T) {
 	env := standard()
 	a := engine.New(env, testLogger(), load)
-	lines, err := a.Check(samplePipeline, "")
+	res, err := a.Check(samplePipeline, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pos, ok := lines.Position(0, 0); !ok || pos.Line != 16 {
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none", res.Warnings)
+	}
+	if pos, ok := res.Lines.Position(0, 0); !ok || pos.Line != 16 {
 		t.Errorf("Position(0, 0) = %+v, %v; want line 16", pos, ok)
 	}
 
@@ -136,6 +143,44 @@ func TestEnvUntouched(t *testing.T) {
 }
 
 func TestNothingCaptured(t *testing.T) {
+	env := standard()
+	if err := env.RegisterBatchInput("closed", service.NewConfigSpec(),
+		func(*service.ParsedConfig, *service.Resources) (service.BatchInput, error) { return closedInput{}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	path := writePipeline(t, `
+input:
+  closed: {}
+pipeline:
+  processors:
+    - mapping: root = this
+output:
+  drop: {}
+`)
+	a := engine.New(env, testLogger(), load)
+	arr := &arriver{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.Start(ctx, path, "", arr); !core.HasCode(err, core.CodeNothingCaptured) {
+		t.Fatalf("Start = %v, want NOTHING_CAPTURED", err)
+	}
+	if len(arr.got) != 0 {
+		t.Errorf("arrivals = %+v, want none", arr.got)
+	}
+}
+
+// closedInput is an input that closes before it produces anything.
+type closedInput struct{}
+
+func (closedInput) Connect(context.Context) error { return nil }
+func (closedInput) ReadBatch(context.Context) (service.MessageBatch, service.AckFunc, error) {
+	return nil, nil, service.ErrEndOfInput
+}
+func (closedInput) Close(context.Context) error { return nil }
+
+// input.processors run in the step stream, not at capture (AD-4): a
+// mapping that deletes the message there still captures it.
+func TestInputProcessorsAreStepped(t *testing.T) {
 	path := writePipeline(t, `
 input:
   generate:
@@ -154,11 +199,111 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, path, "", arr); !core.HasCode(err, core.CodeNothingCaptured) {
-		t.Fatalf("Start = %v, want NOTHING_CAPTURED", err)
+	if err := a.Start(ctx, path, "", arr); err != nil {
+		t.Fatal(err)
 	}
-	if len(arr.got) != 0 {
-		t.Errorf("arrivals = %+v, want none", arr.got)
+	// The input stepper stops before its child; the deleted message never
+	// reaches the pipeline stepper.
+	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 {
+		t.Fatalf("arrivals = %+v, want one, before input.processors[0]", arr.got)
+	}
+}
+
+// The nested demo runs input, pipeline and output processors, with a
+// branch and a switch, through the engine: every stepper reports in step
+// order, and the batch is delivered.
+func TestNestedStepsAndDelivers(t *testing.T) {
+	a := engine.New(standard(), testLogger(), load)
+	res, err := a.Check(nestedPipeline, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none", res.Warnings)
+	}
+	if pos, ok := res.Lines.Position(0, 0); !ok || pos.Line != 12 || pos.UserPath != "input.processors[0]" {
+		t.Errorf("Position(0, 0) = %+v, %v; want input.processors[0] line 12", pos, ok)
+	}
+
+	arr := &arriver{}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := a.Start(ctx, nestedPipeline, "", arr); err != nil {
+		t.Fatal(err)
+	}
+	// Ids: 0 input, 1 pipeline, 2 branch, 3 and 4 the switch cases, 5 output.
+	want := [][2]int{{0, 0}, {1, 0}, {2, 0}, {1, 1}, {3, 0}, {5, 0}}
+	var got [][2]int
+	for _, g := range arr.got {
+		got = append(got, [2]int{g.stepperID, g.childIndex})
+	}
+	if len(got) != len(want) {
+		t.Fatalf("arrivals = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("arrivals = %v, want %v", got, want)
+		}
+	}
+	last := arr.got[len(arr.got)-1].batches
+	if len(last) != 1 || len(last[0].Messages) != 1 {
+		t.Fatalf("batches before output.processors[0] = %+v", last)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(last[0].Messages[0].Content.Raw, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg["from_input"] != true || msg["branched"] != float64(10) || msg["case"] != "one" {
+		t.Errorf("message before output.processors[0] = %v", msg)
+	}
+}
+
+// Every rewrite matrix pipeline that should build does build and deliver:
+// aliases, opaque parents and processor_resources included.
+func TestRewrittenConfigsBuild(t *testing.T) {
+	for _, name := range []string{"nested", "alias", "concurrent", "processor-resources", "resource-concurrent", "strict", "top-level", "dropped", "stdout", "merge", "composite", "unknown-taint"} {
+		t.Run(name, func(t *testing.T) {
+			a := engine.New(standard(), testLogger(), load)
+			path := filepath.Join("..", "rewrite", "testdata", name+".yaml")
+			if _, err := a.Check(path, ""); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.Start(ctx, path, "", &arriver{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// error_handling.strict carries over to the step stream (AD-4(b)): there a
+// message that fails a processor is rejected instead of delivered.
+func TestStrictStepStream(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		t.Run(fmt.Sprint(strict), func(t *testing.T) {
+			path := writePipeline(t, fmt.Sprintf(`
+input:
+  generate: {count: 1, interval: "", mapping: 'root = {}'}
+pipeline:
+  processors:
+    - mapping: 'root = throw("boom")'
+error_handling:
+  strict: %v
+output:
+  drop: {}
+`, strict))
+			a := engine.New(standard(), testLogger(), load)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			err := a.Start(ctx, path, "", &arriver{})
+			if strict && err == nil {
+				t.Error("strict: the failed message was delivered")
+			}
+			if !strict && err != nil {
+				t.Errorf("not strict: Start = %v", err)
+			}
+		})
 	}
 }
 

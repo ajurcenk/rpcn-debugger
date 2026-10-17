@@ -1,0 +1,4 @@
+error: pipeline.processors is not a list
+code: PIPELINE_INVALID
+line: 7
+path: pipeline.processors

@@ -25,12 +25,21 @@ type Translate interface {
 	Translate(enginePath string) (userPath string, ok bool)
 }
 
+// CheckResult is what Engine.Check found in a pipeline that can run.
+type CheckResult struct {
+	// Lines maps the rewrite's stop positions to the user's file.
+	Lines LineMap
+	// Warnings are the launch warnings for the user (opaque parents, stdio
+	// redirects), in rewrite order. The Session emits each as an Output.
+	Warnings []string
+}
+
 // Engine is the port the Session reaches the engine through. The adapter
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
 	// Check reads and rewrites the pipeline file without running anything.
 	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
-	Check(pipeline, cwd string) (LineMap, error)
+	Check(pipeline, cwd string) (CheckResult, error)
 	// Start captures one batch from the pipeline's input and steps it
 	// through the processors, calling a.Arrive at every stop position. It
 	// returns nil once the batch is delivered, an Error with code

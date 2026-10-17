@@ -16,6 +16,12 @@ func stepperSpec() *service.ConfigSpec {
 	return service.NewConfigSpec().
 		Summary("Runs its child processors one at a time and stops before each one (rpcn-debugger).").
 		Field(service.NewIntField("id")).
+		// parent, mode, strict and concurrent come from the rewrite (AD-7,
+		// AD-16). They are accepted and stored, and acted on with frames.
+		Field(service.NewIntField("parent").Default(-1)).
+		Field(service.NewStringEnumField("mode", "all", "try").Default("all")).
+		Field(service.NewBoolField("strict").Default(false)).
+		Field(service.NewBoolField("concurrent").Default(false)).
 		Field(service.NewIntListField("lines").Default([]any{})).
 		Field(service.NewProcessorListField("processors"))
 }
@@ -25,16 +31,28 @@ func stepperSpec() *service.ConfigSpec {
 func registerStepper(env *service.Environment, a core.Arriver) error {
 	return env.RegisterBatchProcessor(StepperName, stepperSpec(),
 		func(conf *service.ParsedConfig, _ *service.Resources) (service.BatchProcessor, error) {
-			id, err := conf.FieldInt("id")
-			if err != nil {
+			s := &stepper{arriver: a}
+			var err error
+			if s.id, err = conf.FieldInt("id"); err != nil {
+				return nil, err
+			}
+			if s.parent, err = conf.FieldInt("parent"); err != nil {
+				return nil, err
+			}
+			if s.mode, err = conf.FieldString("mode"); err != nil {
+				return nil, err
+			}
+			if s.strict, err = conf.FieldBool("strict"); err != nil {
+				return nil, err
+			}
+			if s.concurrent, err = conf.FieldBool("concurrent"); err != nil {
 				return nil, err
 			}
 			// Children are built only through the stepper's own field (AD-4).
-			procs, err := conf.FieldProcessorList("processors")
-			if err != nil {
+			if s.procs, err = conf.FieldProcessorList("processors"); err != nil {
 				return nil, err
 			}
-			return &stepper{id: id, procs: procs, arriver: a}, nil
+			return s, nil
 		})
 }
 
@@ -42,10 +60,17 @@ func registerStepper(env *service.Environment, a core.Arriver) error {
 // the previous one produced. Before each child it calls Arrive once, with
 // Snapshot batches deep-copied from all of them (AD-19). The gate is never held while a child runs: it
 // is held only inside Arrive (AD-9).
+//
+// parent, mode, strict and concurrent are stored but not acted on yet: a
+// "try" stepper runs like "all" until frames arrive (entry 2.7).
 type stepper struct {
-	id      int
-	procs   []*service.OwnedProcessor
-	arriver core.Arriver
+	id         int
+	parent     int
+	mode       string
+	strict     bool
+	concurrent bool
+	procs      []*service.OwnedProcessor
+	arriver    core.Arriver
 }
 
 func (s *stepper) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {

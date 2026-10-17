@@ -1,0 +1,29 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - cached:
+        cache: c
+        key: k
+        processors:
+          - resource: r
+    - resource: s
+
+processor_resources:
+  - label: r
+    try:
+      - mapping: 'root = this'
+  - label: s
+    try:
+      - mapping: 'root = this'
+
+cache_resources:
+  - label: c
+    memory: {}
+
+output:
+  drop: {}

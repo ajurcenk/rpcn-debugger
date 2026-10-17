@@ -146,14 +146,18 @@ func (s *Session) launch(pipeline, cwd string) error {
 	}
 	s.mu.Unlock()
 
-	lines, err := s.engine.Check(pipeline, cwd)
+	res, err := s.engine.Check(pipeline, cwd)
 	if err != nil {
 		return AsError(err, CodePipelineInvalid)
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pipeline, s.cwd, s.lines, s.launched = pipeline, cwd, lines, true
+	s.pipeline, s.cwd, s.lines, s.launched = pipeline, cwd, res.Lines, true
+	s.mu.Unlock()
+	// Outside the lock: Emit is never called while it is held.
+	for _, w := range res.Warnings {
+		s.fe.Emit(Output{Category: "console", Text: "Warning: " + w + "\n"})
+	}
 	return nil
 }
 

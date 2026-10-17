@@ -20,12 +20,18 @@ const stopTimeout = 5 * time.Second
 // Configs are the rewritten parts the engine builds its streams from. Only
 // debugger/rewrite produces them (AD-6); the engine never parses YAML.
 type Configs struct {
-	// Input is the capture config: the user's input block.
+	// Input is the capture config: the user's input block, without
+	// input.processors (AD-4).
 	Input string
 	// Resources holds the top-level *_resources sections, or "".
 	Resources string
-	// Stepper is the rpcn_debug_stepper processor config.
-	Stepper string
+	// Steppers are the top-level rpcn_debug_stepper processor configs, in
+	// step order (input, pipeline, then output processors).
+	Steppers []string
+	// Warnings are the launch warnings for the user.
+	Warnings []string
+	// Strict is error_handling.strict, applied to the step stream (AD-4(b)).
+	Strict bool
 }
 
 // Loader reads and rewrites a pipeline file.
@@ -49,22 +55,22 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 // Check loads the pipeline and parses and lints both stream configs, so
 // config errors fail the launch. It never calls Build: Build opens every
 // *_resources entry (caches, connection pools), which would leak.
-func (a *Adapter) Check(pipeline, _ string) (core.LineMap, error) {
+func (a *Adapter) Check(pipeline, _ string) (core.CheckResult, error) {
 	conf, lines, err := a.load(pipeline)
 	if err != nil {
-		return nil, err
+		return core.CheckResult{}, err
 	}
 	r, err := a.newRun(conf, nopArriver{})
 	if err != nil {
-		return nil, err
+		return core.CheckResult{}, err
 	}
 	if _, err := r.configureCapture(nil); err != nil {
-		return nil, fmt.Errorf("%s: %w", pipeline, err)
+		return core.CheckResult{}, fmt.Errorf("%s: %w", pipeline, err)
 	}
 	if _, _, err := r.configureStep(); err != nil {
-		return nil, fmt.Errorf("%s: %w", pipeline, err)
+		return core.CheckResult{}, fmt.Errorf("%s: %w", pipeline, err)
 	}
-	return lines, nil
+	return core.CheckResult{Lines: lines, Warnings: conf.Warnings}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream, then
@@ -121,9 +127,10 @@ func (r *run) builder() *service.StreamBuilder {
 }
 
 // configureStep sets up, without building, the step stream: a producer
-// func, the stepper and the sink, plus the shared resources.
+// func, the steppers in order and the sink, plus the shared resources.
 func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandlerFunc, error) {
 	b := r.builder()
+	b.SetStrict(r.conf.Strict)
 	produce, err := b.AddBatchProducerFunc()
 	if err != nil {
 		return nil, nil, err
@@ -133,8 +140,10 @@ func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandl
 			return nil, nil, fmt.Errorf("resources: %w", err)
 		}
 	}
-	if err := b.AddProcessorYAML(r.conf.Stepper); err != nil {
-		return nil, nil, fmt.Errorf("pipeline.processors: %w", err)
+	for i, st := range r.conf.Steppers {
+		if err := b.AddProcessorYAML(st); err != nil {
+			return nil, nil, fmt.Errorf("processors (stepper %d): %w", i, err)
+		}
 	}
 	if err := b.AddOutputYAML(SinkName + ": {}"); err != nil {
 		return nil, nil, err
