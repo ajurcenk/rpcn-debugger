@@ -57,8 +57,8 @@ func (r *run) buildCapture(got chan<- service.MessageBatch) (*service.Stream, er
 }
 
 // capture runs the capture stream until it delivers its first batch, then
-// stops it before stepping starts. It returns core.ErrNothingCaptured when
-// the input closes first.
+// stops it before stepping starts. It returns a core.Error with code
+// NOTHING_CAPTURED when the input closes first.
 func (r *run) capture(ctx context.Context) (service.MessageBatch, error) {
 	got := make(chan service.MessageBatch, 1)
 	strm, err := r.buildCapture(got)
@@ -89,7 +89,7 @@ func (r *run) capture(ctx context.Context) (service.MessageBatch, error) {
 		if err != nil {
 			return nil, fmt.Errorf("capture: %w", err)
 		}
-		return nil, core.ErrNothingCaptured
+		return nil, core.NewError(core.CodeNothingCaptured, "no batch was captured: the input closed before it produced one")
 	case <-ctx.Done():
 		if err := r.stop(strm, runErr, cancel); err != nil {
 			return nil, errors.Join(ctx.Err(), err)

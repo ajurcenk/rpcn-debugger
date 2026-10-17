@@ -46,7 +46,7 @@ func (p Plan) Position(stepperID, childIndex int) (core.Position, bool) {
 		return core.Position{}, false
 	}
 	c := p.Children[childIndex]
-	return core.Position{Path: c.Path, Line: c.Line}, true
+	return core.Position{UserPath: c.Path, Line: c.Line}, true
 }
 
 // Rewrite turns pipeline YAML into a Plan. It wraps only pipeline.processors

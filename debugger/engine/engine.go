@@ -205,6 +205,6 @@ func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.Can
 // nopArriver never stops; Check builds streams with it and never runs them.
 type nopArriver struct{}
 
-func (nopArriver) Arrive(context.Context, int, int, core.BatchCopy) error {
+func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error {
 	return errors.New("not running")
 }

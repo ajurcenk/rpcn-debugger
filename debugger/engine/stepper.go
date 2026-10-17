@@ -39,8 +39,8 @@ func registerStepper(env *service.Environment, a core.Arriver) error {
 }
 
 // stepper mirrors ExecuteAll in mode "all": each child runs on every batch
-// the previous one produced. Before each child it calls Arrive with a deep
-// copy of the batch (AD-19). The gate is never held while a child runs: it
+// the previous one produced. Before each child it calls Arrive once, with
+// Snapshot batches deep-copied from all of them (AD-19). The gate is never held while a child runs: it
 // is held only inside Arrive (AD-9).
 type stepper struct {
 	id      int
@@ -51,12 +51,12 @@ type stepper struct {
 func (s *stepper) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	batches := []service.MessageBatch{batch}
 	for i, p := range s.procs {
+		if err := s.arriver.Arrive(ctx, s.id, i, snapshotBatches(batches)); err != nil {
+			// The session ended: deliver nothing.
+			return nil, nil
+		}
 		var next []service.MessageBatch
 		for _, b := range batches {
-			if err := s.arriver.Arrive(ctx, s.id, i, copyBatch(b)); err != nil {
-				// The session ended: deliver nothing.
-				return nil, nil
-			}
 			out, err := p.ProcessBatch(ctx, b)
 			if err != nil {
 				return nil, err
@@ -77,17 +77,4 @@ func (s *stepper) Close(ctx context.Context) error {
 		errs = append(errs, p.Close(ctx))
 	}
 	return errors.Join(errs...)
-}
-
-// copyBatch deep-copies the content of every message. The copy never
-// references engine objects.
-func copyBatch(b service.MessageBatch) core.BatchCopy {
-	out := make(core.BatchCopy, len(b))
-	for i, m := range b {
-		raw, err := m.AsBytes()
-		if err == nil {
-			out[i].Content = append([]byte(nil), raw...)
-		}
-	}
-	return out
 }

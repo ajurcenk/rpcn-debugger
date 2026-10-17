@@ -7,6 +7,9 @@ input:
     mapping: |
       root.greeting = "hello"
       root.n = 1
+      meta source = "tracer"
+      meta kafka_key = "k1".bytes()
+      meta __rpcn_internal = "x"
 
 pipeline:
   processors:

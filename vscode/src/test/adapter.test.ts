@@ -12,7 +12,7 @@ const binary = path.resolve(process.env.RPCN_DEBUG_BIN ?? '../bin/rpcn-debug');
 // The tracer sample, relative to the extension folder.
 const tracerPipeline = path.resolve('../testdata/tracer/pipeline.yaml');
 // The line of the sample's mapping, where the session stops.
-const mappingLine = 13;
+const mappingLine = 16;
 
 // DebugClient.start() spawns `runtime executable`, which would pass a stray
 // positional argument to rpcn-debug. The test spawns the binary itself and
@@ -28,6 +28,14 @@ class StdioDebugClient extends DebugClient {
     }
     this.connect(proc.stdout, proc.stdin);
   }
+}
+
+// child returns the variable called name under variablesReference.
+async function child(dc: DebugClient, variablesReference: number, name: string): Promise<DebugProtocol.Variable> {
+  const vars = await dc.variablesRequest({ variablesReference });
+  const v = vars.body.variables.find((x) => x.name === name);
+  assert.ok(v, `no variable ${name} in ${JSON.stringify(vars.body.variables)}`);
+  return v;
 }
 
 function exitCode(proc: ChildProcess): Promise<number | null> {
@@ -83,6 +91,18 @@ test('F5 path: captures, stops before the mapping, steps over and terminates', a
     assert.equal(launch.success, true);
     await initialized;
 
+    // A YAML breakpoint is answered unverified (hollow), without an error.
+    const bps = await dc.setBreakpointsRequest({
+      source: { path: tracerPipeline },
+      breakpoints: [{ line: mappingLine }],
+    });
+    assert.equal(bps.success, true);
+    assert.equal(bps.body.breakpoints.length, 1);
+    assert.equal(bps.body.breakpoints[0].verified, false);
+    assert.ok(bps.body.breakpoints[0].message, 'an unverified breakpoint says why');
+    const exc = await dc.setExceptionBreakpointsRequest({ filters: [] });
+    assert.equal(exc.success, true);
+
     const stopped = dc.waitForEvent('stopped');
     await dc.configurationDoneRequest();
     const stop = await stopped;
@@ -98,13 +118,19 @@ test('F5 path: captures, stops before the mapping, steps over and terminates', a
     assert.equal(frame.line, mappingLine);
     assert.equal(frame.source?.path, tracerPipeline);
 
+    // Batches › batch 0 › message 0 › content, metadata › internal.
     const scopes = await dc.scopesRequest({ frameId: frame.id });
     assert.equal(scopes.body.scopes.length, 1);
-    const vars = await dc.variablesRequest({
-      variablesReference: scopes.body.scopes[0].variablesReference,
-    });
-    assert.equal(vars.body.variables.length, 1);
-    assert.deepEqual(JSON.parse(vars.body.variables[0].value), { greeting: 'hello', n: 1 });
+    assert.equal(scopes.body.scopes[0].name, 'Batches');
+    const batch = await child(dc, scopes.body.scopes[0].variablesReference, 'batch 0');
+    const message = await child(dc, batch.variablesReference, 'message 0');
+    const content = await child(dc, message.variablesReference, 'content');
+    assert.deepEqual(JSON.parse(content.value), { greeting: 'hello', n: 1 });
+    const metadata = await child(dc, message.variablesReference, 'metadata');
+    assert.equal((await child(dc, metadata.variablesReference, 'source')).value, 'tracer');
+    assert.equal((await child(dc, metadata.variablesReference, 'kafka_key')).value, 'k1');
+    const internal = await child(dc, metadata.variablesReference, 'internal');
+    assert.equal((await child(dc, internal.variablesReference, '__rpcn_internal')).value, 'x');
 
     const terminated = dc.waitForEvent('terminated');
     await dc.nextRequest({ threadId });

@@ -5,14 +5,17 @@ generate:
     mapping: |
         root.greeting = "hello"
         root.n = 1
+        meta source = "tracer"
+        meta kafka_key = "k1".bytes()
+        meta __rpcn_internal = "x"
 # resources
 # stepper
 rpcn_debug_stepper:
     id: 0
-    lines: [13]
+    lines: [16]
     processors:
         - mapping: |
             root = this
             root.doubled = this.n * 2
 # children
-pipeline.processors[0] line 13
+pipeline.processors[0] line 16

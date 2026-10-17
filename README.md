@@ -71,7 +71,7 @@ The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't ch
 
 ## Try it
 
-Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables**; Step Over ends the session.
+Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables** (Batches › batch 0 › message 0: content, metadata, and an `internal` node for `__` keys); Step Over ends the session. Breakpoints show as unverified for now.
 
 ## License
 

@@ -3,7 +3,6 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -49,7 +48,7 @@ func testLogger() *slog.Logger {
 
 type arrival struct {
 	stepperID, childIndex int
-	batch                 core.BatchCopy
+	batches               []core.Batch
 }
 
 // arriver records arrivals and, when block is set, waits on it at each one.
@@ -60,9 +59,9 @@ type arriver struct {
 	seen  chan struct{}
 }
 
-func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batch core.BatchCopy) error {
+func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
 	a.mu.Lock()
-	a.got = append(a.got, arrival{stepperID, childIndex, batch})
+	a.got = append(a.got, arrival{stepperID, childIndex, batches})
 	a.mu.Unlock()
 	if a.seen != nil {
 		a.seen <- struct{}{}
@@ -70,7 +69,7 @@ func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batch c
 	if a.block != nil {
 		select {
 		case <-a.block:
-			return core.ErrSessionEnded
+			return core.NewError(core.CodeSessionEnded, "ended")
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -87,8 +86,8 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pos, ok := lines.Position(0, 0); !ok || pos.Line != 13 {
-		t.Errorf("Position(0, 0) = %+v, %v; want line 13", pos, ok)
+	if pos, ok := lines.Position(0, 0); !ok || pos.Line != 16 {
+		t.Errorf("Position(0, 0) = %+v, %v; want line 16", pos, ok)
 	}
 
 	arr := &arriver{}
@@ -97,15 +96,30 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	if err := a.Start(ctx, samplePipeline, "", arr); err != nil {
 		t.Fatal(err)
 	}
-	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 || len(arr.got[0].batch) != 1 {
-		t.Fatalf("arrivals = %+v, want one before child 0", arr.got)
+	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
+		len(arr.got[0].batches) != 1 || len(arr.got[0].batches[0].Messages) != 1 {
+		t.Fatalf("arrivals = %+v, want one batch of one message before child 0", arr.got)
 	}
+	m := arr.got[0].batches[0].Messages[0]
 	var msg map[string]any
-	if err := json.Unmarshal(arr.got[0].batch[0].Content, &msg); err != nil {
+	if err := json.Unmarshal(m.Content.Raw, &msg); err != nil {
 		t.Fatal(err)
 	}
 	if msg["greeting"] != "hello" || msg["doubled"] != nil {
 		t.Errorf("message at the stop = %v, want the input before the mapping", msg)
+	}
+	meta := map[string]core.Meta{}
+	for _, e := range m.Metadata {
+		meta[e.Key] = e
+	}
+	if e := meta["source"]; e.Type != core.MetaString || e.Value != "tracer" || e.Internal {
+		t.Errorf("source = %+v", e)
+	}
+	if e := meta["kafka_key"]; e.Type != core.MetaBytes || e.Value != "azE=" || e.Text == nil || *e.Text != "k1" {
+		t.Errorf("kafka_key = %+v, want bytes k1", e)
+	}
+	if e := meta["__rpcn_internal"]; e.Value != "x" || !e.Internal {
+		t.Errorf("__rpcn_internal = %+v, want internal", e)
 	}
 }
 
@@ -140,8 +154,8 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, path, "", arr); !errors.Is(err, core.ErrNothingCaptured) {
-		t.Fatalf("Start = %v, want ErrNothingCaptured", err)
+	if err := a.Start(ctx, path, "", arr); !core.HasCode(err, core.CodeNothingCaptured) {
+		t.Fatalf("Start = %v, want NOTHING_CAPTURED", err)
 	}
 	if len(arr.got) != 0 {
 		t.Errorf("arrivals = %+v, want none", arr.got)

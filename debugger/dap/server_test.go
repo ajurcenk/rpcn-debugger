@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/google/go-dap"
+
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 )
 
 // frame encodes a raw JSON body as one DAP frame.
@@ -159,8 +161,18 @@ func checkMessage(t *testing.T, i int, raw []byte, w want) {
 		t.Errorf("message %d = %s, want command %q request_seq %d success %v",
 			i, raw, w.command, w.requestSeq, w.success)
 	}
-	if !w.success && w.command != "launch" && !strings.Contains(m.Message, w.command) {
-		t.Errorf("message %d: error message %q does not name %q", i, m.Message, w.command)
+	if !w.success && w.command != "launch" {
+		var body struct {
+			Error struct {
+				ID int `json:"id"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(m.Body, &body); err != nil || body.Error.ID != core.Number(core.CodeNotSupported) {
+			t.Errorf("message %d: error %s, want id NOT_SUPPORTED (%d)", i, m.Body, core.Number(core.CodeNotSupported))
+		}
+		if m.Message == "" {
+			t.Errorf("message %d: no error message", i)
+		}
 	}
 	if w.command == "initialize" {
 		var caps map[string]any

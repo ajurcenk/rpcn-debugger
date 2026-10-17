@@ -2,6 +2,7 @@ package dap
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,26 +10,10 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/google/go-dap"
 
 	"github.com/ajurcenk/rpcn-debugger/debugger/core"
-)
-
-// Error ids of the error responses.
-const (
-	// errUnknownCommand is sent for a request the server doesn't handle.
-	errUnknownCommand = 1
-	// errRequestFailed is sent when the Session refuses a request.
-	errRequestFailed = 2
-)
-
-// batchScopeRef is the variablesReference of the "Batch" scope. The one
-// frame of this entry is frameId 1; both become invalid on resume (AD-17).
-const (
-	frameID       = 1
-	batchScopeRef = 1
 )
 
 // Serve runs the DAP server (U-DAP) on in and out until the client
@@ -43,8 +28,13 @@ const (
 func Serve(in io.Reader, out io.Writer, log *slog.Logger, eng core.Engine) error {
 	s := &server{r: bufio.NewReader(in), w: out, log: log}
 	s.sess = core.NewSession(eng, frontend{s})
-	defer s.sess.Disconnect()
+	defer func() { _, _ = s.do(core.Terminate{}) }()
 	return s.run()
+}
+
+// do runs one protocol command on the Session.
+func (s *server) do(cmd core.Command) (core.Result, error) {
+	return s.sess.Do(context.Background(), cmd)
 }
 
 type server struct {
@@ -105,7 +95,9 @@ type launchArgs struct {
 	Cwd      string `json:"cwd"`
 }
 
-// handle answers one request. It reports done once the session is over.
+// handle answers one request: it maps the request to a protocol command
+// (AD-3) and the Session's answer to a response. It reports done once the
+// session is over.
 func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	r := req.GetRequest()
 	switch q := req.(type) {
@@ -118,10 +110,10 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 		var args launchArgs
 		if len(q.Arguments) > 0 {
 			if err := json.Unmarshal(q.Arguments, &args); err != nil {
-				return false, s.sendFailure(r, fmt.Errorf("invalid launch arguments: %w", err))
+				return false, s.sendFailure(r, core.NewError(core.CodeLaunchInvalid, "invalid launch arguments: %v", err))
 			}
 		}
-		if err := s.sess.Launch(args.Pipeline, args.Cwd); err != nil {
+		if _, err := s.do(core.Launch{Pipeline: args.Pipeline, Cwd: args.Cwd}); err != nil {
 			return false, s.sendFailure(r, err)
 		}
 		if err := s.send(&dap.LaunchResponse{Response: s.response(r)}); err != nil {
@@ -129,9 +121,18 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 		}
 		return false, s.send(&dap.InitializedEvent{Event: s.event("initialized")})
 
+	case *dap.SetBreakpointsRequest:
+		return false, s.setBreakpoints(q)
+
+	case *dap.SetExceptionBreakpointsRequest:
+		if _, err := s.do(core.SetExceptionBreakpoints{Filters: q.Arguments.Filters}); err != nil {
+			return false, s.sendFailure(r, err)
+		}
+		return false, s.send(&dap.SetExceptionBreakpointsResponse{Response: s.response(r)})
+
 	case *dap.ConfigurationDoneRequest:
 		// The response goes out before any event the run triggers.
-		return false, s.respondLocked(r, s.sess.ConfigurationDone, func() dap.Message {
+		return false, s.respondLocked(r, core.ConfigurationDone{}, func() dap.Message {
 			return &dap.ConfigurationDoneResponse{Response: s.response(r)}
 		})
 
@@ -143,16 +144,17 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	case *dap.StackTraceRequest:
 		resp := &dap.StackTraceResponse{Response: s.response(r)}
 		resp.Body.StackFrames = []dap.StackFrame{}
-		if f, ok := s.sess.Frame(); ok && q.Arguments.ThreadId == core.ThreadID {
-			name := f.Path
+		if f, ok := s.sess.Frame(); ok && q.Arguments.ThreadId == f.Snapshot.Position.ThreadID {
+			pos := f.Snapshot.Position
+			name := pos.UserPath
 			if name == "" {
-				name = fmt.Sprintf("processor %d", f.ChildIndex)
+				name = fmt.Sprintf("processor %d", pos.ChildIndex)
 			}
 			resp.Body.StackFrames = []dap.StackFrame{{
-				Id:     frameID,
+				Id:     f.ID,
 				Name:   name,
-				Source: &dap.Source{Name: filepath.Base(f.File), Path: f.File},
-				Line:   f.Line,
+				Source: &dap.Source{Name: filepath.Base(pos.File), Path: pos.File},
+				Line:   pos.Line,
 				Column: 1,
 			}}
 		}
@@ -162,11 +164,11 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	case *dap.ScopesRequest:
 		resp := &dap.ScopesResponse{Response: s.response(r)}
 		resp.Body.Scopes = []dap.Scope{}
-		if f, ok := s.sess.Frame(); ok && q.Arguments.FrameId == frameID {
+		if f, ok := s.sess.Frame(); ok && q.Arguments.FrameId == f.ID {
 			resp.Body.Scopes = []dap.Scope{{
-				Name:               "Batch",
-				VariablesReference: batchScopeRef,
-				IndexedVariables:   len(f.Messages),
+				Name:               "Batches",
+				VariablesReference: batchesRef(f.ID),
+				IndexedVariables:   len(f.Snapshot.Batches),
 			}}
 		}
 		return false, s.send(resp)
@@ -174,39 +176,58 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	case *dap.VariablesRequest:
 		resp := &dap.VariablesResponse{Response: s.response(r)}
 		resp.Body.Variables = []dap.Variable{}
-		// The scope advertises indexed variables, so VS Code pages them with
-		// start/count (count 0 means all) and may ask for named ones: none.
-		a := q.Arguments
-		if f, ok := s.sess.Frame(); ok && a.VariablesReference == batchScopeRef && a.Filter != "named" {
-			start := min(max(a.Start, 0), len(f.Messages))
-			end := len(f.Messages)
-			if a.Count > 0 {
-				end = min(start+a.Count, end)
-			}
-			for i := start; i < end; i++ {
-				resp.Body.Variables = append(resp.Body.Variables, dap.Variable{
-					Name:  fmt.Sprintf("[%d]", i),
-					Value: contentText(f.Messages[i]),
-				})
-			}
+		if f, ok := s.sess.Frame(); ok {
+			resp.Body.Variables = variables(f, q.Arguments)
 		}
 		return false, s.send(resp)
 
 	case *dap.NextRequest:
-		return false, s.respondLocked(r, s.sess.Next, func() dap.Message {
+		return false, s.respondLocked(r, core.Next{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
 			return &dap.NextResponse{Response: s.response(r)}
 		})
 
 	case *dap.ContinueRequest:
-		return false, s.respondLocked(r, s.sess.Continue, func() dap.Message {
+		return false, s.respondLocked(r, core.Continue{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
 			resp := &dap.ContinueResponse{Response: s.response(r)}
 			resp.Body.AllThreadsContinued = true
 			return resp
 		})
 
+	case *dap.StepInRequest:
+		return false, s.respondLocked(r, core.StepIn{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
+			return &dap.StepInResponse{Response: s.response(r)}
+		})
+
+	case *dap.StepOutRequest:
+		return false, s.respondLocked(r, core.StepOut{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
+			return &dap.StepOutResponse{Response: s.response(r)}
+		})
+
+	case *dap.PauseRequest:
+		return false, s.respondLocked(r, core.Pause{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
+			return &dap.PauseResponse{Response: s.response(r)}
+		})
+
+	case *dap.EvaluateRequest:
+		a := q.Arguments
+		return false, s.respondLocked(r, core.Evaluate{FrameID: a.FrameId, Expression: a.Expression, Context: a.Context}, func() dap.Message {
+			return &dap.EvaluateResponse{Response: s.response(r)}
+		})
+
+	case *dap.RestartRequest:
+		return false, s.respondLocked(r, core.Restart{}, func() dap.Message {
+			return &dap.RestartResponse{Response: s.response(r)}
+		})
+
+	case *dap.TerminateRequest:
+		// Releases a stopped stepper and waits for the streams to stop; the
+		// client follows up with disconnect.
+		_, _ = s.do(core.Terminate{})
+		return false, s.send(&dap.TerminateResponse{Response: s.response(r)})
+
 	case *dap.DisconnectRequest:
 		// Releases a stopped stepper and waits for the streams to stop.
-		s.sess.Disconnect()
+		_, _ = s.do(core.Terminate{})
 		return true, s.send(&dap.DisconnectResponse{Response: s.response(r)})
 
 	default:
@@ -214,23 +235,49 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	}
 }
 
-// respondLocked runs act and writes its response while holding the write
-// lock, so the response precedes every event that act sets off.
-func (s *server) respondLocked(r *dap.Request, act func() error, ok func() dap.Message) error {
+// setBreakpoints answers with the Session's results, in request order. Every
+// breakpoint is unverified for now, with a message saying why.
+func (s *server) setBreakpoints(q *dap.SetBreakpointsRequest) error {
+	a := q.Arguments
+	cmd := core.SetBreakpoints{File: a.Source.Path}
+	if len(a.Breakpoints) > 0 {
+		for _, b := range a.Breakpoints {
+			cmd.Lines = append(cmd.Lines, b.Line)
+			cmd.Conditions = append(cmd.Conditions, b.Condition)
+		}
+	} else {
+		cmd.Lines = a.Lines
+		cmd.Conditions = make([]string, len(a.Lines))
+	}
+	res, err := s.do(cmd)
+	if err != nil {
+		return s.sendFailure(&q.Request, err)
+	}
+	resp := &dap.SetBreakpointsResponse{Response: s.response(&q.Request)}
+	resp.Body.Breakpoints = []dap.Breakpoint{}
+	if br, ok := res.(core.SetBreakpointsResult); ok {
+		src := a.Source
+		for _, b := range br.Breakpoints {
+			resp.Body.Breakpoints = append(resp.Body.Breakpoints, dap.Breakpoint{
+				Verified: b.Verified,
+				Message:  b.Message,
+				Source:   &src,
+				Line:     b.Line,
+			})
+		}
+	}
+	return s.send(resp)
+}
+
+// respondLocked runs cmd and writes its response while holding the write
+// lock, so the response precedes every event that cmd sets off.
+func (s *server) respondLocked(r *dap.Request, cmd core.Command, ok func() dap.Message) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := act(); err != nil {
+	if _, err := s.do(cmd); err != nil {
 		return s.writeLocked(s.failure(r, err))
 	}
 	return s.writeLocked(ok())
-}
-
-// contentText renders a message's content for the Variables view.
-func contentText(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	return fmt.Sprintf("%q", b)
 }
 
 func (s *server) sendUnknown(requestSeq int, command string) error {
@@ -245,7 +292,7 @@ func (s *server) sendUnknown(requestSeq int, command string) error {
 		},
 	}
 	resp.Body.Error = &dap.ErrorMessage{
-		Id:     errUnknownCommand,
+		Id:     core.Number(core.CodeNotSupported),
 		Format: fmt.Sprintf("Request %q is not supported", command),
 	}
 	return s.send(resp)
@@ -255,12 +302,18 @@ func (s *server) sendFailure(r *dap.Request, err error) error {
 	return s.send(s.failure(r, err))
 }
 
+// failure maps err to an error response whose id is the registry number of
+// its code (AD-3). An error that is no core.Error is RUN_FAILED.
 func (s *server) failure(r *dap.Request, err error) dap.Message {
-	s.log.Warn("DAP request failed", "command", r.Command, "seq", r.Seq, "error", err)
+	var ce core.Error
+	if !errors.As(err, &ce) {
+		ce = core.Error{Code: core.CodeRunFailed, Message: err.Error()}
+	}
+	s.log.Warn("DAP request failed", "command", r.Command, "seq", r.Seq, "code", ce.Code, "error", err)
 	resp := &dap.ErrorResponse{Response: s.response(r)}
 	resp.Success = false
 	resp.Message = err.Error()
-	resp.Body.Error = &dap.ErrorMessage{Id: errRequestFailed, Format: err.Error(), ShowUser: true}
+	resp.Body.Error = &dap.ErrorMessage{Id: core.Number(ce.Code), Format: err.Error(), ShowUser: true}
 	return resp
 }
 
@@ -298,29 +351,46 @@ func (s *server) writeLocked(msg dap.Message) error {
 	return nil
 }
 
-// frontend turns Session events into DAP events. A failed write is logged:
-// the read loop sees the broken stream on its next request.
+// frontend turns Session events into DAP events (AD-3). A failed write is
+// logged: the read loop sees the broken stream on its next request.
 type frontend struct{ s *server }
 
-func (f frontend) Stopped(reason string, threadID int) {
-	ev := &dap.StoppedEvent{Event: f.s.event("stopped")}
-	ev.Body.Reason = reason
-	ev.Body.ThreadId = threadID
-	f.emit(ev)
-}
-
-func (f frontend) Output(category, text string) {
-	ev := &dap.OutputEvent{Event: f.s.event("output")}
-	ev.Body.Category = category
-	ev.Body.Output = text
-	f.emit(ev)
-}
-
-func (f frontend) Terminated() {
-	f.emit(&dap.TerminatedEvent{Event: f.s.event("terminated")})
-}
-
-func (f frontend) emit(msg dap.Message) {
+// Emit implements core.Frontend. Events with no DAP rendering yet are
+// dropped here; the entries that emit them add it.
+func (f frontend) Emit(ev core.Event) {
+	var msg dap.Message
+	switch e := ev.(type) {
+	case core.Paused:
+		m := &dap.StoppedEvent{Event: f.s.event("stopped")}
+		m.Body.Reason = e.Reason
+		m.Body.ThreadId = e.ThreadID
+		msg = m
+	case core.Continued:
+		m := &dap.ContinuedEvent{Event: f.s.event("continued")}
+		m.Body.ThreadId = e.ThreadID
+		m.Body.AllThreadsContinued = true
+		msg = m
+	case core.ThreadStarted:
+		m := &dap.ThreadEvent{Event: f.s.event("thread")}
+		m.Body.Reason, m.Body.ThreadId = "started", e.ThreadID
+		msg = m
+	case core.ThreadExited:
+		m := &dap.ThreadEvent{Event: f.s.event("thread")}
+		m.Body.Reason, m.Body.ThreadId = "exited", e.ThreadID
+		msg = m
+	case core.Output:
+		m := &dap.OutputEvent{Event: f.s.event("output")}
+		m.Body.Category = e.Category
+		m.Body.Output = e.Text
+		msg = m
+	case core.Terminated:
+		msg = &dap.TerminatedEvent{Event: f.s.event("terminated")}
+	default:
+		// StepStarted, StepFinished, MessagesSkipped, AttemptStarted,
+		// StatementStepped, BreakpointResolved, Delivered.
+		f.s.log.Debug("Session event without a DAP rendering", "event", fmt.Sprintf("%T", ev))
+		return
+	}
 	if err := f.s.send(msg); err != nil {
 		f.s.log.Warn("sending DAP event failed", "error", err)
 	}

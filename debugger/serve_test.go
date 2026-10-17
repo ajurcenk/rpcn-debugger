@@ -15,6 +15,8 @@ import (
 	"github.com/redpanda-data/benthos/v4/public/service"
 
 	_ "github.com/redpanda-data/benthos/v4/public/components/pure"
+
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 )
 
 // msg is one decoded DAP message.
@@ -134,6 +136,7 @@ func TestServeTracerSample(t *testing.T) {
 			c.send("stackTrace", map[string]any{"threadId": 1})
 			var st struct {
 				StackFrames []struct {
+					ID     int `json:"id"`
 					Line   int `json:"line"`
 					Source struct {
 						Path string `json:"path"`
@@ -141,20 +144,10 @@ func TestServeTracerSample(t *testing.T) {
 				} `json:"stackFrames"`
 			}
 			_ = json.Unmarshal(c.next("response", "stackTrace").Body, &st)
-			if len(st.StackFrames) != 1 || st.StackFrames[0].Line != 13 || st.StackFrames[0].Source.Path != pipeline {
-				t.Errorf("stack = %+v, want one frame at %s:13", st, pipeline)
+			if len(st.StackFrames) != 1 || st.StackFrames[0].Line != 16 || st.StackFrames[0].Source.Path != pipeline {
+				t.Fatalf("stack = %+v, want one frame at %s:16", st, pipeline)
 			}
-
-			c.send("variables", map[string]any{"variablesReference": 1})
-			var vars struct {
-				Variables []struct {
-					Value string `json:"value"`
-				} `json:"variables"`
-			}
-			_ = json.Unmarshal(c.next("response", "variables").Body, &vars)
-			if len(vars.Variables) != 1 || !strings.Contains(vars.Variables[0].Value, `"greeting":"hello"`) {
-				t.Errorf("variables = %+v", vars)
-			}
+			checkVariables(t, c, st.StackFrames[0].ID)
 
 			start := time.Now()
 			if resume != "disconnect" {
@@ -198,13 +191,85 @@ func TestServeBadYAML(t *testing.T) {
 	c.next("response", "initialize")
 	c.send("launch", map[string]any{"pipeline": path})
 	m := c.next("response", "launch")
-	if m.Success || !strings.Contains(m.Message, path) || !strings.Contains(m.Message, "line 4") {
-		t.Errorf("launch = %+v, want a failure naming %s and line 4", m, path)
+	if m.Success || !strings.Contains(m.Message, path) || !strings.Contains(m.Message, "line 4") || errorID(m) != core.Number(core.CodePipelineInvalid) {
+		t.Errorf("launch = %+v, want PIPELINE_INVALID naming %s and line 4", m, path)
 	}
 	c.send("launch", map[string]any{"pipeline": filepath.Join(t.TempDir(), "missing.yaml")})
-	if m := c.next("response", "launch"); m.Success || !strings.Contains(m.Message, "missing.yaml") {
-		t.Errorf("launch = %+v, want a failure naming missing.yaml", m)
+	if m := c.next("response", "launch"); m.Success || !strings.Contains(m.Message, "missing.yaml") || errorID(m) != core.Number(core.CodeLaunchInvalid) {
+		t.Errorf("launch = %+v, want LAUNCH_INVALID naming missing.yaml", m)
 	}
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
+}
+
+func errorID(m msg) int {
+	var body struct {
+		Error struct {
+			ID int `json:"id"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(m.Body, &body)
+	return body.Error.ID
+}
+
+type variable struct {
+	Name               string `json:"name"`
+	Value              string `json:"value"`
+	VariablesReference int    `json:"variablesReference"`
+}
+
+func (c *wire) variables(ref int) map[string]variable {
+	c.t.Helper()
+	c.send("variables", map[string]any{"variablesReference": ref})
+	var body struct {
+		Variables []variable `json:"variables"`
+	}
+	if err := json.Unmarshal(c.next("response", "variables").Body, &body); err != nil {
+		c.t.Fatal(err)
+	}
+	out := map[string]variable{}
+	for _, v := range body.Variables {
+		out[v.Name] = v
+	}
+	return out
+}
+
+// checkVariables walks Batches › batch 0 › message 0 of the tracer sample:
+// its content, its metadata (bytes as text) and the internal node.
+func checkVariables(t *testing.T, c *wire, frameID int) {
+	t.Helper()
+	c.send("scopes", map[string]any{"frameId": frameID})
+	var scopes struct {
+		Scopes []struct {
+			Name               string `json:"name"`
+			VariablesReference int    `json:"variablesReference"`
+		} `json:"scopes"`
+	}
+	_ = json.Unmarshal(c.next("response", "scopes").Body, &scopes)
+	if len(scopes.Scopes) != 1 || scopes.Scopes[0].Name != "Batches" {
+		t.Fatalf("scopes = %+v, want Batches", scopes)
+	}
+	batch, ok := c.variables(scopes.Scopes[0].VariablesReference)["batch 0"]
+	if !ok {
+		t.Fatal("no batch 0")
+	}
+	m, ok := c.variables(batch.VariablesReference)["message 0"]
+	if !ok {
+		t.Fatal("no message 0")
+	}
+	fields := c.variables(m.VariablesReference)
+	if !strings.Contains(fields["content"].Value, `"greeting":"hello"`) {
+		t.Errorf("content = %+v", fields["content"])
+	}
+	meta := c.variables(fields["metadata"].VariablesReference)
+	if meta["source"].Value != "tracer" || meta["kafka_key"].Value != "k1" {
+		t.Errorf("metadata = %+v, want source tracer and kafka_key k1", meta)
+	}
+	if _, ok := meta["__rpcn_internal"]; ok {
+		t.Error("the internal key is not under the internal node")
+	}
+	internal := c.variables(meta["internal"].VariablesReference)
+	if internal["__rpcn_internal"].Value != "x" {
+		t.Errorf("internal = %+v", internal)
+	}
 }

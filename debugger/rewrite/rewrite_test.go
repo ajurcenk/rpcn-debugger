@@ -75,7 +75,7 @@ func TestPosition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pos, ok := p.Position(0, 0); !ok || pos.Line != 5 || pos.Path != "pipeline.processors[0]" {
+	if pos, ok := p.Position(0, 0); !ok || pos.Line != 5 || pos.UserPath != "pipeline.processors[0]" {
 		t.Errorf("Position(0, 0) = %+v, %v", pos, ok)
 	}
 	for _, at := range [][2]int{{0, 1}, {1, 0}, {0, -1}} {

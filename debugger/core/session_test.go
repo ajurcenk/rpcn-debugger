@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,15 +23,15 @@ type fakeEngine struct {
 	checkErr  error
 	startErr  error
 	children  int
-	batch     BatchCopy
-	delivered chan BatchCopy
+	batch     []Batch
+	delivered chan []Batch
 }
 
 func (e *fakeEngine) Check(string, string) (LineMap, error) {
 	if e.checkErr != nil {
 		return nil, e.checkErr
 	}
-	return lines{{0, 0}: {Path: "pipeline.processors[0]", Line: 12}}, nil
+	return lines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 12}}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, _, _ string, a Arriver) error {
@@ -56,9 +57,23 @@ type recorder struct {
 
 func newRecorder() *recorder { return &recorder{events: make(chan event, 16)} }
 
-func (r *recorder) Stopped(reason string, _ int) { r.events <- event{"stopped", reason} }
-func (r *recorder) Output(_, text string)        { r.events <- event{"output", text} }
-func (r *recorder) Terminated()                  { r.events <- event{"terminated", ""} }
+func (r *recorder) Emit(ev Event) {
+	switch e := ev.(type) {
+	case Paused:
+		r.events <- event{"stopped", e.Reason}
+	case Output:
+		r.events <- event{"output", e.Text}
+	case Terminated:
+		r.events <- event{"terminated", ""}
+	default:
+		r.events <- event{fmt.Sprintf("%T", ev), ""}
+	}
+}
+
+func do(s *Session, cmd Command) error {
+	_, err := s.Do(context.Background(), cmd)
+	return err
+}
 
 func (r *recorder) next(t *testing.T) event {
 	t.Helper()
@@ -83,8 +98,8 @@ func (r *recorder) none(t *testing.T) {
 func newEngine() *fakeEngine {
 	return &fakeEngine{
 		children:  1,
-		batch:     BatchCopy{{Content: []byte(`{"n":1}`)}},
-		delivered: make(chan BatchCopy, 1),
+		batch:     []Batch{{Messages: []Message{{Content: Content{Raw: []byte(`{"n":1}`)}}}}},
+		delivered: make(chan []Batch, 1),
 	}
 }
 
@@ -92,19 +107,19 @@ func launched(t *testing.T, e *fakeEngine) (*Session, *recorder) {
 	t.Helper()
 	rec := newRecorder()
 	s := NewSession(e, rec)
-	if err := s.Launch("/p/pipeline.yaml", ""); err != nil {
+	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ConfigurationDone(); err != nil {
+	if err := do(s, ConfigurationDone{}); err != nil {
 		t.Fatal(err)
 	}
 	return s, rec
 }
 
 func TestStopThenResume(t *testing.T) {
-	for name, resume := range map[string]func(*Session) error{
-		"next":     (*Session).Next,
-		"continue": (*Session).Continue,
+	for name, resume := range map[string]Command{
+		"next":     Next{ThreadID: ThreadID},
+		"continue": Continue{ThreadID: ThreadID},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEngine()
@@ -116,11 +131,16 @@ func TestStopThenResume(t *testing.T) {
 			if !ok {
 				t.Fatal("no frame at the stop")
 			}
-			if f.Line != 12 || f.Path != "pipeline.processors[0]" || f.File != "/p/pipeline.yaml" ||
-				len(f.Messages) != 1 || string(f.Messages[0]) != `{"n":1}` {
-				t.Errorf("frame = %+v", f)
+			p := f.Snapshot.Position
+			if p.Line != 12 || p.UserPath != "pipeline.processors[0]" || p.File != "/p/pipeline.yaml" ||
+				p.ThreadID != ThreadID || p.FrameID != f.ID || p.StepperID != 0 || p.ChildIndex != 0 {
+				t.Errorf("position = %+v", p)
 			}
-			if err := resume(s); err != nil {
+			if f.Snapshot.SchemaVersion != SchemaVersion || len(f.Snapshot.Batches) != 1 ||
+				len(f.Snapshot.Batches[0].Messages) != 1 || string(f.Snapshot.Batches[0].Messages[0].Content.Raw) != `{"n":1}` {
+				t.Errorf("snapshot = %+v", f.Snapshot)
+			}
+			if err := do(s, resume); err != nil {
 				t.Fatal(err)
 			}
 			if ev := rec.next(t); ev.kind != "terminated" {
@@ -132,7 +152,7 @@ func TestStopThenResume(t *testing.T) {
 			if _, ok := s.Frame(); ok {
 				t.Error("frame still set after resume")
 			}
-			s.Disconnect()
+			_ = do(s, Terminate{})
 		})
 	}
 }
@@ -144,7 +164,7 @@ func TestOnlyFirstArriveStops(t *testing.T) {
 	if ev := rec.next(t); ev.kind != "stopped" {
 		t.Fatalf("event = %+v", ev)
 	}
-	if err := s.Next(); err != nil {
+	if err := do(s, Next{}); err != nil {
 		t.Fatal(err)
 	}
 	if ev := rec.next(t); ev.kind != "terminated" {
@@ -154,17 +174,17 @@ func TestOnlyFirstArriveStops(t *testing.T) {
 
 func TestLaunchErrors(t *testing.T) {
 	s := NewSession(newEngine(), newRecorder())
-	if err := s.Launch("", ""); err == nil || !strings.Contains(err.Error(), `"pipeline"`) {
-		t.Errorf("Launch without pipeline = %v, want an error naming pipeline", err)
+	if err := do(s, Launch{}); !HasCode(err, CodeLaunchInvalid) || !strings.Contains(err.Error(), `"pipeline"`) {
+		t.Errorf("Launch without pipeline = %v, want LAUNCH_INVALID naming pipeline", err)
 	}
 
 	e := newEngine()
 	e.checkErr = errors.New("/p/pipeline.yaml: yaml: line 3: bad")
 	s = NewSession(e, newRecorder())
-	if err := s.Launch("/p/pipeline.yaml", ""); err == nil || !strings.Contains(err.Error(), "line 3") {
-		t.Errorf("Launch = %v, want the check error", err)
+	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); !HasCode(err, CodePipelineInvalid) || !strings.Contains(err.Error(), "line 3") {
+		t.Errorf("Launch = %v, want PIPELINE_INVALID with the check error", err)
 	}
-	if err := s.ConfigurationDone(); err == nil {
+	if err := do(s, ConfigurationDone{}); !HasCode(err, CodeLaunchInvalid) {
 		t.Error("ConfigurationDone after a failed launch succeeded")
 	}
 }
@@ -173,7 +193,7 @@ func TestRelativePipeline(t *testing.T) {
 	var got string
 	e := &pathEngine{got: &got}
 	s := NewSession(e, newRecorder())
-	if err := s.Launch("sub/p.yaml", "/work"); err != nil {
+	if err := do(s, Launch{Pipeline: "sub/p.yaml", Cwd: "/work"}); err != nil {
 		t.Fatal(err)
 	}
 	if got != "/work/sub/p.yaml" {
@@ -184,7 +204,7 @@ func TestRelativePipeline(t *testing.T) {
 func TestRelativeCwdGivesAbsolutePipeline(t *testing.T) {
 	var got string
 	s := NewSession(&pathEngine{got: &got}, newRecorder())
-	if err := s.Launch("p.yaml", "rel/dir"); err != nil {
+	if err := do(s, Launch{Pipeline: "p.yaml", Cwd: "rel/dir"}); err != nil {
 		t.Fatal(err)
 	}
 	wd, err := os.Getwd()
@@ -211,7 +231,7 @@ func (e *pathEngine) Start(context.Context, string, string, Arriver) error {
 
 func TestNothingCaptured(t *testing.T) {
 	e := newEngine()
-	e.startErr = ErrNothingCaptured
+	e.startErr = NewError(CodeNothingCaptured, "no batch was captured: the input closed")
 	_, rec := launched(t, e)
 	if ev := rec.next(t); ev.kind != "output" || !strings.Contains(ev.detail, "no batch was captured") {
 		t.Fatalf("event = %+v, want an output naming the empty capture", ev)
@@ -227,28 +247,28 @@ func TestDisconnectWhileStopped(t *testing.T) {
 	if ev := rec.next(t); ev.kind != "stopped" {
 		t.Fatalf("event = %+v", ev)
 	}
-	s.Disconnect() // returns only once the engine run has returned
+	_ = do(s, Terminate{}) // returns only once the engine run has returned
 	select {
 	case b := <-e.delivered:
 		t.Fatalf("delivered %v after disconnect", b)
 	default:
 	}
 	rec.none(t)
-	if err := s.Next(); err == nil {
-		t.Error("Next after disconnect succeeded")
+	if err := do(s, Next{}); !HasCode(err, CodeSessionEnded) {
+		t.Errorf("Next after terminate = %v, want SESSION_ENDED", err)
 	}
-	s.Disconnect()
+	_ = do(s, Terminate{})
 }
 
 func TestResumeWhenNotStopped(t *testing.T) {
 	s := NewSession(newEngine(), newRecorder())
-	if err := s.Next(); err == nil {
-		t.Error("Next before a stop succeeded")
+	if err := do(s, Next{}); !HasCode(err, CodeNotStopped) {
+		t.Errorf("Next before a stop = %v, want NOT_STOPPED", err)
 	}
-	if err := s.Continue(); err == nil {
-		t.Error("Continue before a stop succeeded")
+	if err := do(s, Continue{}); !HasCode(err, CodeNotStopped) {
+		t.Errorf("Continue before a stop = %v, want NOT_STOPPED", err)
 	}
-	s.Disconnect()
+	_ = do(s, Terminate{})
 }
 
 // The gate is held while paused: a second Arrive (another thread) waits until
@@ -257,7 +277,7 @@ func TestGateHeldWhilePaused(t *testing.T) {
 	e := newEngine()
 	rec := newRecorder()
 	s := NewSession(e, rec)
-	if err := s.Launch("/p.yaml", ""); err != nil {
+	if err := do(s, Launch{Pipeline: "/p.yaml"}); err != nil {
 		t.Fatal(err)
 	}
 	s.mu.Lock()
@@ -276,7 +296,7 @@ func TestGateHeldWhilePaused(t *testing.T) {
 		t.Fatal("second Arrive passed the gate while the first was paused")
 	case <-time.After(50 * time.Millisecond):
 	}
-	if err := s.Continue(); err != nil {
+	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-first; err != nil {
@@ -285,4 +305,55 @@ func TestGateHeldWhilePaused(t *testing.T) {
 	if err := <-second; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestNotSupported(t *testing.T) {
+	e := newEngine()
+	s, rec := launched(t, e)
+	if ev := rec.next(t); ev.kind != "stopped" {
+		t.Fatalf("event = %+v", ev)
+	}
+	before, _ := s.Frame()
+	for _, cmd := range []Command{
+		StepIn{ThreadID: ThreadID}, StepOut{ThreadID: ThreadID}, Pause{ThreadID: ThreadID},
+		Evaluate{Expression: "this"}, SetMessage{}, SaveCapture{}, Restart{},
+	} {
+		res, err := s.Do(context.Background(), cmd)
+		var ce Error
+		if !errors.As(err, &ce) || ce.Code != CodeNotSupported || res != nil {
+			t.Errorf("%T = %v, %v; want NOT_SUPPORTED", cmd, res, err)
+		}
+	}
+	after, ok := s.Frame()
+	if !ok || after.ID != before.ID {
+		t.Errorf("frame after unsupported commands = %+v, %v; want unchanged", after, ok)
+	}
+	rec.none(t)
+	if err := do(s, Continue{}); err != nil {
+		t.Fatal(err)
+	}
+	if ev := rec.next(t); ev.kind != "terminated" {
+		t.Fatalf("event = %+v, want terminated", ev)
+	}
+}
+
+func TestSetBreakpointsUnverified(t *testing.T) {
+	s := NewSession(newEngine(), newRecorder())
+	res, err := s.Do(context.Background(), SetBreakpoints{File: "/p.yaml", Lines: []int{3, 7, 13}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bps := res.(SetBreakpointsResult).Breakpoints
+	if len(bps) != 3 {
+		t.Fatalf("breakpoints = %+v, want 3", bps)
+	}
+	for i, want := range []int{3, 7, 13} {
+		if bps[i].Line != want || bps[i].Verified || bps[i].Message == "" {
+			t.Errorf("breakpoint %d = %+v, want unverified at line %d with a message", i, bps[i], want)
+		}
+	}
+	if res, err := s.Do(context.Background(), SetExceptionBreakpoints{}); res != nil || err != nil {
+		t.Errorf("SetExceptionBreakpoints = %v, %v", res, err)
+	}
+	_ = do(s, Terminate{})
 }

@@ -1,7 +1,6 @@
 package debugger
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -42,11 +41,12 @@ func Serve(env *service.Environment, in io.Reader, out io.Writer, opts ...Option
 func loadPipeline(path string) (engine.Configs, core.LineMap, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return engine.Configs{}, nil, fmt.Errorf("read the pipeline: %w", err)
+		// The launch's "pipeline" names no readable file.
+		return engine.Configs{}, nil, core.NewError(core.CodeLaunchInvalid, "read the pipeline: %v", err)
 	}
 	plan, err := rewrite.Rewrite(raw)
 	if err != nil {
-		return engine.Configs{}, nil, fmt.Errorf("%s: %w", path, err)
+		return engine.Configs{}, nil, core.NewError(core.CodePipelineInvalid, "%s: %v", path, err)
 	}
 	return engine.Configs{Input: plan.Input, Resources: plan.Resources, Stepper: plan.Stepper}, plan, nil
 }
