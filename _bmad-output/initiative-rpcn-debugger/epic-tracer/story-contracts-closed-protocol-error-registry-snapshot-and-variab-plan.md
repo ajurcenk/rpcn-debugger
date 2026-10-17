@@ -3,7 +3,7 @@ title: 'Contracts: closed protocol, error registry, Snapshot and Variables tree'
 type: 'feature'
 ticket: '2'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: '1399b01ad2464b58c86b9058fb874128fd0a2f80'
 route: 'full'
 route_source: 'auto'
@@ -139,6 +139,8 @@ context:
 - `core.AsError` on an error that wraps a `core.Error` keeps the wrapped Code/UserPath/Line and uses the full wrapped text as Message.
 - Events with no DAP rendering yet (StepStarted, StepFinished, MessagesSkipped, AttemptStarted, StatementStepped, BreakpointResolved, Delivered) are logged at debug level and dropped by the DAP frontend. The Session emits only Paused, Output and Terminated in this entry.
 - The tracer sample's mapping moved from line 13 to 16 (three `meta` lines added); goldens and TS/Go tests follow.
+
+- 2026-10-16 F5 check (user): the first try showed the YAML margin refused breakpoints. VS Code only allows them in languages a debugger declares in `contributes.breakpoints`, so `"breakpoints": [{"language": "yaml"}]` was added to vscode/package.json. After that the user confirmed: the breakpoint is set, the session stops at the mapping, and Variables shows content, metadata and the internal node. AC 1 and 3 are met.
 
 ## Review Triage Log
 
