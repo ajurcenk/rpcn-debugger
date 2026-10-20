@@ -3,7 +3,7 @@ title: 'Rewrite: step and capture configs for every non-concurrent parent'
 type: 'feature'
 ticket: '5'
 created: '2026-10-16'
-status: 'built'
+status: done
 baseline_revision: 'b4e9c3374ccdaf2f194897c6ba11fa9ad0444b4b'
 route: 'full'
 route_source: 'auto'
@@ -140,6 +140,8 @@ Each stepper carries a dense `id`, `parent`, `mode` (AD-7 table), `strict` and `
 - `core.CheckResult{Lines, Warnings}` replaces the LineMap return of `Engine.Check`. The Session emits each warning as `Output{Category: "console", Text: "Warning: …"}` at the end of launch, so it reaches DAP before the launch response.
 - Review fixes: merge keys (`<<`) are expanded during alias resolution (explicit keys win, then earlier sources). An interpolated `retry.parallel` counts as concurrent. An interpolated `error_handling.strict` is written verbatim into each stepper, with a warning. Otherwise strict reaches the step stream through `Plan.Strict` → `Configs.Strict` → `StreamBuilder.SetStrict`. Processor lists below the top level of the input or output tree get a warning. Unknown parents are found at any depth, and resources referenced from inside them stay unwrapped. YAML parse errors drop the duplicated "yaml: line N: " prefix.
 - `TestNothingCaptured` (engine) now uses an input that closes at once. Its old setup (`input.processors` deleting the message) is now `TestInputProcessorsAreStepped`, because input.processors run in the step stream.
+
+- 2026-10-19 F5 check (user): `testdata/tracer/nested.yaml` stopped at the first `input.processors` child with no warnings and Continue ended the session; a scratch pipeline with `parallel` showed the warning in the Debug Console and still ran. AC 1 and 2 are met. The scratch file was deleted.
 
 ## Review Triage Log
 
