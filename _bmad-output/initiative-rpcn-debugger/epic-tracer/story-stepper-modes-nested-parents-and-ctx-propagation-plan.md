@@ -3,7 +3,7 @@ title: 'Stepper modes, nested parents and ctx propagation'
 type: 'feature'
 ticket: '7'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: 'a01020c6a1a287c93bb0ddfe6737b75a278b2ea2'
 route: 'full'
 route_source: 'auto'
@@ -137,6 +137,8 @@ Frames carry no repeat label, so the five `for_each` entries look identical. Not
 - DAP: `MessagesSkipped` and `AttemptStarted` render as console Output (the skip with source/line); `StepStarted`/`StepFinished` stay unrendered (labels show in frame names).
 - `test/dapdrive`: `Run(ctx, Options{Pipeline, Launch, Script, Env, LogOutput, MaxStops}) (Result, error)`; `Result{Stops, Output, Delivered}`. A stop's user path is resolved from the rewrite's LineMap by (frame list path, line). `Delivered` is the last stop's batches when it is a top-level end stop (no Delivered event until 2.8). Tests compare each parent sample's delivery against `equivalence.Case.RunReference`.
 - The `generate-mapping` equivalence case can't be compared through the driver: its input emits 3 single-message batches and the debugger steps only the first captured one (2.9's concern). `task test:equivalence` still passes.
+
+- 2026-10-20 VS Code check (user): for_each showed `[msg 1/3]`…`[msg 3/3]`; try labelled its frames, skipped the failed message and reported it in the Debug Console; retry showed attempt labels, the attempt lines and one time-budget warning. All ACs met.
 
 ## Review Triage Log
 

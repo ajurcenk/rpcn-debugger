@@ -3,7 +3,7 @@
 # [msg 1/3], [msg 2/3], [msg 3/3].
 input:
   generate:
-    count: 3
+    count: 10
     batch_size: 3
     interval: ""
     mapping: |
