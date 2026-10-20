@@ -3,7 +3,7 @@ title: 'Launch contract: LaunchConfig, generated schema and extension wiring'
 type: 'feature'
 ticket: '3'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: '61ffd0a6fa40fedc286fe77318a69ef1afdd9c62'
 route: 'full'
 route_source: 'auto'
@@ -120,6 +120,8 @@ context:
 - Engine port: `Engine.Start(ctx, core.StartOptions{Pipeline, Cwd, MaxMessages}, Arriver)`. The truncation count reaches the Session through a new `Arriver.Captured(kept, total)`, called once before the first `Arrive`; the Session emits the console Output "captured N of M messages (maxMessages)" only when `kept < total`. The dropped messages are nacked with the rest.
 - Generator (`cmd/gen-launch-schema`): parses package.json into an order-preserving tree, replaces `configurationAttributes` (appended after `initialConfigurations` the first time) and `initialConfigurations`, writes two-space JSON without HTML escaping. Generated maps have sorted keys; the initial entry is reordered to type, request, name first. `-check` exits 1 naming the stale file.
 - `adapter.test.ts` gained the unknown-key failure and the 12 → 10 truncation (Output line plus 10 Variables entries) against the real binary.
+
+- 2026-10-19 VS Code check (user): launch.json IntelliSense offers the five keys and flags `maxMessages: 0`; F5 with `maxMesages` fails naming it; F5 on `batch12.yaml` shows 10 messages and the truncation line. All ACs met.
 
 ## Review Triage Log
 
