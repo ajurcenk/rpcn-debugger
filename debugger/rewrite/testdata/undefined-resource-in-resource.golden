@@ -1,0 +1,4 @@
+error: resource "missing" is not defined in processor_resources
+code: PIPELINE_INVALID
+line: 14
+path: processor_resources.outer.try[0]

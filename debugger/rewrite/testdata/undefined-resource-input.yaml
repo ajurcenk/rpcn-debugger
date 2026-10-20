@@ -1,0 +1,12 @@
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+        processors:
+          - resource: absent
+
+output:
+  drop: {}

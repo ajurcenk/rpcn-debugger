@@ -1,0 +1,40 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+processor_resources:
+    - label: named
+      mapping: 'root = this'
+cache_resources:
+    - label: mem
+      memory: {}
+rate_limit_resources:
+    - label: rl
+      local:
+        count: 100
+        interval: 1s
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [11, 16, 18]
+    processors:
+        - cache:
+            resource: mem
+            operator: set
+            key: k
+            value: v
+        - rate_limit:
+            resource: rl
+        - resource: ${PROC:named}
+# warnings
+# lines
+(0, 0) pipeline.processors[0] line 11
+(0, 1) pipeline.processors[1] line 16
+(0, 2) pipeline.processors[2] line 18
+(0, 3) pipeline.processors line 10

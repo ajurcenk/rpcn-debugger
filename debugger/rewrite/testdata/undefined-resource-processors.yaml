@@ -1,0 +1,19 @@
+# The bare-list processors processor, as a resource body and inside parallel.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - resource: a
+
+processor_resources:
+  - label: a
+    processors:
+      - mapping: 'root = this'
+      - resource: nope
+
+output:
+  drop: {}

@@ -21,3 +21,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-session-stepping-semantics-frames-and-threads-plan.md`
   summary: next/stepIn/stepOut resume every thread but tell the client only about the stepped one; emit a DAP `continued` event with `allThreadsContinued: true` (the Session never emits `core.Continued`) — for epic-concurrency, which introduces more than one thread.
   evidence: AD-9 says every resume is process-wide with allThreadsContinued; only the `continue` response carries the flag. Invisible with this epic's single root thread.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-rewrite-rejects-undefined-resource-references-plan.md`
+  summary: The AD-7 child-list table (branch/while/retry → processors; try/catch/for_each → list; switch/group_by → cases[].processors) is hand-copied in walker.processor, childLists, refChecker.processor and the taint scan (scanProcessor/refs); unify it into one table so a new AD-7 parent can't be added to one walk and missed by the others — for the 2.10 refactor sweep.
+  evidence: debugger/rewrite/walk.go and refs.go; the 2.13 review found the copies already drifting (opaque vs refs reference search).

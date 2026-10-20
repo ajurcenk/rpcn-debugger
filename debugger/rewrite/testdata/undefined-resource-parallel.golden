@@ -1,0 +1,4 @@
+error: resource "gone" is not defined in processor_resources
+code: PIPELINE_INVALID
+line: 12
+path: pipeline.processors[0].parallel.processors[0].processors[0]

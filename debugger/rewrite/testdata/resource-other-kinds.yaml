@@ -1,0 +1,35 @@
+# resource: inside cache and rate_limit names other resource kinds; an
+# interpolated processor reference is left to the engine.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - cache:
+        resource: mem
+        operator: set
+        key: k
+        value: v
+    - rate_limit:
+        resource: rl
+    - resource: ${PROC:named}
+
+processor_resources:
+  - label: named
+    mapping: 'root = this'
+
+cache_resources:
+  - label: mem
+    memory: {}
+
+rate_limit_resources:
+  - label: rl
+    local:
+      count: 100
+      interval: 1s
+
+output:
+  drop: {}

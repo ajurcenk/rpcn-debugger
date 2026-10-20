@@ -1,0 +1,17 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - resource: outer
+
+processor_resources:
+  - label: outer
+    try:
+      - resource: missing
+
+output:
+  drop: {}

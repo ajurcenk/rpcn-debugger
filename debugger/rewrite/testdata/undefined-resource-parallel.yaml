@@ -1,0 +1,15 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - parallel:
+        processors:
+          - processors:
+              - resource: gone
+
+output:
+  drop: {}

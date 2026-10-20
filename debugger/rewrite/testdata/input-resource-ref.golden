@@ -1,0 +1,13 @@
+# input
+broker:
+    inputs:
+        - resource: in1
+# resources
+input_resources:
+    - label: in1
+      generate:
+        count: 1
+        interval: ""
+        mapping: 'root = {}'
+# warnings
+# lines

@@ -122,6 +122,15 @@ func Rewrite(src []byte) (Plan, error) {
 		return Plan{}, invalid(resources.Line, "processor_resources", "processor_resources is not a list")
 	}
 
+	// An undefined resource reference would hang the run (entry 2.13).
+	paths := make([]string, len(sections))
+	for i, s := range sections {
+		paths[i] = s.name + ".processors"
+	}
+	if err := checkResourceRefs(lists, paths, resources, input, value(root, "input_resources")); err != nil {
+		return Plan{}, err
+	}
+
 	// Resources used inside a concurrent parent stay unwrapped (epic
 	// decision 2026-10-16): their steppers would run on several goroutines.
 	w.tainted = taintedResources(lists, resources)

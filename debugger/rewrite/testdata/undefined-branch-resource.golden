@@ -1,0 +1,4 @@
+error: resource "b" is not defined in processor_resources
+code: PIPELINE_INVALID
+line: 10
+path: pipeline.processors[0].workflow.branch_resources[1]

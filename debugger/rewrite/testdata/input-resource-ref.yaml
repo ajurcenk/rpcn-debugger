@@ -1,0 +1,15 @@
+# A broker input naming an input resource is not a processor reference.
+input:
+  broker:
+    inputs:
+      - resource: in1
+
+input_resources:
+  - label: in1
+    generate:
+      count: 1
+      interval: ""
+      mapping: 'root = {}'
+
+output:
+  drop: {}

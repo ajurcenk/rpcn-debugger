@@ -1,0 +1,19 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - workflow:
+        branch_resources: [ a, b ]
+
+processor_resources:
+  - label: a
+    branch:
+      processors:
+        - mapping: 'root = this'
+
+output:
+  drop: {}

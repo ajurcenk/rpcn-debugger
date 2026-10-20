@@ -515,6 +515,28 @@ func TestServeStdinInBroker(t *testing.T) {
 	c.next("response", "disconnect")
 }
 
+// TestServeUndefinedResource is entry 2.13: a reference to an undefined
+// processor resource fails the launch instead of hanging the run.
+func TestServeUndefinedResource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "undefined.yaml")
+	src := "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {}'\n" +
+		"pipeline:\n  processors:\n    - resource: nope\noutput:\n  drop: {}\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	c.send("initialize", map[string]any{})
+	c.next("response", "initialize")
+	c.send("launch", map[string]any{"pipeline": path})
+	m := c.next("response", "launch")
+	if m.Success || errorID(m) != core.Number(core.CodePipelineInvalid) ||
+		!strings.Contains(m.Message, `"nope"`) || !strings.Contains(m.Message, "pipeline.processors[0], line 8") {
+		t.Errorf("launch = %+v, want PIPELINE_INVALID naming nope at pipeline.processors[0], line 8", m)
+	}
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+}
+
 // syncBuffer is a bytes.Buffer safe for the log handler's writes and the
 // test's reads.
 type syncBuffer struct {

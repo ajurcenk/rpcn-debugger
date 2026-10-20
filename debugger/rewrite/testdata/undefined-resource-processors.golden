@@ -1,0 +1,4 @@
+error: resource "nope" is not defined in processor_resources
+code: PIPELINE_INVALID
+line: 16
+path: processor_resources.a.processors[1]
