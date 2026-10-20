@@ -3,7 +3,7 @@ title: 'Rewrite rejects undefined resource references'
 type: 'bugfix'
 ticket: '13'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: '16d518b79d8250642463e4b6a4b014be52e8a8ad'
 route: 'oneshot'
 route_source: 'auto'
