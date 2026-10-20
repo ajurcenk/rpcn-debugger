@@ -2,6 +2,7 @@ package debugger
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,13 +40,13 @@ type wire struct {
 	done chan error
 }
 
-func serve(t *testing.T) *wire {
+func serve(t *testing.T, opts ...Option) *wire {
 	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	c := &wire{t: t, w: inW, msgs: make(chan msg, 64), done: make(chan error, 1)}
 	go func() {
-		err := Serve(service.NewEnvironment(), inR, outW)
+		err := Serve(service.NewEnvironment(), inR, outW, opts...)
 		_ = outW.Close()
 		c.done <- err
 	}()
@@ -511,4 +513,126 @@ func TestServeStdinInBroker(t *testing.T) {
 	}
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
+}
+
+// syncBuffer is a bytes.Buffer safe for the log handler's writes and the
+// test's reads.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// A processor error reaches the Debug Console as an output event naming
+// the user's processor and file line, never a stepper, and the same text
+// reaches the log output; ${VAR} resolves from the launch's env; and the
+// engine's Info chatter stays off the Debug Console.
+func TestServeLogsAndEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "throw.yaml")
+	src := `input:
+  generate: {count: 1, interval: "", mapping: 'root = {}'}
+pipeline:
+  processors:
+    - mapping: 'root.g = "${RPCN_DEBUG_TEST_GREETING}"'
+    - mapping: |
+        root.x = 1
+        root.y = throw("boom")
+output:
+  drop: {}
+`
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var logs syncBuffer
+	c := serve(t, WithLogOutput(&logs))
+	c.send("initialize", map[string]any{"adapterID": "redpanda-connect"})
+	c.next("response", "initialize")
+	c.send("launch", map[string]any{"pipeline": path, "env": map[string]string{"RPCN_DEBUG_TEST_GREETING": "hi"}})
+	if m := c.next("response", "launch"); !m.Success {
+		t.Fatalf("launch failed: %s", m.Message)
+	}
+	c.next("event", "initialized")
+	c.send("configurationDone", map[string]any{})
+	c.next("response", "configurationDone")
+	c.next("event", "thread")
+	c.next("event", "stopped")
+	frames := c.stepTo("next", 6, 1)
+	if got := c.content(frames[0].ID); !strings.Contains(got, `"g":"hi"`) {
+		t.Errorf("content before the second mapping = %s, want g: hi", got)
+	}
+
+	c.send("continue", map[string]any{"threadId": 1})
+	c.next("response", "continue")
+	var outputs []struct {
+		Category string `json:"category"`
+		Output   string `json:"output"`
+	}
+	for done := false; !done; {
+		select {
+		case m, ok := <-c.msgs:
+			if !ok {
+				t.Fatal("stream closed before terminated")
+			}
+			switch {
+			case m.Type == "event" && m.Event == "output":
+				var body struct {
+					Category string `json:"category"`
+					Output   string `json:"output"`
+				}
+				_ = json.Unmarshal(m.Body, &body)
+				outputs = append(outputs, body)
+			case m.Type == "event" && m.Event == "terminated":
+				done = true
+			case m.Type == "event" && m.Event == "thread":
+			default:
+				t.Fatalf("unexpected %+v", m)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("timed out waiting for terminated")
+		}
+	}
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+
+	var errLine string
+	for _, o := range outputs {
+		if strings.Contains(o.Output, "Input type") || strings.Contains(o.Output, "now active") {
+			t.Errorf("Info chatter reached the Debug Console: %q", o.Output)
+		}
+		if strings.Contains(o.Output, "boom") {
+			errLine = o.Output
+			if o.Category != "stderr" {
+				t.Errorf("error output category = %q, want stderr", o.Category)
+			}
+		}
+	}
+	if errLine == "" {
+		t.Fatalf("no output event for the processor error; outputs %+v", outputs)
+	}
+	if !strings.Contains(errLine, "path=pipeline.processors[1]") || !strings.Contains(errLine, "(line 8)") ||
+		strings.Contains(errLine, "rpcn_debug_stepper") {
+		t.Errorf("error output = %q, want pipeline.processors[1] and line 8, without rpcn_debug_stepper", errLine)
+	}
+	t.Logf("error output: %q", errLine)
+	got := logs.String()
+	if !strings.Contains(got, errLine) {
+		t.Errorf("log output lacks the error line %q:\n%s", errLine, got)
+	}
+	if !strings.Contains(got, "now active") {
+		t.Errorf("log output lacks the engine's Info lines:\n%s", got)
+	}
+	if strings.Contains(got, "rpcn_debug_stepper") || strings.Contains(got, "hi\"") {
+		t.Errorf("log output has a stepper path or the env value:\n%s", got)
+	}
 }

@@ -29,16 +29,30 @@ type LineMap interface {
 	Position(stepperID, childIndex int) (Position, bool)
 }
 
-// Translate maps an engine path (as in engine logs and errors) to the
-// user's path (AD-6). debugger/rewrite implements it with entry 2.5.
+// Translate maps what the engine reports to the user's file (AD-6):
+// debugger/rewrite implements it. The single slog handler translates every
+// log record through it before the record reaches stderr or a frontend.
 type Translate interface {
+	// Translate maps an engine path (the path attribute of an engine log
+	// record, e.g. root.pipeline.processors.0.rpcn_debug_stepper.processors.1)
+	// to the user's path (pipeline.processors[1]). ok is false, and
+	// enginePath comes back unchanged, when it maps to nothing.
 	Translate(enginePath string) (userPath string, ok bool)
+	// TranslateLine maps line, a 1-based line inside the Bloblang mapping of
+	// the processor at enginePath (a mapping, mutation or bloblang
+	// processor), to its line in the pipeline file. ok is false when the
+	// processor has no such mapping or its value isn't a literal block or a
+	// plain scalar on the key's line (folded and quoted values).
+	TranslateLine(enginePath string, line int) (fileLine int, ok bool)
 }
 
 // CheckResult is what Engine.Check found in a pipeline that can run.
 type CheckResult struct {
 	// Lines maps the rewrite's stop positions to the user's file.
 	Lines LineMap
+	// Translator maps engine paths and Bloblang lines to the user's file.
+	// It may be nil.
+	Translator Translate
 	// Warnings are the launch warnings for the user (opaque parents, stdio
 	// redirects), in rewrite order. The Session emits each as an Output.
 	Warnings []string
@@ -47,9 +61,11 @@ type CheckResult struct {
 // Engine is the port the Session reaches the engine through. The adapter
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
-	// Check reads and rewrites the pipeline file without running anything.
-	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
-	Check(pipeline, cwd string) (CheckResult, error)
+	// Check reads and rewrites the pipeline file opts.Pipeline and parses
+	// and lints it without running anything, resolving ${VAR} through
+	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages. Its
+	// error fails the launch; a non-Error one is PIPELINE_INVALID.
+	Check(opts StartOptions) (CheckResult, error)
 	// Start captures one batch from the pipeline's input, keeps at most
 	// opts.MaxMessages of it, and steps it through the processors, calling
 	// a.Captured once and a.Arrive at every stop position. It returns nil
@@ -68,6 +84,10 @@ type StartOptions struct {
 	// MaxMessages is the most messages of the captured batch to step; the
 	// rest are dropped, never acked. 0 means no limit.
 	MaxMessages int
+	// Lookup resolves the pipeline's ${VAR} interpolations (AD-22): the
+	// launch's env, then its envFile, then the process environment. nil
+	// means the process environment only.
+	Lookup func(name string) (string, bool)
 }
 
 // Frontend receives the Session's events. Emit may be called from any

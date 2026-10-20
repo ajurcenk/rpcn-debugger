@@ -22,11 +22,12 @@ type Launch struct {
 	// (AD-4); the rest are dropped, never acked. 0 means no limit.
 	MaxMessages int
 	// Env holds environment variables for the pipeline's ${VAR}
-	// interpolations. Carried, not applied yet (entry 2.4, AD-22).
+	// interpolations. It overrides EnvFile and the process environment
+	// (AD-22).
 	Env map[string]string
-	// EnvFile names a file of environment variables; a relative one
-	// resolves against Cwd, and it must exist. Carried, not applied yet
-	// (entry 2.4, AD-22).
+	// EnvFile names a dotenv file of environment variables; a relative one
+	// resolves against Cwd, and it must exist. It overrides the process
+	// environment (AD-22).
 	EnvFile string
 }
 

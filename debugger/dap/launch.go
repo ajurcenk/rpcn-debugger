@@ -32,9 +32,9 @@ type LaunchConfig struct {
 
 	MaxMessages int `json:"maxMessages" default:"10" min:"1" max:"1024" desc:"The most messages of the captured batch to step through, at most 1024. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept."`
 
-	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Parsed and validated, but not applied yet."`
+	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Applied last: env overrides envFile, which overrides the debugger's own environment."`
 
-	EnvFile string `json:"envFile" min:"1" desc:"A file of NAME=value environment variables for the pipeline's ${VAR} interpolations. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Parsed and validated, but not applied yet."`
+	EnvFile string `json:"envFile" min:"1" desc:"A dotenv file of NAME=value environment variables for the pipeline's ${VAR} interpolations: # comments, blank lines, an optional export prefix and quoted values are allowed. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Applied after the debugger's own environment and before env, so env overrides it."`
 }
 
 // vsCodeKeys are the keys VS Code itself adds to launch configs. They are

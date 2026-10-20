@@ -24,11 +24,27 @@ import (
 // to out (AD-15). Serve returns nil after disconnect or on a clean EOF, and
 // an error on a malformed frame or a failed write. Either way the session is
 // disconnected first.
-func Serve(in io.Reader, out io.Writer, log *slog.Logger, eng core.Engine) error {
+//
+// log receives the server's own diagnostics. It must not send records back
+// to this server as events: the server logs while it holds its write lock.
+func Serve(in io.Reader, out io.Writer, log *slog.Logger, eng core.Engine, opts ...Option) error {
 	s := &server{r: bufio.NewReader(in), w: out, log: log}
 	s.sess = core.NewSession(eng, frontend{s})
+	for _, opt := range opts {
+		opt(s)
+	}
 	defer func() { _, _ = s.do(core.Terminate{}) }()
 	return s.run()
+}
+
+// Option configures Serve.
+type Option func(*server)
+
+// OnSession calls fn with the Session once Serve has built it, before the
+// first request is read. The debugger's log handler uses it to send engine
+// logs as Output events through the Session (AD-15).
+func OnSession(fn func(*core.Session)) Option {
+	return func(s *server) { fn(s.sess) }
 }
 
 // do runs one protocol command on the Session.

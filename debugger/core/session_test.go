@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,11 +79,12 @@ type fakeEngine struct {
 	// own size, untruncated.
 	captured [2]int
 	opts     chan StartOptions
+	tr       Translate // returned by Check
 }
 
-func (e *fakeEngine) Check(string, string) (CheckResult, error) {
+func (e *fakeEngine) Check(StartOptions) (CheckResult, error) {
 	if e.checkErr != nil {
-		return CheckResult{}, e.checkErr
+		return CheckResult{Translator: e.tr}, e.checkErr
 	}
 	l := e.lines
 	if l == nil {
@@ -91,7 +93,7 @@ func (e *fakeEngine) Check(string, string) (CheckResult, error) {
 			{0, e.children}: {UserPath: "pipeline.processors", Line: 11},
 		}
 	}
-	return CheckResult{Lines: l, Warnings: e.warnings}, nil
+	return CheckResult{Lines: l, Translator: e.tr, Warnings: e.warnings}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) error {
@@ -325,7 +327,8 @@ func TestRelativeCwdGivesAbsolutePipeline(t *testing.T) {
 
 type pathEngine struct{ got *string }
 
-func (e *pathEngine) Check(p, _ string) (CheckResult, error) {
+func (e *pathEngine) Check(o StartOptions) (CheckResult, error) {
+	p := o.Pipeline
 	*e.got = p
 	return CheckResult{Lines: lines{}}, nil
 }
@@ -491,8 +494,11 @@ func TestLaunchOptionsReachTheEngine(t *testing.T) {
 	t.Cleanup(func() { _ = do(s, Terminate{}) })
 	select {
 	case got := <-e.opts:
-		if want := (StartOptions{Pipeline: "/w/p.yaml", Cwd: "/w", MaxMessages: 7}); got != want {
-			t.Errorf("Start options = %+v, want %+v", got, want)
+		if got.Lookup == nil {
+			t.Error("Start options have no Lookup")
+		}
+		if got.Pipeline != "/w/p.yaml" || got.Cwd != "/w" || got.MaxMessages != 7 {
+			t.Errorf("Start options = %+v, want /w/p.yaml in /w, maxMessages 7", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the engine did not start")
@@ -568,4 +574,52 @@ func TestNoTruncationNoOutput(t *testing.T) {
 		t.Errorf("first event = %+v, want stopped and no output", ev)
 	}
 	_ = do(s, Terminate{})
+}
+
+// prefixTranslate maps engine paths under its prefix to user.
+type prefixTranslate struct{ prefix, user string }
+
+func (p prefixTranslate) Translate(e string) (string, bool) {
+	if strings.HasPrefix(e, p.prefix) {
+		return p.user, true
+	}
+	return e, false
+}
+
+func (prefixTranslate) TranslateLine(string, int) (int, bool) { return 0, false }
+
+// A run failure names the user's path, not the engine's (AD-6).
+func TestRunFailureTranslated(t *testing.T) {
+	e := newEngine()
+	e.tr = prefixTranslate{"root.pipeline.processors.0", "pipeline.processors[1]"}
+	e.startErr = errors.New("boom at root.pipeline.processors.0.rpcn_debug_stepper.processors.1")
+	_, rec := launched(t, e)
+	ev := rec.next(t)
+	if ev.kind != "output" || !strings.Contains(ev.detail, "boom at pipeline.processors[1]") || strings.Contains(ev.detail, "rpcn_debug_stepper") {
+		t.Errorf("event = %+v, want the failure naming pipeline.processors[1]", ev)
+	}
+}
+
+// A launch error from Check names the user's path.
+func TestLaunchErrorTranslated(t *testing.T) {
+	e := newEngine()
+	e.tr = prefixTranslate{"root.pipeline.processors.0", "pipeline.processors"}
+	e.checkErr = errors.New("bad config at root.pipeline.processors.0.rpcn_debug_stepper")
+	s := NewSession(e, newRecorder())
+	err := do(s, Launch{Pipeline: "/p/pipeline.yaml"})
+	if !HasCode(err, CodePipelineInvalid) || !strings.Contains(err.Error(), "at pipeline.processors") || strings.Contains(err.Error(), "rpcn_debug_stepper") {
+		t.Errorf("launch = %v, want PIPELINE_INVALID naming pipeline.processors", err)
+	}
+}
+
+// Once the run has emitted Terminated, log records reach the frontend no
+// more: the streams' shutdown logs would follow it.
+func TestLogAfterRunTerminated(t *testing.T) {
+	e := newEngine()
+	e.startErr = NewError(CodeNothingCaptured, "no batch")
+	s, rec := launched(t, e)
+	for ev := rec.next(t); ev.kind != "terminated"; ev = rec.next(t) {
+	}
+	s.Log(slog.LevelError, "late\n")
+	rec.none(t)
 }

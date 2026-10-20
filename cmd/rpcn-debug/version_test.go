@@ -94,6 +94,26 @@ func TestRunNoArgs(t *testing.T) {
 	}
 }
 
+// The server's diagnostics go to the injected stderr, never to stdout.
+func TestRunLogsToStderr(t *testing.T) {
+	stdin := strings.NewReader(
+		dapFrame(`{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"redpanda-connect"}}`))
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, stdin, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit code = %d, want 0 (stderr %q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "DAP client closed the stream before disconnect") {
+		t.Errorf("stderr = %q, want the server's EOF notice", stderr.String())
+	}
+	r := bufio.NewReader(&stdout)
+	if _, err := readFrame(r); err != nil {
+		t.Fatalf("initialize response: %v", err)
+	}
+	if rest, _ := io.ReadAll(r); len(rest) != 0 {
+		t.Errorf("unexpected extra stdout: %q", rest)
+	}
+}
+
 func TestRunUnknownFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--nope"}, strings.NewReader(""), &stdout, &stderr); code != 2 {

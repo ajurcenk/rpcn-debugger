@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -117,9 +118,12 @@ type Session struct {
 	pipeline    string
 	cwd         string
 	maxMessages int
-	env         map[string]string // carried for entry 2.4, not applied
-	envFile     string            // carried for entry 2.4, not applied
+	env         map[string]string
+	envFile     string
+	lookup      func(string) (string, bool) // env, then envFile, then the process (AD-22)
 	lines       LineMap
+	translate   Translate
+	runDone     bool // the run emitted Terminated: Log sends nothing more
 	launched    bool
 	configured  bool
 	breakpoints map[string][]int
@@ -218,6 +222,7 @@ func (s *Session) launch(c Launch) error {
 	}
 	pipeline := resolve(cwd, c.Pipeline)
 	envFile := ""
+	var fileEnv map[string]string
 	if c.EnvFile != "" {
 		envFile = resolve(cwd, c.EnvFile)
 		fi, err := os.Stat(envFile)
@@ -229,6 +234,14 @@ func (s *Session) launch(c Launch) error {
 		}
 		if fi.IsDir() {
 			return NewError(CodeLaunchInvalid, `"envFile" %s is a directory, not a file`, envFile)
+		}
+		raw, err := os.ReadFile(envFile)
+		if err != nil {
+			return NewError(CodeLaunchInvalid, `"envFile": %v`, err)
+		}
+		// The error names the line, never its value (AD-22).
+		if fileEnv, err = parseDotenv(string(raw)); err != nil {
+			return NewError(CodeLaunchInvalid, `envFile %v (in %s)`, err, envFile)
 		}
 	}
 	var env map[string]string
@@ -248,14 +261,19 @@ func (s *Session) launch(c Launch) error {
 	}
 	s.mu.Unlock()
 
-	res, err := s.engine.Check(pipeline, cwd)
+	// Check and Start resolve ${VAR} through the same lookup, so lint and
+	// parse see the values the run gets (AD-22).
+	lookup := EnvLookup(fileEnv, env)
+	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup})
 	if err != nil {
-		return AsError(err, CodePipelineInvalid)
+		ce, _ := AsError(err, CodePipelineInvalid).(Error)
+		ce.Message = TranslateText(res.Translator, ce.Message)
+		return ce
 	}
 
 	s.mu.Lock()
-	s.pipeline, s.cwd, s.lines, s.launched = pipeline, cwd, res.Lines, true
-	s.maxMessages, s.env, s.envFile = c.MaxMessages, env, envFile
+	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
+	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
 	for _, w := range res.Warnings {
@@ -283,7 +301,7 @@ func (s *Session) configurationDone() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.done = cancel, make(chan struct{})
-	opts := StartOptions{Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages}
+	opts := StartOptions{Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup}
 	go s.run(ctx, opts, s.done)
 	return nil
 }
@@ -322,7 +340,10 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	case HasCode(err, CodeNothingCaptured):
 		s.fe.Emit(Output{Category: "console", Text: err.Error() + "\n"})
 	case err != nil:
-		s.fe.Emit(Output{Category: "stderr", Text: "The debug run failed: " + err.Error() + "\n"})
+		s.mu.Lock()
+		tr := s.translate
+		s.mu.Unlock()
+		s.fe.Emit(Output{Category: "stderr", Text: "The debug run failed: " + TranslateText(tr, err.Error()) + "\n"})
 	}
 	// The root thread ends with the run (AD-17).
 	s.mu.Lock()
@@ -335,6 +356,10 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	if exitRoot {
 		s.fe.Emit(ThreadExited{ThreadID: ThreadID})
 	}
+	// Records the streams log while shutting down would follow Terminated.
+	s.mu.Lock()
+	s.runDone = true
+	s.mu.Unlock()
 	s.fe.Emit(Terminated{})
 }
 
@@ -351,6 +376,33 @@ func (s *Session) Captured(kept, total int) {
 		return
 	}
 	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", kept, total)})
+}
+
+// Translator returns the Translate of the launched pipeline, or nil before
+// a successful launch. The log handler translates engine records with it
+// (AD-6, AD-15).
+func (s *Session) Translator() Translate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.translate
+}
+
+// Log reports a log record's text to the frontend as an Output event:
+// category stderr for errors, console otherwise (AD-15). It sends nothing
+// once the session has ended or its run has emitted Terminated. It must not be called while the caller
+// holds a lock the frontend's Emit takes.
+func (s *Session) Log(level slog.Level, text string) {
+	s.mu.Lock()
+	ended := s.ended || s.runDone
+	s.mu.Unlock()
+	if ended {
+		return
+	}
+	category := "console"
+	if level >= slog.LevelError {
+		category = "stderr"
+	}
+	s.fe.Emit(Output{Category: category, Text: text})
 }
 
 // resolve returns path made absolute against the absolute directory base.

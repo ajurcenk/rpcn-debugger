@@ -32,6 +32,9 @@ type Configs struct {
 	Warnings []string
 	// Strict is error_handling.strict, applied to the step stream (AD-4(b)).
 	Strict bool
+	// Translator maps engine paths and Bloblang lines back to the user's
+	// file (AD-6). Check returns it in its CheckResult; it may be nil.
+	Translator core.Translate
 }
 
 // Loader reads and rewrites a pipeline file.
@@ -53,24 +56,29 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 }
 
 // Check loads the pipeline and parses and lints both stream configs, so
-// config errors fail the launch. It never calls Build: Build opens every
-// *_resources entry (caches, connection pools), which would leak.
-func (a *Adapter) Check(pipeline, _ string) (core.CheckResult, error) {
+// config errors fail the launch. ${VAR} resolves through opts.Lookup, as in
+// Start (AD-22). It never calls Build: Build opens every *_resources entry
+// (caches, connection pools), which would leak.
+func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
+	pipeline := opts.Pipeline
 	conf, lines, err := a.load(pipeline)
 	if err != nil {
 		return core.CheckResult{}, err
 	}
-	r, err := a.newRun(conf, nopArriver{})
+	r, err := a.newRun(conf, opts.Lookup, nopArriver{})
 	if err != nil {
 		return core.CheckResult{}, err
 	}
+	// A failed Check still carries the translator, so the Session can name
+	// user paths in its error (AD-6).
+	failed := core.CheckResult{Translator: conf.Translator}
 	if _, err := r.configureCapture(nil); err != nil {
-		return core.CheckResult{}, fmt.Errorf("%s: %w", pipeline, err)
+		return failed, fmt.Errorf("%s: %w", pipeline, err)
 	}
 	if _, _, err := r.configureStep(); err != nil {
-		return core.CheckResult{}, fmt.Errorf("%s: %w", pipeline, err)
+		return failed, fmt.Errorf("%s: %w", pipeline, err)
 	}
-	return core.CheckResult{Lines: lines, Warnings: conf.Warnings}, nil
+	return core.CheckResult{Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream,
@@ -81,7 +89,7 @@ func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Ar
 	if err != nil {
 		return err
 	}
-	r, err := a.newRun(conf, arr)
+	r, err := a.newRun(conf, opts.Lookup, arr)
 	if err != nil {
 		return err
 	}
@@ -102,12 +110,13 @@ type run struct {
 	env      *service.Environment
 	log      *slog.Logger
 	conf     Configs
+	lookup   func(string) (string, bool) // nil: the process environment
 	sink     *sink
 	consumed atomic.Int64
 }
 
-func (a *Adapter) newRun(conf Configs, arr core.Arriver) (*run, error) {
-	r := &run{env: a.env.Clone(), log: a.log, conf: conf, sink: &sink{}}
+func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr core.Arriver) (*run, error) {
+	r := &run{env: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{}}
 	if err := registerStepper(r.env, arr); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
@@ -117,14 +126,30 @@ func (a *Adapter) newRun(conf Configs, arr core.Arriver) (*run, error) {
 	return r, nil
 }
 
-// builder returns a StreamBuilder that logs to the session's stderr logger
-// and serves its endpoints on a private mux (AD-15): the default logger
-// writes to stdout and the default http server binds :4195.
+// builder returns a StreamBuilder that logs to the session's logger (the
+// AD-15 handler) and serves its endpoints on a private mux: the default
+// logger writes to stdout and the default http server binds :4195. It
+// resolves ${VAR} through the session's lookup (AD-22); the builder applies
+// it in every Add*YAML call, so it is set before any of them.
 func (r *run) builder() *service.StreamBuilder {
 	b := r.env.NewStreamBuilder()
 	b.SetLogger(r.log)
 	b.SetHTTPMux(http.NewServeMux())
+	if r.lookup != nil {
+		b.SetEnvVarLookupFunc(r.lookup)
+	}
 	return b
+}
+
+// stepperName names top-level stepper i in errors: the user path of the
+// list it wraps (AD-6), or "processors (stepper i)" without a translator.
+func (r *run) stepperName(i int) string {
+	if tr := r.conf.Translator; tr != nil {
+		if up, ok := tr.Translate(fmt.Sprintf("root.pipeline.processors.%d", i)); ok {
+			return up
+		}
+	}
+	return fmt.Sprintf("processors (stepper %d)", i)
 }
 
 // configureStep sets up, without building, the step stream: a producer
@@ -143,7 +168,7 @@ func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandl
 	}
 	for i, st := range r.conf.Steppers {
 		if err := b.AddProcessorYAML(st); err != nil {
-			return nil, nil, fmt.Errorf("processors (stepper %d): %w", i, err)
+			return nil, nil, fmt.Errorf("%s: %w", r.stepperName(i), err)
 		}
 	}
 	if err := b.AddOutputYAML(SinkName + ": {}"); err != nil {

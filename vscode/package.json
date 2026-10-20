@@ -62,11 +62,11 @@
                 "additionalProperties": {
                   "type": "string"
                 },
-                "description": "Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Parsed and validated, but not applied yet.",
+                "description": "Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Applied last: env overrides envFile, which overrides the debugger's own environment.",
                 "type": "object"
               },
               "envFile": {
-                "description": "A file of NAME=value environment variables for the pipeline's ${VAR} interpolations. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Parsed and validated, but not applied yet.",
+                "description": "A dotenv file of NAME=value environment variables for the pipeline's ${VAR} interpolations: # comments, blank lines, an optional export prefix and quoted values are allowed. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Applied after the debugger's own environment and before env, so env overrides it.",
                 "minLength": 1,
                 "type": "string"
               },

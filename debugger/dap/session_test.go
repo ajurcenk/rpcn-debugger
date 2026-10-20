@@ -51,7 +51,7 @@ func jsonMessage(i int, content string) core.Message {
 	}, Metadata: []core.Meta{}}
 }
 
-func (e *fakeEngine) Check(string, string) (core.CheckResult, error) {
+func (e *fakeEngine) Check(core.StartOptions) (core.CheckResult, error) {
 	if e.checkErr != nil {
 		return core.CheckResult{}, e.checkErr
 	}

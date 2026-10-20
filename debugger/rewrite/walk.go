@@ -21,8 +21,13 @@ type walker struct {
 	next int
 	// strict is the value of every stepper's strict field: a bool, or the
 	// interpolation as written.
-	strict   *yaml.Node
-	stops    map[stop]core.Position
+	strict *yaml.Node
+	stops  map[stop]core.Position
+	// paths maps engine paths (AD-6) to user paths, and bases the engine
+	// path of each mapping, mutation or bloblang processor to the file line
+	// of its first Bloblang line.
+	paths    map[string]string
+	bases    map[string]int
 	warnings []string
 	// tainted holds the processor_resources labels used inside a
 	// concurrent parent; they stay unwrapped.
@@ -30,16 +35,23 @@ type walker struct {
 }
 
 // wrap returns the stepper processor around list, the child list at path
-// whose key is on keyLine, and wraps the lists inside its children.
-func (w *walker) wrap(list *yaml.Node, path string, keyLine, parent int, mode string) (*yaml.Node, error) {
+// whose key is on keyLine, and wraps the lists inside its children. eng is
+// the engine path the stepper is built at.
+func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, mode string) (*yaml.Node, error) {
 	id := w.next
 	w.next++
+	// The stepper, its config and its child list all stand for the list.
+	w.paths[eng] = path
+	w.paths[eng+"."+StepperName] = path
+	w.paths[eng+"."+StepperName+".processors"] = path
 	lines := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
 	for i, c := range list.Content {
 		cp := child(path, i)
+		ce := eng + "." + StepperName + ".processors." + strconv.Itoa(i)
+		w.paths[ce] = cp
 		w.stops[stop{id, i}] = core.Position{UserPath: cp, Line: c.Line}
 		lines.Content = append(lines.Content, scalar("!!int", strconv.Itoa(c.Line)))
-		if err := w.processor(c, cp, id); err != nil {
+		if err := w.processor(c, cp, ce, id); err != nil {
 			return nil, err
 		}
 	}
@@ -62,8 +74,8 @@ func (w *walker) wrap(list *yaml.Node, path string, keyLine, parent int, mode st
 
 // list wraps the child list v at path (key on keyLine) and returns its
 // replacement, a one-element list holding the stepper, or nil when there is
-// nothing to step.
-func (w *walker) list(v *yaml.Node, path string, keyLine, parent int, mode string) (*yaml.Node, error) {
+// nothing to step. eng is the engine path of the list.
+func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, mode string) (*yaml.Node, error) {
 	if isNull(v) {
 		return nil, nil
 	}
@@ -73,7 +85,7 @@ func (w *walker) list(v *yaml.Node, path string, keyLine, parent int, mode strin
 	if len(v.Content) == 0 {
 		return nil, nil
 	}
-	st, err := w.wrap(v, path, keyLine, parent, mode)
+	st, err := w.wrap(v, path, eng+".0", keyLine, parent, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +93,8 @@ func (w *walker) list(v *yaml.Node, path string, keyLine, parent int, mode strin
 }
 
 // inner wraps the processors field of mapping m (a branch, while, retry,
-// switch case or group_by group) at path.
-func (w *walker) inner(m *yaml.Node, path string, parent int, mode string) error {
+// switch case or group_by group) at path, engine path eng.
+func (w *walker) inner(m *yaml.Node, path, eng string, parent int, mode string) error {
 	if isNull(m) {
 		return nil
 	}
@@ -91,7 +103,7 @@ func (w *walker) inner(m *yaml.Node, path string, parent int, mode string) error
 	}
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if k := m.Content[i]; k.Value == "processors" {
-			st, err := w.list(m.Content[i+1], path+".processors", k.Line, parent, mode)
+			st, err := w.list(m.Content[i+1], path+".processors", eng+".processors", k.Line, parent, mode)
 			if err != nil {
 				return err
 			}
@@ -137,9 +149,9 @@ func classify(name string, v *yaml.Node) (int, string) {
 	return leaf, ""
 }
 
-// processor wraps the child lists of processor p at path, inside stepper
-// parent, per the AD-7 table.
-func (w *walker) processor(p *yaml.Node, path string, parent int) error {
+// processor wraps the child lists of processor p at path, engine path eng,
+// inside stepper parent, per the AD-7 table.
+func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 	if p.Kind != yaml.MappingNode {
 		return nil // Not a processor config: the engine reports it.
 	}
@@ -148,7 +160,10 @@ func (w *walker) processor(p *yaml.Node, path string, parent int) error {
 		if k.Value == "label" {
 			continue
 		}
-		cp := path + "." + k.Value
+		cp, ce := path+"."+k.Value, eng+"."+k.Value
+		if base, ok := baseLine(k, v); ok {
+			w.bases[eng] = base
+		}
 		kind, msg := classify(k.Value, v)
 		if kind == concurrent || kind == unknown {
 			w.warn(k.Line, cp, "%s", msg)
@@ -159,7 +174,7 @@ func (w *walker) processor(p *yaml.Node, path string, parent int) error {
 		}
 		switch k.Value {
 		case "branch", "while", "retry":
-			if err := w.inner(v, cp, parent, modeAll); err != nil {
+			if err := w.inner(v, cp, ce, parent, modeAll); err != nil {
 				return err
 			}
 		case "try", "catch", "for_each":
@@ -167,7 +182,7 @@ func (w *walker) processor(p *yaml.Node, path string, parent int) error {
 			if k.Value == "try" {
 				mode = modeTry
 			}
-			st, err := w.list(v, cp, k.Line, parent, mode)
+			st, err := w.list(v, cp, ce, k.Line, parent, mode)
 			if err != nil {
 				return err
 			}
@@ -182,7 +197,7 @@ func (w *walker) processor(p *yaml.Node, path string, parent int) error {
 				return invalid(v.Line, cp, "%s is not a list", cp)
 			}
 			for c, cs := range v.Content {
-				if err := w.inner(cs, child(cp, c), parent, modeAll); err != nil {
+				if err := w.inner(cs, child(cp, c), ce+"."+strconv.Itoa(c), parent, modeAll); err != nil {
 					return err
 				}
 			}
@@ -216,16 +231,21 @@ func childLists(name string, v *yaml.Node) []*yaml.Node {
 func (w *walker) resources(list *yaml.Node) error {
 	for i, entry := range list.Content {
 		path := child("processor_resources", i)
+		eng := ResourcePath + "." + strconv.Itoa(i)
 		label := ""
 		if l := value(entry, "label"); l != nil && l.Kind == yaml.ScalarNode && l.Value != "" {
 			label = l.Value
 			path = "processor_resources." + label
+			eng = QualifyResource(ResourcePath, label)
 		}
+		w.paths[eng] = path
 		if label != "" && w.tainted[label] {
+			// Unwrapped, so only the entry's own mapping has a base line.
+			w.entryBases(entry, eng)
 			w.warn(entry.Line, path, "this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped")
 			continue
 		}
-		if err := w.processor(entry, path, -1); err != nil {
+		if err := w.processor(entry, path, eng, -1); err != nil {
 			return err
 		}
 	}

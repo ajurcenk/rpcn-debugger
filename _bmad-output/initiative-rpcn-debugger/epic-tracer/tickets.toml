@@ -67,6 +67,17 @@ hitl = false
 risk = "medium"
 
 [[entry]]
+id = 13
+type = "story"
+title = "Rewrite rejects undefined resource references"
+description = "The rewrite checks every `resource: <label>` reference and every workflow `branch_resources` name against the `processor_resources` labels it collects, and fails the launch with `PIPELINE_INVALID` naming the reference, its user path and line, instead of the session hanging while benthos retries the lookup per message (found in 2.4 review, pre-existing since 2.1)."
+verify = "A golden case with `- resource: nope` fails the launch naming `nope` and its line; a DAP test sees the launch error instead of a hang; existing resource goldens still pass."
+covers = ["CAP-1"]
+after = [5]
+hitl = false
+risk = "low"
+
+[[entry]]
 id = 7
 type = "story"
 title = "Stepper modes, nested parents and ctx propagation"
@@ -89,6 +100,17 @@ hitl = false
 risk = "medium"
 
 [[entry]]
+id = 12
+type = "story"
+title = "Launch lint errors at file lines"
+description = "Lint and parse errors the engine reports against the rewritten config (`(L,C)` positions in the stepper or input YAML, stepper wording) are mapped back to the user's file line and user path before they reach the launch error or the Debug Console, using a line map from each re-encoded subtree to the original yaml.v3 nodes built by the rewrite (AD-6)."
+verify = "A broken mapping at file line 8 fails the launch naming `pipeline.processors[1]` and line 8 (not the rewritten-config position); lint errors in input, output and nested processors map likewise."
+covers = ["CAP-1"]
+after = [4, 5]
+hitl = false
+risk = "medium"
+
+[[entry]]
 id = 9
 type = "story"
 title = "Equivalence corpus and scripted Step Over driver"
@@ -103,10 +125,10 @@ risk = "high"
 id = 10
 type = "story"
 title = "Refactor sweep"
-description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1–9; scope pushed out of another entry becomes a new entry."
+description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1–9, 12 and 13; scope pushed out of another entry becomes a new entry."
 verify = "`task ci` is green with no behaviour change."
 covers = []
-after = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13]
 hitl = false
 risk = "low"
 

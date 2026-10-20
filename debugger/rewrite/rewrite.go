@@ -36,6 +36,9 @@ type Plan struct {
 	Strict bool
 
 	stops map[stop]core.Position
+	// paths and bases back Translate (see walker).
+	paths map[string]string
+	bases map[string]int
 }
 
 // stop is one LineMap key (AD-16).
@@ -80,7 +83,7 @@ func Rewrite(src []byte) (Plan, error) {
 		}
 	}
 
-	w := &walker{stops: map[stop]core.Position{}}
+	w := &walker{stops: map[stop]core.Position{}, paths: map[string]string{}, bases: map[string]int{}}
 	var plan Plan
 	plan.Strict, w.strict = strict(root)
 	if isInterpolated(w.strict) {
@@ -127,7 +130,11 @@ func Rewrite(src []byte) (Plan, error) {
 		if lists[i] == nil || len(lists[i].Content) == 0 {
 			continue
 		}
-		stepper, err := w.wrap(lists[i], s.name+".processors", listKeys[i].Line, -1, modeAll)
+		// The step config adds the top-level steppers in this order with
+		// AddProcessorYAML, so top-level stepper k is built at
+		// root.pipeline.processors.<k>.
+		eng := "root.pipeline.processors." + strconv.Itoa(len(plan.Steppers))
+		stepper, err := w.wrap(lists[i], s.name+".processors", eng, listKeys[i].Line, -1, modeAll)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -164,7 +171,7 @@ func Rewrite(src []byte) (Plan, error) {
 			return Plan{}, err
 		}
 	}
-	plan.Warnings, plan.stops = w.warnings, w.stops
+	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
 }
 

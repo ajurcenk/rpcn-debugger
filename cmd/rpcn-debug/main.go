@@ -44,7 +44,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	if err := debugger.Serve(standardEnvironment(), stdin, stdout); err != nil {
+	if err := debugger.Serve(standardEnvironment(), stdin, stdout, debugger.WithLogOutput(stderr)); err != nil {
 		_, _ = fmt.Fprintf(stderr, "rpcn-debug: %v\n", err)
 		return 1
 	}

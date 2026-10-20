@@ -115,7 +115,7 @@ func standard() *service.Environment { return service.NewEnvironment() }
 func TestSampleStepsAndDelivers(t *testing.T) {
 	env := standard()
 	a := engine.New(env, testLogger(), load)
-	res, err := a.Check(samplePipeline, "")
+	res, err := a.Check(core.StartOptions{Pipeline: samplePipeline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 func TestEnvUntouched(t *testing.T) {
 	env := standard()
 	a := engine.New(env, testLogger(), load)
-	if _, err := a.Check(samplePipeline, ""); err != nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: samplePipeline}); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.NewStreamBuilder().AddProcessorYAML("rpcn_debug_stepper: {id: 0, processors: []}"); err == nil {
@@ -255,7 +255,7 @@ output:
 // order, and the batch is delivered.
 func TestNestedStepsAndDelivers(t *testing.T) {
 	a := engine.New(standard(), testLogger(), load)
-	res, err := a.Check(nestedPipeline, "")
+	res, err := a.Check(core.StartOptions{Pipeline: nestedPipeline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestRewrittenConfigsBuild(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a := engine.New(standard(), testLogger(), load)
 			path := filepath.Join("..", "rewrite", "testdata", name+".yaml")
-			if _, err := a.Check(path, ""); err != nil {
+			if _, err := a.Check(core.StartOptions{Pipeline: path}); err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -363,15 +363,15 @@ output:
 
 func TestCheckErrors(t *testing.T) {
 	a := engine.New(standard(), testLogger(), load)
-	if _, err := a.Check(filepath.Join(t.TempDir(), "missing.yaml"), ""); err == nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: filepath.Join(t.TempDir(), "missing.yaml")}); err == nil {
 		t.Error("Check of a missing file succeeded")
 	}
 	bad := writePipeline(t, "input:\n  generate: {}\npipeline:\n  processors:\n    - no_such_processor: {}\n")
-	if _, err := a.Check(bad, ""); err == nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: bad}); err == nil {
 		t.Error("Check of an unknown processor succeeded")
 	}
 	badInput := writePipeline(t, "input:\n  no_such_input: {}\n")
-	if _, err := a.Check(badInput, ""); err == nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: badInput}); err == nil {
 		t.Error("Check of an unknown input succeeded")
 	}
 }
@@ -495,7 +495,7 @@ output:
   drop: {}
 `)
 	a := engine.New(env, testLogger(), load)
-	if _, err := a.Check(path, ""); err != nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: path}); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
@@ -543,5 +543,113 @@ func TestCaptureTruncatesToMaxMessages(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ${VAR} resolves through the session's lookup in Start: env over envFile
+// over the process environment (AD-22), and a default when it is unset
+// everywhere.
+func TestEnvLookupPrecedence(t *testing.T) {
+	path := writePipeline(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+pipeline:
+  processors:
+    - mapping: |
+        root.a = "${RPCN_DEBUG_TEST_A}"
+        root.b = "${RPCN_DEBUG_TEST_B:fallback}"
+output:
+  drop: {}
+`)
+	t.Setenv("RPCN_DEBUG_TEST_A", "p")
+	for name, tc := range map[string]struct {
+		file, env map[string]string
+		want      string
+	}{
+		"env wins":      {map[string]string{"RPCN_DEBUG_TEST_A": "f"}, map[string]string{"RPCN_DEBUG_TEST_A": "e"}, "e"},
+		"envFile next":  {map[string]string{"RPCN_DEBUG_TEST_A": "f"}, nil, "f"},
+		"process last":  {nil, nil, "p"},
+		"other env key": {nil, map[string]string{"OTHER": "x"}, "p"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			opts := core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(tc.file, tc.env)}
+			a := engine.New(standard(), testLogger(), load)
+			if _, err := a.Check(opts); err != nil {
+				t.Fatal(err)
+			}
+			arr := &arriver{}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.Start(ctx, opts, arr); err != nil {
+				t.Fatal(err)
+			}
+			end := arr.got[len(arr.got)-1]
+			var msg map[string]any
+			if err := json.Unmarshal(end.batches[0].Messages[0].Content.Raw, &msg); err != nil {
+				t.Fatal(err)
+			}
+			if msg["a"] != tc.want || msg["b"] != "fallback" {
+				t.Errorf("message = %v, want a = %s and b = fallback", msg, tc.want)
+			}
+		})
+	}
+}
+
+// Check lints with the same lookup, so a ${VAR} the config needs at lint
+// time comes from the launch's env.
+func TestCheckSeesEnv(t *testing.T) {
+	path := writePipeline(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+pipeline:
+  processors:
+    - ${RPCN_DEBUG_TEST_PROC}: 'root = this'
+output:
+  drop: {}
+`)
+	a := engine.New(standard(), testLogger(), load)
+	if _, err := a.Check(core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(nil, nil)}); err == nil {
+		t.Error("Check passed with the processor name unset")
+	}
+	lookup := core.EnvLookup(nil, map[string]string{"RPCN_DEBUG_TEST_PROC": "mapping"})
+	if _, err := a.Check(core.StartOptions{Pipeline: path, Lookup: lookup}); err != nil {
+		t.Errorf("Check with env set = %v", err)
+	}
+}
+
+// A config error in a stepper's children names the user's list, never a
+// stepper (AD-6).
+func TestCheckErrorNamesUserPath(t *testing.T) {
+	path := writePipeline(t, `
+input:
+  generate: {count: 1, interval: "", mapping: 'root = {}'}
+pipeline:
+  processors:
+    - nope_not_a_processor: {}
+output:
+  drop: {}
+`)
+	withTr := func(p string) (engine.Configs, core.LineMap, error) {
+		c, l, err := load(p)
+		if err == nil {
+			c.Translator = l.(rewrite.Plan)
+		}
+		return c, l, err
+	}
+	res, err := engine.New(standard(), testLogger(), withTr).Check(core.StartOptions{Pipeline: path})
+	if err == nil {
+		t.Fatal("Check passed")
+	}
+	if !strings.Contains(err.Error(), "pipeline.processors:") || strings.Contains(err.Error(), "stepper") {
+		t.Errorf("Check error = %q, want it to name pipeline.processors and no stepper", err)
+	}
+	if res.Translator == nil {
+		t.Error("a failed Check carries no translator")
 	}
 }
