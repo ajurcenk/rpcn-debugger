@@ -3,7 +3,7 @@ title: 'One logging handler and env lookup'
 type: 'feature'
 ticket: '4'
 created: '2026-10-20'
-status: 'built'
+status: done
 baseline_revision: '1446496fdaa44d74ffd1a99e13d1707007be3e87'
 route: 'full'
 route_source: 'auto'
@@ -127,6 +127,8 @@ context:
 - **Wiring:** `dap.Serve` gained a variadic `dap.Option`; `dap.OnSession(fn)` hands the built Session to the handler's sink. The handler reads the translator per record via `Session.Translator()` (set from `CheckResult.Translator` on launch) and emits through `Session.Log(level, text)`, which sends nothing after Terminate. Records before a launch go out untranslated.
 - **Env:** `core.EnvLookup(fileEnv, env)` (exported so the engine test can prove precedence) and `parseDotenv` in `core/dotenv.go`. `Engine.Check` now takes `core.StartOptions` (Pipeline, Cwd, Lookup; MaxMessages ignored). The lookup is set with `SetEnvVarLookupFunc` in `run.builder()`, before any `Add*YAML`, since benthos substitutes `${VAR}` in each `Add*YAML` call. Bad envFile error: `envFile line 3: expected NAME=value (in /abs/.env)`.
 - `TestRunLogsToStderr` (new, next to `TestRunNoArgs`) asserts the server's EOF notice lands in the injected stderr.
+
+- 2026-10-20 VS Code check (user): with `env: {GREETING: hi}`, Variables showed `g: hi`. The throwing processor's error appeared in the Debug Console at `pipeline.processors[1]` and its file line, with no rewritten paths and no engine Info chatter. All ACs met. The scratch pipeline and launch entry were removed.
 
 ## Review Triage Log
 
