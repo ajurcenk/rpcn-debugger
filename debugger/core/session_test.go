@@ -18,12 +18,60 @@ func (l lines) Position(stepperID, childIndex int) (Position, bool) {
 	return p, ok
 }
 
-// fakeEngine arrives once per child for one batch, then reports delivered.
+// fakeStepper is one stepper of a scripted tree: it enters its frame,
+// arrives before each child and after the last, and runs a child's
+// sub-stepper (a parent processor) with the entry's ctx.
+type fakeStepper struct {
+	id       int
+	children []fakeChild
+}
+
+type fakeChild struct {
+	sub   *fakeStepper  // nil: a leaf processor
+	sleep time.Duration // how long the child runs
+}
+
+// batchAt is the batch a fake stepper passes at (stepperID, childIndex):
+// one message whose content names the position.
+func batchAt(stepperID, childIndex int) []Batch {
+	return []Batch{{Messages: []Message{{Content: Content{Raw: fmt.Appendf(nil, "%d/%d", stepperID, childIndex)}}}}}
+}
+
+func (st *fakeStepper) run(ctx context.Context, a Arriver, batch []Batch) error {
+	ctx, exit := a.Enter(ctx, st.id, len(st.children))
+	defer exit()
+	for i, c := range st.children {
+		b := batch
+		if b == nil {
+			b = batchAt(st.id, i)
+		}
+		if err := a.Arrive(ctx, st.id, i, b); err != nil {
+			return err
+		}
+		if c.sub != nil {
+			if err := c.sub.run(ctx, a, batch); err != nil {
+				return err
+			}
+		}
+		time.Sleep(c.sleep)
+	}
+	b := batch
+	if b == nil {
+		b = batchAt(st.id, len(st.children))
+	}
+	return a.Arrive(ctx, st.id, len(st.children), b)
+}
+
+// fakeEngine runs its top-level steppers in order on one batch, then
+// reports delivered. With no steppers it runs one stepper 0 of children
+// leaves.
 type fakeEngine struct {
 	checkErr  error
 	warnings  []string
 	startErr  error
 	children  int
+	steppers  []*fakeStepper
+	lines     lines // nil: pipeline.processors with children leaves
 	batch     []Batch
 	delivered chan []Batch
 	// captured is the (kept, total) the engine reports; zero: the batch's
@@ -36,10 +84,14 @@ func (e *fakeEngine) Check(string, string) (CheckResult, error) {
 	if e.checkErr != nil {
 		return CheckResult{}, e.checkErr
 	}
-	return CheckResult{
-		Lines:    lines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 12}},
-		Warnings: e.warnings,
-	}, nil
+	l := e.lines
+	if l == nil {
+		l = lines{
+			{0, 0}:          {UserPath: "pipeline.processors[0]", Line: 12},
+			{0, e.children}: {UserPath: "pipeline.processors", Line: 11},
+		}
+	}
+	return CheckResult{Lines: l, Warnings: e.warnings}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) error {
@@ -55,8 +107,12 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 		total = kept
 	}
 	a.Captured(kept, total)
-	for i := range e.children {
-		if err := a.Arrive(ctx, 0, i, e.batch); err != nil {
+	steppers := e.steppers
+	if steppers == nil {
+		steppers = []*fakeStepper{{id: 0, children: make([]fakeChild, e.children)}}
+	}
+	for _, st := range steppers {
+		if err := st.run(ctx, a, e.batch); err != nil {
 			return err
 		}
 	}
@@ -70,12 +126,23 @@ type event struct {
 
 type recorder struct {
 	events chan event
+	// threads records ThreadStarted and ThreadExited, which are dropped
+	// otherwise.
+	threads bool
 }
 
-func newRecorder() *recorder { return &recorder{events: make(chan event, 16)} }
+func newRecorder() *recorder { return &recorder{events: make(chan event, 64)} }
 
 func (r *recorder) Emit(ev Event) {
 	switch e := ev.(type) {
+	case ThreadStarted:
+		if r.threads {
+			r.events <- event{"thread", fmt.Sprintf("started %d", e.ThreadID)}
+		}
+	case ThreadExited:
+		if r.threads {
+			r.events <- event{"thread", fmt.Sprintf("exited %d", e.ThreadID)}
+		}
 	case Paused:
 		r.events <- event{"stopped", e.Reason}
 	case Output:
@@ -144,9 +211,13 @@ func TestStopThenResume(t *testing.T) {
 			if ev := rec.next(t); ev != (event{"stopped", "entry"}) {
 				t.Fatalf("event = %+v, want stopped entry", ev)
 			}
-			f, ok := s.Frame()
-			if !ok {
-				t.Fatal("no frame at the stop")
+			st, ok := s.Stopped()
+			if !ok || len(st.Frames) != 1 {
+				t.Fatalf("stop = %+v, %v; want one frame", st, ok)
+			}
+			f := st.Frames[0]
+			if f.Name != "pipeline.processors" || st.ThreadID != ThreadID || st.Reason != ReasonEntry {
+				t.Errorf("stop = %+v", st)
 			}
 			p := f.Snapshot.Position
 			if p.Line != 12 || p.UserPath != "pipeline.processors[0]" || p.File != "/p/pipeline.yaml" ||
@@ -160,28 +231,41 @@ func TestStopThenResume(t *testing.T) {
 			if err := do(s, resume); err != nil {
 				t.Fatal(err)
 			}
+			if _, ok := resume.(Next); ok {
+				// Next stops at the end stop, at the list's key line.
+				if ev := rec.next(t); ev != (event{"stopped", ReasonStep}) {
+					t.Fatalf("event = %+v, want stopped step", ev)
+				}
+				if p := stopAt(t, s); p.ChildIndex != 1 || p.Line != 11 {
+					t.Errorf("end stop = %+v, want child 1 at line 11", p)
+				}
+				if err := do(s, resume); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if ev := rec.next(t); ev.kind != "terminated" {
 				t.Fatalf("event = %+v, want terminated", ev)
 			}
 			if got := <-e.delivered; len(got) != 1 {
 				t.Errorf("delivered %v", got)
 			}
-			if _, ok := s.Frame(); ok {
-				t.Error("frame still set after resume")
+			if _, ok := s.Stopped(); ok {
+				t.Error("stop still set after resume")
 			}
 			_ = do(s, Terminate{})
 		})
 	}
 }
 
-func TestOnlyFirstArriveStops(t *testing.T) {
+// Continue stops nowhere: the run goes to the end.
+func TestContinueRunsToTheEnd(t *testing.T) {
 	e := newEngine()
 	e.children = 3
 	s, rec := launched(t, e)
 	if ev := rec.next(t); ev.kind != "stopped" {
 		t.Fatalf("event = %+v", ev)
 	}
-	if err := do(s, Next{}); err != nil {
+	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
 	if ev := rec.next(t); ev.kind != "terminated" {
@@ -301,7 +385,7 @@ func TestGateHeldWhilePaused(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.mu.Lock()
-	s.configured, s.stopNext = true, true
+	s.configured, s.entryPending = true, true
 	s.mu.Unlock()
 
 	first := make(chan error, 1)
@@ -333,9 +417,8 @@ func TestNotSupported(t *testing.T) {
 	if ev := rec.next(t); ev.kind != "stopped" {
 		t.Fatalf("event = %+v", ev)
 	}
-	before, _ := s.Frame()
+	before, _ := s.Stopped()
 	for _, cmd := range []Command{
-		StepIn{ThreadID: ThreadID}, StepOut{ThreadID: ThreadID}, Pause{ThreadID: ThreadID},
 		Evaluate{Expression: "this"}, SetMessage{}, SaveCapture{}, Restart{},
 	} {
 		res, err := s.Do(context.Background(), cmd)
@@ -344,7 +427,7 @@ func TestNotSupported(t *testing.T) {
 			t.Errorf("%T = %v, %v; want NOT_SUPPORTED", cmd, res, err)
 		}
 	}
-	after, ok := s.Frame()
+	after, ok := s.Stopped()
 	if !ok || after.ID != before.ID {
 		t.Errorf("frame after unsupported commands = %+v, %v; want unchanged", after, ok)
 	}

@@ -131,6 +131,7 @@ func TestServeTracerSample(t *testing.T) {
 			c.next("event", "initialized")
 			c.send("configurationDone", map[string]any{})
 			c.next("response", "configurationDone")
+			c.next("event", "thread")
 			c.next("event", "stopped")
 
 			c.send("stackTrace", map[string]any{"threadId": 1})
@@ -153,6 +154,16 @@ func TestServeTracerSample(t *testing.T) {
 			if resume != "disconnect" {
 				c.send(resume, map[string]any{"threadId": 1})
 				c.next("response", resume)
+				if resume == "next" {
+					// The end stop, at the processors: key line.
+					c.next("event", "stopped")
+					if frames := c.stack(); len(frames) != 1 || frames[0].Line != 15 || frames[0].Name != "pipeline.processors" {
+						t.Fatalf("end stop = %+v, want pipeline.processors at line 15", frames)
+					}
+					c.send(resume, map[string]any{"threadId": 1})
+					c.next("response", resume)
+				}
+				c.next("event", "thread")
 				c.next("event", "terminated")
 			}
 			c.send("disconnect", map[string]any{})
@@ -299,13 +310,60 @@ func launchAndStop(t *testing.T, c *wire, pipeline string, outputs int) (frames 
 	c.next("event", "initialized")
 	c.send("configurationDone", map[string]any{})
 	c.next("response", "configurationDone")
+	c.next("event", "thread")
 	c.next("event", "stopped")
+	return c.stack(), out
+}
+
+// stack returns the stopped thread's stack trace.
+func (c *wire) stack() []stackFrame {
+	c.t.Helper()
 	c.send("stackTrace", map[string]any{"threadId": 1})
 	var st struct {
 		StackFrames []stackFrame `json:"stackFrames"`
 	}
-	_ = json.Unmarshal(c.next("response", "stackTrace").Body, &st)
-	return st.StackFrames, out
+	if err := json.Unmarshal(c.next("response", "stackTrace").Body, &st); err != nil {
+		c.t.Fatal(err)
+	}
+	return st.StackFrames
+}
+
+// stepTo sends command and checks the stop it leads to: the innermost frame
+// at line, with depth frames.
+func (c *wire) stepTo(command string, line, depth int) []stackFrame {
+	c.t.Helper()
+	c.send(command, map[string]any{"threadId": 1})
+	c.next("response", command)
+	var stopped struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(c.next("event", "stopped").Body, &stopped)
+	if stopped.Reason != "step" {
+		c.t.Errorf("%s: stop reason = %q, want step", command, stopped.Reason)
+	}
+	frames := c.stack()
+	if len(frames) != depth || frames[0].Line != line {
+		c.t.Fatalf("%s: stack = %+v, want %d frames with the innermost at line %d", command, frames, depth, line)
+	}
+	return frames
+}
+
+// content returns message 0's content in frame frameID.
+func (c *wire) content(frameID int) string {
+	c.t.Helper()
+	c.send("scopes", map[string]any{"frameId": frameID})
+	var scopes struct {
+		Scopes []struct {
+			VariablesReference int `json:"variablesReference"`
+		} `json:"scopes"`
+	}
+	_ = json.Unmarshal(c.next("response", "scopes").Body, &scopes)
+	if len(scopes.Scopes) != 1 {
+		c.t.Fatalf("scopes of frame %d = %+v", frameID, scopes)
+	}
+	batch := c.variables(scopes.Scopes[0].VariablesReference)["batch 0"]
+	m := c.variables(batch.VariablesReference)["message 0"]
+	return c.variables(m.VariablesReference)["content"].Value
 }
 
 type stackFrame struct {
@@ -321,6 +379,7 @@ func continueToEnd(t *testing.T, c *wire) {
 	t.Helper()
 	c.send("continue", map[string]any{"threadId": 1})
 	c.next("response", "continue")
+	c.next("event", "thread")
 	c.next("event", "terminated")
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
@@ -337,6 +396,80 @@ func TestServeNested(t *testing.T) {
 	frames, _ := launchAndStop(t, c, pipeline, 0)
 	if len(frames) != 1 || frames[0].Line != 12 || frames[0].Source.Path != pipeline {
 		t.Fatalf("stack = %+v, want one frame at %s:12", frames, pipeline)
+	}
+	continueToEnd(t, c)
+}
+
+// Stepping through the nested demo with Next, Step In and Step Out: each
+// processor's line in order, 2 frames inside the branch and the switch
+// case, each frame with its own batch, and back to the pipeline level.
+func TestServeNestedStepping(t *testing.T) {
+	pipeline, err := filepath.Abs(filepath.Join("..", "testdata", "tracer", "nested.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	frames, _ := launchAndStop(t, c, pipeline, 0)
+	if len(frames) != 1 || frames[0].Line != 12 {
+		t.Fatalf("stack = %+v, want one frame at line 12", frames)
+	}
+	c.stepTo("next", 11, 1) // input.processors' end stop
+	c.stepTo("next", 18, 1) // before the branch
+	frames = c.stepTo("stepIn", 21, 2)
+	if frames[0].Name != "pipeline.processors[0].branch.processors" || frames[1].Name != "pipeline.processors" || frames[1].Line != 18 {
+		t.Errorf("stack in the branch = %+v", frames)
+	}
+	// The branch frame shows its request_map result; the pipeline frame
+	// the batch before the branch.
+	if got := c.content(frames[0].ID); got != "1" {
+		t.Errorf("branch frame content = %s, want 1", got)
+	}
+	if got := c.content(frames[1].ID); !strings.Contains(got, `"from_input":true`) || strings.Contains(got, "branched") {
+		t.Errorf("pipeline frame content = %s, want the message before the branch", got)
+	}
+	c.stepTo("stepOut", 20, 2) // the branch's end stop
+	c.stepTo("stepOut", 23, 1) // back at the pipeline level, before the switch
+	c.stepTo("stepIn", 26, 2)  // into the matching case
+	c.stepTo("next", 25, 2)    // the case's end stop
+	c.stepTo("next", 17, 1)    // pipeline.processors' end stop
+	c.stepTo("next", 36, 1)    // output.processors[0]
+	c.stepTo("next", 35, 1)    // output.processors' end stop
+	c.send("next", map[string]any{"threadId": 1})
+	c.next("response", "next")
+	c.next("event", "thread")
+	c.next("event", "terminated")
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+}
+
+// Pause on a running session stops at the next processor: after the entry
+// stop before a sleep, continue, and pause while the sleep runs.
+func TestServePause(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sleep.yaml")
+	src := "input:\n  generate: {count: 1, interval: \"\", mapping: 'root = {}'}\n" +
+		"pipeline:\n  processors:\n    - sleep:\n        duration: 1s\n    - mapping: 'root.a = 1'\n" +
+		"output:\n  drop: {}\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	frames, _ := launchAndStop(t, c, path, 0)
+	if len(frames) != 1 || frames[0].Line != 5 {
+		t.Fatalf("stack = %+v, want one frame before the sleep at line 5", frames)
+	}
+	c.send("continue", map[string]any{"threadId": 1})
+	c.next("response", "continue")
+	c.send("pause", map[string]any{"threadId": 1})
+	c.next("response", "pause")
+	var stopped struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(c.next("event", "stopped").Body, &stopped)
+	if stopped.Reason != "pause" {
+		t.Errorf("stop reason = %q, want pause", stopped.Reason)
+	}
+	if frames := c.stack(); len(frames) != 1 || frames[0].Line != 7 {
+		t.Fatalf("paused stack = %+v, want one frame before the mapping at line 7", frames)
 	}
 	continueToEnd(t, c)
 }

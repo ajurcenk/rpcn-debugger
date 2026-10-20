@@ -217,6 +217,10 @@ type nopArriver struct{}
 
 func (nopArriver) Captured(int, int) {}
 
+func (nopArriver) Enter(ctx context.Context, _, _ int) (context.Context, func()) {
+	return ctx, func() {}
+}
+
 func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error {
 	return errors.New("not running")
 }

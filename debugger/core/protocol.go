@@ -48,22 +48,25 @@ type SetExceptionBreakpoints struct {
 	Filters []string
 }
 
-// Next steps over (AD-10). In this entry it runs to the end.
+// Next steps over (AD-10): it stops at the next stop of the same entry, or
+// the parent's next stop. Like every resume, it resumes all threads (AD-9);
+// its step state belongs to ThreadID (0: the stopped thread).
 type Next struct{ ThreadID int }
 
-// StepIn steps into a child stepper or Bloblang statements. Not supported
-// yet: entry 2.6 (frames and threads) implements it.
+// StepIn stops at the very next stop of the thread: the first stop of a
+// child stepper entry, or else the next stop (AD-10). Bloblang statement
+// stepping arrives with epic-bloblang-statement-stepping.
 type StepIn struct{ ThreadID int }
 
-// StepOut runs to the end of the current entry. Not supported yet: entry
-// 2.6 implements it.
+// StepOut runs to the end stop of the current entry, or from there to the
+// parent's next stop (AD-10).
 type StepOut struct{ ThreadID int }
 
-// Continue resumes all threads.
+// Continue resumes all threads, with no step state.
 type Continue struct{ ThreadID int }
 
-// Pause stops the next Arrive on any thread. Not supported yet: entry 2.6
-// implements it.
+// Pause stops the next Arrive on any thread, with reason pause. While the
+// session is already stopped it changes nothing.
 type Pause struct{ ThreadID int }
 
 // Evaluate evaluates a Bloblang expression against a frame (AD-13). Not
@@ -166,9 +169,23 @@ type StepFinished struct {
 // Paused reports a stop. Only the thread that stopped is stopped (AD-9).
 type Paused struct {
 	ThreadID int
-	// Reason is one of entry, step, breakpoint, exception or pause.
+	// Reason is one of the Reason* values.
 	Reason string
 }
+
+// The reasons of a Paused event.
+const (
+	// ReasonEntry is the first stop after ConfigurationDone.
+	ReasonEntry = "entry"
+	// ReasonStep is a stop that Next, StepIn or StepOut asked for.
+	ReasonStep = "step"
+	// ReasonPause is a stop that Pause asked for.
+	ReasonPause = "pause"
+	// ReasonBreakpoint and ReasonException arrive with
+	// epic-breakpoints-and-evaluation.
+	ReasonBreakpoint = "breakpoint"
+	ReasonException  = "exception"
+)
 
 // Continued reports a resume. Every resume is process-wide (AD-9).
 type Continued struct{ ThreadID int }

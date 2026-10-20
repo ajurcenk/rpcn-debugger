@@ -135,25 +135,17 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 
 	case *dap.ThreadsRequest:
 		resp := &dap.ThreadsResponse{Response: s.response(r)}
-		resp.Body.Threads = []dap.Thread{{Id: core.ThreadID, Name: "batch"}}
+		resp.Body.Threads = []dap.Thread{}
+		for _, t := range s.sess.Threads() {
+			resp.Body.Threads = append(resp.Body.Threads, dap.Thread{Id: t.ID, Name: t.Name})
+		}
 		return false, s.send(resp)
 
 	case *dap.StackTraceRequest:
 		resp := &dap.StackTraceResponse{Response: s.response(r)}
 		resp.Body.StackFrames = []dap.StackFrame{}
-		if f, ok := s.sess.Frame(); ok && q.Arguments.ThreadId == f.Snapshot.Position.ThreadID {
-			pos := f.Snapshot.Position
-			name := pos.UserPath
-			if name == "" {
-				name = fmt.Sprintf("processor %d", pos.ChildIndex)
-			}
-			resp.Body.StackFrames = []dap.StackFrame{{
-				Id:     f.ID,
-				Name:   name,
-				Source: &dap.Source{Name: filepath.Base(pos.File), Path: pos.File},
-				Line:   pos.Line,
-				Column: 1,
-			}}
+		if st, ok := s.sess.Stopped(); ok && q.Arguments.ThreadId == st.ThreadID {
+			resp.Body.StackFrames = stackFrames(st)
 		}
 		resp.Body.TotalFrames = len(resp.Body.StackFrames)
 		return false, s.send(resp)
@@ -161,23 +153,30 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	case *dap.ScopesRequest:
 		resp := &dap.ScopesResponse{Response: s.response(r)}
 		resp.Body.Scopes = []dap.Scope{}
-		if f, ok := s.sess.Frame(); ok && q.Arguments.FrameId == f.ID {
-			resp.Body.Scopes = []dap.Scope{{
-				Name:               "Batches",
-				VariablesReference: batchesRef(f.ID),
-				IndexedVariables:   len(f.Snapshot.Batches),
-			}}
+		if st, ok := s.sess.Stopped(); ok {
+			if w, ok := decodeFrameID(q.Arguments.FrameId); ok {
+				if f, ok := frameOf(st, w); ok {
+					resp.Body.Scopes = []dap.Scope{{
+						Name:               "Batches",
+						VariablesReference: batchesRef(w),
+						IndexedVariables:   len(f.Snapshot.Batches),
+					}}
+				}
+			}
 		}
 		return false, s.send(resp)
 
 	case *dap.VariablesRequest:
 		resp := &dap.VariablesResponse{Response: s.response(r)}
 		resp.Body.Variables = []dap.Variable{}
-		if f, ok := s.sess.Frame(); ok {
-			resp.Body.Variables = variables(f, q.Arguments)
+		if st, ok := s.sess.Stopped(); ok {
+			resp.Body.Variables = variables(st, q.Arguments)
 		}
 		return false, s.send(resp)
 
+	// Every resume is process-wide (AD-9). Only the continue response has
+	// an allThreadsContinued field; next, stepIn and stepOut resume all
+	// threads too, since single-thread execution isn't advertised.
 	case *dap.NextRequest:
 		return false, s.respondLocked(r, core.Next{ThreadID: q.Arguments.ThreadId}, func() dap.Message {
 			return &dap.NextResponse{Response: s.response(r)}
@@ -358,9 +357,11 @@ func (f frontend) Emit(ev core.Event) {
 	var msg dap.Message
 	switch e := ev.(type) {
 	case core.Paused:
+		// Only the thread that stopped is stopped (AD-9).
 		m := &dap.StoppedEvent{Event: f.s.event("stopped")}
 		m.Body.Reason = e.Reason
 		m.Body.ThreadId = e.ThreadID
+		m.Body.AllThreadsStopped = false
 		msg = m
 	case core.Continued:
 		m := &dap.ContinuedEvent{Event: f.s.event("continued")}
@@ -391,4 +392,32 @@ func (f frontend) Emit(ev core.Event) {
 	if err := f.s.send(msg); err != nil {
 		f.s.log.Warn("sending DAP event failed", "error", err)
 	}
+}
+
+// stackFrames renders the stopped thread's stack, innermost first (AD-17):
+// each frame is named by its child list's user path, with its repeat label
+// when it has one, and sits at the line of its own latest stop: a parent at
+// the child that is running. Frames too
+// deep to address are left out.
+func stackFrames(st core.Stop) []dap.StackFrame {
+	out := []dap.StackFrame{}
+	for i, f := range st.Frames {
+		id := frameID(st.ID, i)
+		if id == 0 {
+			break
+		}
+		pos := f.Snapshot.Position
+		name := f.Name
+		if f.RepeatLabel != "" {
+			name += " " + f.RepeatLabel
+		}
+		out = append(out, dap.StackFrame{
+			Id:     id,
+			Name:   name,
+			Source: &dap.Source{Name: filepath.Base(pos.File), Path: pos.File},
+			Line:   pos.Line,
+			Column: 1,
+		})
+	}
+	return out
 }

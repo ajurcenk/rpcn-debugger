@@ -67,9 +67,9 @@ func TestServe(t *testing.T) {
 		},
 		{
 			name:  "unknown request",
-			input: request(1, "stepIn") + request(2, "noSuchCommand") + request(3, "disconnect"),
+			input: request(1, "restart") + request(2, "noSuchCommand") + request(3, "disconnect"),
 			want: []want{
-				{"response", "stepIn", 1, false},
+				{"response", "restart", 1, false},
 				{"response", "noSuchCommand", 2, false},
 				{"response", "disconnect", 3, true},
 			},

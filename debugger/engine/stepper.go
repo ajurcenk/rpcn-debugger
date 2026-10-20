@@ -57,12 +57,15 @@ func registerStepper(env *service.Environment, a core.Arriver) error {
 }
 
 // stepper mirrors ExecuteAll in mode "all": each child runs on every batch
-// the previous one produced. Before each child it calls Arrive once, with
-// Snapshot batches deep-copied from all of them (AD-19). The gate is never held while a child runs: it
+// the previous one produced. Each ProcessBatch is one entry (AD-17): it
+// enters its frame, which goes on ctx for every Arrive and every child, and
+// exits it on return. It calls Arrive before each child and once after the
+// last (childIndex = len(procs), AD-10), with Snapshot batches deep-copied
+// from all of them (AD-19). The gate is never held while a child runs: it
 // is held only inside Arrive (AD-9).
 //
 // parent, mode, strict and concurrent are stored but not acted on yet: a
-// "try" stepper runs like "all" until frames arrive (entry 2.7).
+// "try" stepper runs like "all" until entry 2.7.
 type stepper struct {
 	id         int
 	parent     int
@@ -74,6 +77,9 @@ type stepper struct {
 }
 
 func (s *stepper) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
+	ctx, exit := s.arriver.Enter(ctx, s.id, len(s.procs))
+	defer exit()
+
 	batches := []service.MessageBatch{batch}
 	for i, p := range s.procs {
 		if err := s.arriver.Arrive(ctx, s.id, i, snapshotBatches(batches)); err != nil {
@@ -92,6 +98,11 @@ func (s *stepper) ProcessBatch(ctx context.Context, batch service.MessageBatch) 
 		if len(batches) == 0 {
 			break
 		}
+	}
+	// The end-of-entry stop only observes: it runs even when a child left
+	// no batches, and changes nothing (AD-8).
+	if err := s.arriver.Arrive(ctx, s.id, len(s.procs), snapshotBatches(batches)); err != nil {
+		return nil, nil
 	}
 	return batches, nil
 }

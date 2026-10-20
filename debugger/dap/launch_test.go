@@ -56,6 +56,7 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		"unknown key":     {`{"pipeline":"p.yaml","maxMesages":5}`, []string{`"maxMesages"`, "unknown key"}},
 		"unknown keys":    {`{"pipeline":"p.yaml","zz":1,"aa":2}`, []string{`"aa", "zz"`, "unknown keys"}},
 		"max zero":        {`{"pipeline":"p.yaml","maxMessages":0}`, []string{`"maxMessages"`, "at least 1"}},
+		"max too big":     {`{"pipeline":"p.yaml","maxMessages":1025}`, []string{`"maxMessages"`, "at most 1024"}},
 		"max string":      {`{"pipeline":"p.yaml","maxMessages":"5"}`, []string{`"maxMessages"`, "an integer", "not a string"}},
 		"max fraction":    {`{"pipeline":"p.yaml","maxMessages":2.5}`, []string{`"maxMessages"`, "an integer"}},
 		"max null":        {`{"pipeline":"p.yaml","maxMessages":null}`, []string{`"maxMessages"`, "null"}},
@@ -124,8 +125,8 @@ func TestSchema(t *testing.T) {
 		t.Errorf("schema keys = %v, want exactly the five launch keys", keys)
 	}
 	mm := props["maxMessages"].(map[string]any)
-	if mm["type"] != "integer" || mm["minimum"] != 1 || mm["default"] != 10 {
-		t.Errorf("maxMessages = %v, want an integer, minimum 1, default 10", mm)
+	if mm["type"] != "integer" || mm["minimum"] != 1 || mm["maximum"] != maxRefMessages || mm["default"] != 10 {
+		t.Errorf("maxMessages = %v, want an integer, minimum 1, maximum 1024, default 10", mm)
 	}
 	if p := props["pipeline"].(map[string]any); p["type"] != "string" || p["minLength"] != 1 {
 		t.Errorf("pipeline = %v, want a non-empty string", p)
@@ -191,6 +192,7 @@ func TestLaunchDefaultsReachTheEngine(t *testing.T) {
 	if got.MaxMessages != 10 || got.Pipeline != "/p/pipeline.yaml" {
 		t.Errorf("Start options = %+v, want maxMessages 10 for /p/pipeline.yaml", got)
 	}
+	c.threadEvent("started")
 	c.event("stopped")
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)

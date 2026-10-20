@@ -8,11 +8,18 @@ type Arriver interface {
 	// Captured is called once the batch is captured, before the first
 	// Arrive: kept of its total messages are stepped (AD-4 maxMessages).
 	Captured(kept, total int)
-	// Arrive is called before child childIndex of stepper stepperID runs,
-	// with the stepper's batches, built from its deep copy (AD-19). It
-	// blocks while the session is stopped there. A non-nil error (code
-	// SESSION_ENDED, or ctx's error) means the session ended and the stepper
-	// must deliver nothing.
+	// Enter starts one entry of stepper stepperID, whose list has children
+	// child processors (AD-17). It returns ctx with the entry's frame pushed
+	// on the frame stack, which the stepper passes to every Arrive and to
+	// its children, and the exit func it calls when the entry returns. An
+	// entry whose ctx has no frame runs on the root thread.
+	Enter(ctx context.Context, stepperID, children int) (context.Context, func())
+	// Arrive is called at each stop position of the entry whose frame is on
+	// top of ctx: before child childIndex runs, and after the last child
+	// (childIndex = children, AD-10). batches are the stepper's batches,
+	// built from its deep copy (AD-19). It blocks while the session is
+	// stopped there. A non-nil error (code SESSION_ENDED, or ctx's error)
+	// means the session ended and the stepper must deliver nothing.
 	Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error
 }
 

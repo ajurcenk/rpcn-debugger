@@ -23,13 +23,14 @@ import (
 //   - json: the key (camelCase);
 //   - desc: the schema description;
 //   - default: the default value, applied when the key is absent;
-//   - min: the minimum of an integer, or the minimum length of a string.
+//   - min: the minimum of an integer, or the minimum length of a string;
+//   - max: the maximum of an integer.
 type LaunchConfig struct {
 	Pipeline string `json:"pipeline" min:"1" desc:"The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged."`
 
 	Cwd string `json:"cwd" desc:"The directory that relative paths (pipeline, envFile) resolve against. A relative cwd resolves against the debugger's working directory. When unset, the workspace folder is used."`
 
-	MaxMessages int `json:"maxMessages" default:"10" min:"1" desc:"The most messages of the captured batch to step through. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept."`
+	MaxMessages int `json:"maxMessages" default:"10" min:"1" max:"1024" desc:"The most messages of the captured batch to step through, at most 1024. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept."`
 
 	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Parsed and validated, but not applied yet."`
 
@@ -64,6 +65,7 @@ type launchField struct {
 	desc  string
 	def   any // nil: no default
 	min   *int
+	max   *int // integers only
 }
 
 // launchFields returns the LaunchConfig keys in struct order. The tags are
@@ -92,6 +94,13 @@ func launchFields() []launchField {
 				panic(fmt.Sprintf("LaunchConfig.%s: bad min tag %q: %v", sf.Name, m, err))
 			}
 			f.min = &n
+		}
+		if m, ok := sf.Tag.Lookup("max"); ok {
+			n, err := strconv.Atoi(m)
+			if err != nil || sf.Type.Kind() != reflect.Int {
+				panic(fmt.Sprintf("LaunchConfig.%s: bad max tag %q (integers only): %v", sf.Name, m, err))
+			}
+			f.max = &n
 		}
 		out = append(out, f)
 	}
@@ -197,6 +206,11 @@ func decodeLaunch(raw json.RawMessage) (LaunchConfig, error) {
 				}
 			}
 		}
+		if f.max != nil {
+			if n := ptr.Elem().Int(); n > int64(*f.max) {
+				return LaunchConfig{}, invalidLaunch("%q must be at most %d, not %d", f.key, *f.max, n)
+			}
+		}
 		v.Field(f.index).Set(ptr.Elem())
 	}
 	return cfg, nil
@@ -261,6 +275,9 @@ func Schema() map[string]any {
 			p["type"] = "integer"
 			if f.min != nil {
 				p["minimum"] = *f.min
+			}
+			if f.max != nil {
+				p["maximum"] = *f.max
 			}
 		case reflect.Map:
 			p["type"] = "object"

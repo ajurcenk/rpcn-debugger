@@ -24,11 +24,15 @@ func (l fakeLines) Position(stepperID, childIndex int) (core.Position, bool) {
 	return p, ok
 }
 
-// fakeEngine arrives once before child 0 with one message, then delivers.
+// fakeEngine enters stepper 0, arrives before its one child and at its end
+// stop with one message, then delivers. With nested set, it runs the
+// nested tree instead (see startNested).
 type fakeEngine struct {
 	checkErr  error
 	startErr  error
-	batches   []core.Batch // nil: one batch of one {"greeting":"hello"} message
+	nested    bool
+	slow      time.Duration // how long the nested tree's first child runs
+	batches   []core.Batch  // nil: one batch of one {"greeting":"hello"} message
 	delivered chan []core.Batch
 	ended     chan error
 	opts      chan core.StartOptions // nil: not recorded
@@ -51,7 +55,13 @@ func (e *fakeEngine) Check(string, string) (core.CheckResult, error) {
 	if e.checkErr != nil {
 		return core.CheckResult{}, e.checkErr
 	}
-	return core.CheckResult{Lines: fakeLines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13}}}, nil
+	if e.nested {
+		return core.CheckResult{Lines: nestedLines}, nil
+	}
+	return core.CheckResult{Lines: fakeLines{
+		{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13},
+		{0, 1}: {UserPath: "pipeline.processors", Line: 12},
+	}}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, opts core.StartOptions, a core.Arriver) error {
@@ -67,14 +77,62 @@ func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	if e.startErr != nil {
 		return e.startErr
 	}
+	if e.nested {
+		return e.startNested(ctx, a)
+	}
 	batches := e.batches
 	if batches == nil {
 		batches = []core.Batch{{Messages: []core.Message{jsonMessage(0, `{"greeting":"hello"}`)}}}
 	}
+	ctx, exit := a.Enter(ctx, 0, 1)
+	defer exit()
 	if err := a.Arrive(ctx, 0, 0, batches); err != nil {
 		return err
 	}
+	if err := a.Arrive(ctx, 0, 1, batches); err != nil {
+		return err
+	}
 	e.delivered <- batches
+	return nil
+}
+
+// The nested tree: stepper 0 (pipeline.processors, key line 10) with a
+// leaf at line 11 and a branch at line 12 whose stepper 1 (key line 13)
+// has one leaf at line 14. Each stop's message is {"at":"<stepper>/<child>"}.
+var nestedLines = fakeLines{
+	{0, 0}: {UserPath: "pipeline.processors[0]", Line: 11},
+	{0, 1}: {UserPath: "pipeline.processors[1]", Line: 12},
+	{0, 2}: {UserPath: "pipeline.processors", Line: 10},
+	{1, 0}: {UserPath: "pipeline.processors[1].branch.processors[0]", Line: 14},
+	{1, 1}: {UserPath: "pipeline.processors[1].branch.processors", Line: 13},
+}
+
+func atBatch(stepper, child int) []core.Batch {
+	return []core.Batch{{Messages: []core.Message{jsonMessage(0, fmt.Sprintf(`{"at":"%d/%d"}`, stepper, child))}}}
+}
+
+func (e *fakeEngine) startNested(ctx context.Context, a core.Arriver) error {
+	ctx, exit := a.Enter(ctx, 0, 2)
+	defer exit()
+	if err := a.Arrive(ctx, 0, 0, atBatch(0, 0)); err != nil {
+		return err
+	}
+	time.Sleep(e.slow)
+	if err := a.Arrive(ctx, 0, 1, atBatch(0, 1)); err != nil {
+		return err
+	}
+	inner, exitInner := a.Enter(ctx, 1, 1)
+	for i := range 2 {
+		if err := a.Arrive(inner, 1, i, atBatch(1, i)); err != nil {
+			exitInner()
+			return err
+		}
+	}
+	exitInner()
+	if err := a.Arrive(ctx, 0, 2, atBatch(0, 2)); err != nil {
+		return err
+	}
+	e.delivered <- atBatch(0, 2)
 	return nil
 }
 
@@ -192,9 +250,10 @@ func (c *client) toStop() {
 	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml"})
 	c.send("configurationDone", map[string]any{})
 	c.response("configurationDone", true)
+	c.threadEvent("started")
 	stopped := c.event("stopped").(*dap.StoppedEvent)
-	if stopped.Body.Reason != "entry" || stopped.Body.ThreadId != 1 {
-		c.t.Errorf("stopped = %+v, want reason entry on thread 1", stopped.Body)
+	if stopped.Body.Reason != "entry" || stopped.Body.ThreadId != 1 || stopped.Body.AllThreadsStopped {
+		c.t.Errorf("stopped = %+v, want reason entry on thread 1 only", stopped.Body)
 	}
 
 	c.send("threads", map[string]any{})
@@ -209,7 +268,7 @@ func (c *client) toStop() {
 		c.t.Fatalf("stack = %+v, want one frame", st.Body.StackFrames)
 	}
 	f := st.Body.StackFrames[0]
-	if f.Line != 13 || f.Source == nil || f.Source.Path != "/p/pipeline.yaml" || f.Name != "pipeline.processors[0]" {
+	if f.Line != 13 || f.Source == nil || f.Source.Path != "/p/pipeline.yaml" || f.Name != "pipeline.processors" {
 		c.t.Errorf("frame = %+v (source %+v)", f, f.Source)
 	}
 
@@ -217,6 +276,25 @@ func (c *client) toStop() {
 	if len(msg) < 2 || msg[0].Name != "content" || msg[0].Value != `{"greeting":"hello"}` {
 		c.t.Errorf("message 0 = %+v", msg)
 	}
+}
+
+// threadEvent reads the next message, which must be a thread event for
+// thread 1 with reason.
+func (c *client) threadEvent(reason string) {
+	c.t.Helper()
+	e := c.event("thread").(*dap.ThreadEvent)
+	if e.Body.Reason != reason || e.Body.ThreadId != 1 {
+		c.t.Errorf("thread event = %+v, want %s for thread 1", e.Body, reason)
+	}
+}
+
+// configured sends configurationDone and reads up to the first stop.
+func (c *client) configured() *dap.StoppedEvent {
+	c.t.Helper()
+	c.send("configurationDone", map[string]any{})
+	c.response("configurationDone", true)
+	c.threadEvent("started")
+	return c.event("stopped").(*dap.StoppedEvent)
 }
 
 // scopes returns the scopes of frameID, which must be one "Batches" scope.
@@ -283,6 +361,19 @@ func TestF5StopThenResume(t *testing.T) {
 			if cr, ok := resp.(*dap.ContinueResponse); ok && !cr.Body.AllThreadsContinued {
 				t.Error("continue response without allThreadsContinued")
 			}
+			if command == "next" {
+				// The end stop, at the list's key line.
+				if st := c.event("stopped").(*dap.StoppedEvent); st.Body.Reason != "step" {
+					t.Errorf("stopped = %+v, want reason step", st.Body)
+				}
+				c.send("stackTrace", map[string]any{"threadId": 1})
+				if st := c.response("stackTrace", true).(*dap.StackTraceResponse); len(st.Body.StackFrames) != 1 || st.Body.StackFrames[0].Line != 12 {
+					t.Errorf("stack at the end stop = %+v, want one frame at line 12", st.Body.StackFrames)
+				}
+				c.send(command, map[string]any{"threadId": 1})
+				c.response(command, true)
+			}
+			c.threadEvent("exited")
 			c.event("terminated")
 			select {
 			case <-eng.delivered:
@@ -359,10 +450,12 @@ func TestNothingCaptured(t *testing.T) {
 	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml"})
 	c.send("configurationDone", map[string]any{})
 	c.response("configurationDone", true)
+	c.threadEvent("started")
 	out := c.event("output").(*dap.OutputEvent)
 	if !strings.Contains(out.Body.Output, "no batch was captured") {
 		t.Errorf("output = %q", out.Body.Output)
 	}
+	c.threadEvent("exited")
 	c.event("terminated")
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)
@@ -440,9 +533,7 @@ func TestVariablesPaging(t *testing.T) {
 	eng.batches = []core.Batch{{Messages: msgs}}
 	c := startServer(t, eng)
 	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml"})
-	c.send("configurationDone", map[string]any{})
-	c.response("configurationDone", true)
-	c.event("stopped")
+	c.configured()
 	sc := c.scopes(c.frameID())
 	if sc.IndexedVariables != 1 {
 		t.Errorf("scope = %+v, want 1 indexed batch", sc)
@@ -495,9 +586,7 @@ func TestVariablesTree(t *testing.T) {
 	eng.batches = []core.Batch{{Messages: []core.Message{first, second}}}
 	c := startServer(t, eng)
 	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml"})
-	c.send("configurationDone", map[string]any{})
-	c.response("configurationDone", true)
-	c.event("stopped")
+	c.configured()
 	frame := c.frameID()
 
 	m0 := c.message(frame, 0, 0)
@@ -538,7 +627,8 @@ func TestVariablesTree(t *testing.T) {
 	}
 
 	// References that point nowhere answer nothing.
-	for _, ref := range []int{0, 2, 7, encodeRef(frame, kindMessage, 0, 9), encodeRef(frame, kindBatch, 3, 0), encodeRef(frame, 6, 0, 0)} {
+	w, _ := decodeFrameID(frame)
+	for _, ref := range []int{0, 2, 7, encodeRef(w, kindMessage, 0, 9), encodeRef(w, kindBatch, 3, 0), encodeRef(w, 6, 0, 0), encodeRef(at{w.stop, 1}, kindBatches, 0, 0)} {
 		if vars := c.variables(map[string]any{"variablesReference": ref}); len(vars) != 0 {
 			t.Errorf("variables(%d) = %+v, want none", ref, vars)
 		}
@@ -562,40 +652,53 @@ func varNames(vars []dap.Variable) string {
 
 func TestRefEncoding(t *testing.T) {
 	for _, tc := range []struct {
-		frame int
-		r     ref
+		stop int
+		r    ref
 	}{
-		{1, ref{1, kindBatches, 0, 0}},
-		{2, ref{2, kindBatch, 0, 0}},
-		{130, ref{2, kindMessage, 3, 7}},
-		{maxRefStops - 1, ref{maxRefStops - 1, kindInternal, maxRefBatches - 1, maxRefMessages - 1}},
+		{1, ref{at{1, 0}, kindBatches, 0, 0}},
+		{2, ref{at{2, 3}, kindBatch, 0, 0}},
+		{maxRefStops + 2, ref{at{2, 1}, kindMessage, 3, 7}},
+		{maxRefStops - 1, ref{at{maxRefStops - 1, maxRefFrames - 1}, kindInternal, maxRefBatches - 1, maxRefMessages - 1}},
 	} {
-		n := encodeRef(tc.frame, tc.r.kind, tc.r.batch, tc.r.msg)
+		w := at{tc.stop, tc.r.frame}
+		n := encodeRef(w, tc.r.kind, tc.r.batch, tc.r.msg)
 		if n < refBase || n >= 1<<31 {
-			t.Errorf("encodeRef(%d, %+v) = %d", tc.frame, tc.r, n)
+			t.Errorf("encodeRef(%+v, %+v) = %d", w, tc.r, n)
 		}
 		if got, ok := decodeRef(n); !ok || got != tc.r {
 			t.Errorf("decodeRef(%d) = %+v, %v; want %+v", n, got, ok, tc.r)
 		}
+		id := frameID(tc.stop, tc.r.frame)
+		if got, ok := decodeFrameID(id); !ok || got != tc.r.at {
+			t.Errorf("decodeFrameID(%d) = %+v, %v; want %+v", id, got, ok, tc.r.at)
+		}
 	}
-	if encodeRef(1, kindMessage, maxRefBatches, 0) != 0 || encodeRef(1, kindMessage, 0, maxRefMessages) != 0 {
+	if encodeRef(at{1, 0}, kindMessage, maxRefBatches, 0) != 0 || encodeRef(at{1, 0}, kindMessage, 0, maxRefMessages) != 0 ||
+		encodeRef(at{1, maxRefFrames}, kindBatches, 0, 0) != 0 {
 		t.Error("out-of-range references are expandable")
+	}
+	if frameID(1, maxRefFrames) != 0 {
+		t.Error("a frame too deep has an id")
+	}
+	if _, ok := decodeFrameID(0); ok {
+		t.Error("frame id 0 decodes")
 	}
 }
 
-// A reference handed out at one stop resolves to nothing at the next
-// (AD-17).
+// A reference or frame id handed out at one stop resolves to nothing at
+// the next (AD-17).
 func TestStaleReferences(t *testing.T) {
 	snap := core.Snapshot{Batches: []core.Batch{{Messages: []core.Message{jsonMessage(0, `{"a":1}`)}}}}
-	old := core.Frame{ID: 1, Snapshot: snap}
-	cur := core.Frame{ID: 2, Snapshot: snap}
-	all := func(f core.Frame, ref int) []dap.Variable {
-		return variables(f, dap.VariablesArguments{VariablesReference: ref})
+	old := core.Stop{ID: 1, Frames: []core.Frame{{ID: 1, Snapshot: snap}}}
+	cur := core.Stop{ID: 2, Frames: []core.Frame{{ID: 1, Snapshot: snap}}}
+	all := func(st core.Stop, ref int) []dap.Variable {
+		return variables(st, dap.VariablesArguments{VariablesReference: ref})
 	}
+	w := at{old.ID, 0}
 	refs := []int{
-		batchesRef(old.ID),
-		encodeRef(old.ID, kindBatch, 0, 0),
-		encodeRef(old.ID, kindMessage, 0, 0),
+		batchesRef(w),
+		encodeRef(w, kindBatch, 0, 0),
+		encodeRef(w, kindMessage, 0, 0),
 	}
 	for _, ref := range refs {
 		if len(all(old, ref)) == 0 {
@@ -605,8 +708,11 @@ func TestStaleReferences(t *testing.T) {
 			t.Errorf("reference %d from the previous stop = %+v, want nothing", ref, vars)
 		}
 	}
-	if len(all(cur, batchesRef(cur.ID))) != 1 {
+	if len(all(cur, batchesRef(at{cur.ID, 0}))) != 1 {
 		t.Error("the current stop's scope is empty")
+	}
+	if _, ok := frameOf(cur, at{stopOf(old.ID), 0}); ok {
+		t.Error("a frame id of the previous stop resolves")
 	}
 }
 
@@ -629,9 +735,7 @@ func TestSetBreakpointsUnverified(t *testing.T) {
 	}
 	c.send("setExceptionBreakpoints", map[string]any{"filters": []string{}})
 	c.response("setExceptionBreakpoints", true)
-	c.send("configurationDone", map[string]any{})
-	c.response("configurationDone", true)
-	c.event("stopped")
+	c.configured()
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)
 }
@@ -646,9 +750,6 @@ func TestUnsupportedCommands(t *testing.T) {
 		command string
 		args    map[string]any
 	}{
-		{"stepIn", map[string]any{"threadId": 1}},
-		{"stepOut", map[string]any{"threadId": 1}},
-		{"pause", map[string]any{"threadId": 1}},
 		{"evaluate", map[string]any{"expression": "this", "frameId": frame}},
 		{"restart", map[string]any{}},
 		{"setVariable", map[string]any{"variablesReference": 1, "name": "x", "value": "1"}},
@@ -664,6 +765,7 @@ func TestUnsupportedCommands(t *testing.T) {
 	}
 	c.send("continue", map[string]any{"threadId": 1})
 	c.response("continue", true)
+	c.threadEvent("exited")
 	c.event("terminated")
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)

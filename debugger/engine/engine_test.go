@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,11 +55,16 @@ func testLogger() *slog.Logger {
 type arrival struct {
 	stepperID, childIndex int
 	batches               []core.Batch
+	// stack is the frame stack in the Arrive's ctx, innermost first.
+	stack []core.FrameRef
 }
 
 // arriver records arrivals and, when block is set, waits on it at each one.
+// Its Enter pushes a frame like the Session's.
 type arriver struct {
 	mu       sync.Mutex
+	frames   int
+	exits    int
 	got      []arrival
 	captured [][2]int // kept, total
 	block    chan struct{}
@@ -71,12 +77,27 @@ func (a *arriver) Captured(kept, total int) {
 	a.mu.Unlock()
 }
 
+func (a *arriver) Enter(ctx context.Context, stepperID, _ int) (context.Context, func()) {
+	a.mu.Lock()
+	a.frames++
+	ref := core.FrameRef{FrameID: a.frames, StepperID: stepperID, ThreadID: core.ThreadID}
+	a.mu.Unlock()
+	return core.PushFrame(ctx, ref), func() {
+		a.mu.Lock()
+		a.exits++
+		a.mu.Unlock()
+	}
+}
+
 func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
 	a.mu.Lock()
-	a.got = append(a.got, arrival{stepperID, childIndex, batches})
+	a.got = append(a.got, arrival{stepperID, childIndex, batches, core.FrameStack(ctx)})
 	a.mu.Unlock()
 	if a.seen != nil {
-		a.seen <- struct{}{}
+		select {
+		case a.seen <- struct{}{}:
+		default:
+		}
 	}
 	if a.block != nil {
 		select {
@@ -111,9 +132,20 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	if err := a.Start(ctx, core.StartOptions{Pipeline: samplePipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
-	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
+	if len(arr.got) != 2 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
 		len(arr.got[0].batches) != 1 || len(arr.got[0].batches[0].Messages) != 1 {
-		t.Fatalf("arrivals = %+v, want one batch of one message before child 0", arr.got)
+		t.Fatalf("arrivals = %+v, want one batch of one message before child 0, then the end stop", arr.got)
+	}
+	// The end stop observes the mapping's result.
+	if end := arr.got[1]; end.stepperID != 0 || end.childIndex != 1 || len(end.batches) != 1 ||
+		!strings.Contains(string(end.batches[0].Messages[0].Content.Raw), `"doubled":2`) {
+		t.Errorf("end stop = %+v, want child 1 with the mapped message", end)
+	}
+	if pos, ok := res.Lines.Position(0, 1); !ok || pos.Line != 15 || pos.UserPath != "pipeline.processors" {
+		t.Errorf("Position(0, 1) = %+v, %v; want pipeline.processors at line 15", pos, ok)
+	}
+	if arr.frames != 1 || arr.exits != 1 {
+		t.Errorf("entries = %d, exits = %d; want 1 and 1", arr.frames, arr.exits)
 	}
 	m := arr.got[0].batches[0].Messages[0]
 	var msg map[string]any
@@ -210,10 +242,11 @@ output:
 	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
-	// The input stepper stops before its child; the deleted message never
-	// reaches the pipeline stepper.
-	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 {
-		t.Fatalf("arrivals = %+v, want one, before input.processors[0]", arr.got)
+	// The input stepper stops before its child, then at its end stop with
+	// no batches; the deleted message never reaches the pipeline stepper.
+	if len(arr.got) != 2 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
+		arr.got[1].stepperID != 0 || arr.got[1].childIndex != 1 || len(arr.got[1].batches) != 0 {
+		t.Fatalf("arrivals = %+v, want input.processors[0], then its end stop with no batches", arr.got)
 	}
 }
 
@@ -239,11 +272,17 @@ func TestNestedStepsAndDelivers(t *testing.T) {
 	if err := a.Start(ctx, core.StartOptions{Pipeline: nestedPipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
-	// Ids: 0 input, 1 pipeline, 2 branch, 3 and 4 the switch cases, 5 output.
-	want := [][2]int{{0, 0}, {1, 0}, {2, 0}, {1, 1}, {3, 0}, {5, 0}}
-	var got [][2]int
+	// Ids: 0 input, 1 pipeline, 2 branch, 3 and 4 the switch cases, 5
+	// output. Each entry ends with its end stop (childIndex = n), and an
+	// entry nested in a parent processor carries its parent's frame.
+	want := [][3]int{
+		{0, 0, 1}, {0, 1, 1},
+		{1, 0, 1}, {2, 0, 2}, {2, 1, 2}, {1, 1, 1}, {3, 0, 2}, {3, 1, 2}, {1, 2, 1},
+		{5, 0, 1}, {5, 1, 1},
+	}
+	var got [][3]int
 	for _, g := range arr.got {
-		got = append(got, [2]int{g.stepperID, g.childIndex})
+		got = append(got, [3]int{g.stepperID, g.childIndex, len(g.stack)})
 	}
 	if len(got) != len(want) {
 		t.Fatalf("arrivals = %v, want %v", got, want)
@@ -253,7 +292,14 @@ func TestNestedStepsAndDelivers(t *testing.T) {
 			t.Fatalf("arrivals = %v, want %v", got, want)
 		}
 	}
-	last := arr.got[len(arr.got)-1].batches
+	// At the branch's child, the stack is [branch, pipeline].
+	if st := arr.got[3].stack; st[0].StepperID != 2 || st[1].StepperID != 1 {
+		t.Errorf("stack at the branch's child = %+v, want stepper 2 inside stepper 1", st)
+	}
+	if arr.frames != 5 || arr.exits != 5 {
+		t.Errorf("entries = %d, exits = %d; want 5 and 5", arr.frames, arr.exits)
+	}
+	last := arr.got[len(arr.got)-2].batches
 	if len(last) != 1 || len(last[0].Messages) != 1 {
 		t.Fatalf("batches before output.processors[0] = %+v", last)
 	}
@@ -398,8 +444,8 @@ func TestCaptureNeverAcks(t *testing.T) {
 	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
-	if len(arr.got) != 1 {
-		t.Fatalf("arrivals = %d, want 1", len(arr.got))
+	if len(arr.got) != 2 {
+		t.Fatalf("arrivals = %d, want 2 (child 0 and the end stop)", len(arr.got))
 	}
 	probe.mu.Lock()
 	defer probe.mu.Unlock()
@@ -480,8 +526,8 @@ func TestCaptureTruncatesToMaxMessages(t *testing.T) {
 			if len(arr.captured) != 1 || arr.captured[0] != [2]int{tc.kept, 12} {
 				t.Errorf("Captured calls = %v, want one with %d of 12", arr.captured, tc.kept)
 			}
-			if len(arr.got) != 1 || len(arr.got[0].batches) != 1 {
-				t.Fatalf("arrivals = %+v, want one stop with one batch", arr.got)
+			if len(arr.got) != 2 || len(arr.got[0].batches) != 1 {
+				t.Fatalf("arrivals = %+v, want a stop with one batch, then the end stop", arr.got)
 			}
 			msgs := arr.got[0].batches[0].Messages
 			if len(msgs) != tc.kept {

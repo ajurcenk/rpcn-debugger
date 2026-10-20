@@ -72,7 +72,8 @@
               },
               "maxMessages": {
                 "default": 10,
-                "description": "The most messages of the captured batch to step through. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept.",
+                "description": "The most messages of the captured batch to step through, at most 1024. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept.",
+                "maximum": 1024,
                 "minimum": 1,
                 "type": "integer"
               },

@@ -17,3 +17,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-contracts-closed-protocol-error-registry-snapshot-and-variab-plan.md`
   summary: Object/array metadata values are JSON-encoded, so nested []byte, time.Time and NaN/±Inf don't round-trip, an unknown Go type becomes `string` via fmt.Sprint, and an int64-overflowing json.Number is labelled float; make nested values lossless (a typed encoding) — for epic-edit-restart-replay, whose capture round-trip test must be byte-identical (AD-11).
   evidence: debugger/engine/snapshot.go metaEntry/jsonText/sanitize use json.Marshal for object/array; TestMetadataRoundTrip covers only JSON-native nested values. Scalars are already lossless.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-session-stepping-semantics-frames-and-threads-plan.md`
+  summary: next/stepIn/stepOut resume every thread but tell the client only about the stepped one; emit a DAP `continued` event with `allThreadsContinued: true` (the Session never emits `core.Continued`) — for epic-concurrency, which introduces more than one thread.
+  evidence: AD-9 says every resume is process-wide with allThreadsContinued; only the `continue` response carries the flag. Invisible with this epic's single root thread.

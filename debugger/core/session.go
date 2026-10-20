@@ -8,33 +8,106 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
-// ThreadID is the one (root) thread of this entry. Threads per stepper entry
-// arrive with AD-17 (entry 2.6).
+// ThreadID is the root thread: every stepper entry whose ctx has no frame
+// runs on it (AD-17). Its id is stable for the whole run.
 const ThreadID = 1
+
+// rootThreadName is the root thread's name in frontends.
+const rootThreadName = "batch"
 
 // unverifiedMessage is the reason every breakpoint is unverified for now.
 const unverifiedMessage = "Breakpoints are not resolved yet: this version of rpcn-debug doesn't stop at them"
 
-// Frame is the stop the Session is paused at: one stepper entry, positioned
-// before child Snapshot.Position.ChildIndex. Its ID becomes invalid on
-// resume (AD-17).
+// Frame is one live stepper entry at a stop, with the Snapshot of its own
+// latest Arrive (AD-11): a parent frame shows its batches before the child
+// that is running.
 type Frame struct {
-	// ID is the frame id, also in Snapshot.Position.FrameID.
+	// ID is the entry's frame id (also in Snapshot.Position.FrameID). It
+	// is stable for the entry; frontends mint their own per-stop ids.
 	ID int
-	// Snapshot is the message state at the stop (AD-11).
+	// StepperID is the rewrite's id of the entry's stepper.
+	StepperID int
+	// Name is the user path of the entry's child list, e.g.
+	// pipeline.processors[0].branch.processors.
+	Name string
+	// RepeatLabel is the entry's repeat label; empty until entry 2.7.
+	RepeatLabel string
+	// Snapshot is the message state at the frame's latest stop position.
 	Snapshot Snapshot
 }
 
+// Stop is the stop the Session is paused at: the stopped thread and its
+// frame stack. It becomes invalid on resume (AD-17).
+type Stop struct {
+	// ID is minted per stop: frontends derive their frame ids and
+	// variablesReference values from it.
+	ID       int
+	ThreadID int
+	Reason   string
+	// Frames is the stopped thread's stack, innermost first.
+	Frames []Frame
+
+	// The position the step commands measure from (AD-10).
+	depth   int
+	frameID int
+	atEnd   bool
+}
+
+// Thread is one live thread (AD-17).
+type Thread struct {
+	ID   int
+	Name string
+}
+
+// stepMode is what a thread's last resume asked for.
+type stepMode int
+
+const (
+	stepNone stepMode = iota // Continue: stop nowhere
+	stepNext
+	stepIn
+	stepOut
+)
+
+// stepState is one thread's step state (AD-9), read in Arrive under the
+// gate. depth, frameID and atEnd are those of the stop the command was
+// issued at.
+type stepState struct {
+	mode    stepMode
+	depth   int
+	frameID int
+	atEnd   bool
+}
+
+type thread struct {
+	id      int
+	name    string
+	started bool
+	exited  bool
+	step    stepState
+}
+
+// liveFrame is the Session's record of one live stepper entry.
+type liveFrame struct {
+	ref      FrameRef
+	children int // -1 when unknown
+	name     string
+	snap     Snapshot
+}
+
 // Session owns all debug state (AD-3). A frontend drives it only through Do
-// with the protocol commands, and reads the paused frame with Frame;
+// with the protocol commands, and reads the stop with Stopped and the
+// threads with Threads;
 // steppers reach it through Arrive; it reaches the engine only through the
 // Engine port and reports only through Frontend.Emit.
 //
-// Its stop predicate is the tracer one: after ConfigurationDone the first
-// Arrive stops with reason "entry", and Next or Continue both run to the end.
+// Its stop predicate is AD-10's: after ConfigurationDone the first Arrive
+// stops with reason entry; then Next, StepIn, StepOut, Continue and Pause
+// decide the next stop, per thread, under the pause gate (AD-9).
 type Session struct {
 	engine Engine
 	fe     Frontend
@@ -49,16 +122,23 @@ type Session struct {
 	lines       LineMap
 	launched    bool
 	configured  bool
-	stopNext    bool
 	breakpoints map[string][]int
 	exceptions  []string
-	frameSeq    int
-	frame       *Frame
-	resume      chan struct{}
-	ended       bool
-	endedCh     chan struct{}
-	cancel      context.CancelFunc
-	done        chan struct{}
+
+	// Stepping (AD-9, AD-10, AD-17). The stop predicate reads it in Arrive
+	// while the gate is held.
+	entryPending bool // the first Arrive after ConfigurationDone stops
+	pausePending bool // the next Arrive on any thread stops
+	frameSeq     int
+	frames       map[int]*liveFrame
+	threads      map[int]*thread
+	stopSeq      int
+	stop         *Stop
+	resume       chan struct{}
+	ended        bool
+	endedCh      chan struct{}
+	cancel       context.CancelFunc
+	done         chan struct{}
 }
 
 // NewSession returns a Session that runs pipelines through engine and sends
@@ -69,6 +149,8 @@ func NewSession(engine Engine, fe Frontend) *Session {
 		fe:          fe,
 		endedCh:     make(chan struct{}),
 		breakpoints: map[string][]int{},
+		frames:      map[int]*liveFrame{},
+		threads:     map[int]*thread{},
 	}
 }
 
@@ -88,17 +170,19 @@ func (s *Session) Do(_ context.Context, cmd Command) (Result, error) {
 		s.exceptions = append([]string(nil), c.Filters...)
 		s.mu.Unlock()
 		return nil, nil
-	case Next, Continue:
-		return nil, s.resumeRun()
+	case Next:
+		return nil, s.resumeRun(c.ThreadID, stepNext)
+	case StepIn:
+		return nil, s.resumeRun(c.ThreadID, stepIn)
+	case StepOut:
+		return nil, s.resumeRun(c.ThreadID, stepOut)
+	case Continue:
+		return nil, s.resumeRun(c.ThreadID, stepNone)
+	case Pause:
+		return nil, s.pause()
 	case Terminate:
 		s.terminate()
 		return nil, nil
-	case StepIn:
-		return nil, notSupported("Step In", "entry 2.6 (frames and threads)")
-	case StepOut:
-		return nil, notSupported("Step Out", "entry 2.6 (frames and threads)")
-	case Pause:
-		return nil, notSupported("Pause", "entry 2.6 (frames and threads)")
 	case Evaluate:
 		return nil, notSupported("Evaluate", "epic-breakpoints-and-evaluation")
 	case SetMessage:
@@ -191,7 +275,11 @@ func (s *Session) configurationDone() error {
 	if s.configured || s.ended {
 		return nil
 	}
-	s.configured, s.stopNext = true, true
+	s.configured, s.entryPending = true, true
+	// The root thread exists from here on, while the input is still being
+	// captured, so a frontend can list it and Pause it. Its ThreadStarted
+	// goes out from the run, after the response to this command.
+	s.threadLocked(ThreadID).started = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.done = cancel, make(chan struct{})
@@ -216,10 +304,16 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 
 func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}) {
 	defer close(done)
+	s.mu.Lock()
+	ended := s.ended
+	s.mu.Unlock()
+	if !ended {
+		s.fe.Emit(ThreadStarted{ThreadID: ThreadID, Name: rootThreadName})
+	}
 	err := s.engine.Start(ctx, opts, s)
 
 	s.mu.Lock()
-	ended := s.ended
+	ended = s.ended
 	s.mu.Unlock()
 	if ended {
 		return // Terminate: the frontend is gone.
@@ -229,6 +323,17 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 		s.fe.Emit(Output{Category: "console", Text: err.Error() + "\n"})
 	case err != nil:
 		s.fe.Emit(Output{Category: "stderr", Text: "The debug run failed: " + err.Error() + "\n"})
+	}
+	// The root thread ends with the run (AD-17).
+	s.mu.Lock()
+	root := s.threads[ThreadID]
+	exitRoot := root != nil && root.started && !root.exited
+	if exitRoot {
+		root.exited = true
+	}
+	s.mu.Unlock()
+	if exitRoot {
+		s.fe.Emit(ThreadExited{ThreadID: ThreadID})
 	}
 	s.fe.Emit(Terminated{})
 }
@@ -256,9 +361,132 @@ func resolve(base, path string) string {
 	return filepath.Join(base, path)
 }
 
-// Arrive implements Arriver. It takes the gate, decides whether to stop and,
-// if it stops, keeps a Snapshot of batches for the frame, emits Paused and
-// blocks under the gate until Next, Continue, Terminate or ctx's end (AD-9).
+// ForkThread starts a thread for a stepper entry that has no frame in its
+// ctx, or whose config is concurrent (AD-17), and returns its id. In this
+// epic every entry runs on the root thread, which ConfigurationDone already
+// started: ForkThread returns ThreadID (starting it, with a ThreadStarted
+// event, only if it isn't yet). Concurrent
+// forking arrives with epic-concurrency.
+func (s *Session) ForkThread() int {
+	s.mu.Lock()
+	started := s.forkThreadLocked()
+	s.mu.Unlock()
+	if started {
+		s.fe.Emit(ThreadStarted{ThreadID: ThreadID, Name: rootThreadName})
+	}
+	return ThreadID
+}
+
+// forkThreadLocked marks the root thread started and reports whether it
+// just started.
+func (s *Session) forkThreadLocked() bool {
+	t := s.threadLocked(ThreadID)
+	if t.started || s.ended {
+		return false
+	}
+	t.started = true
+	return true
+}
+
+// ExitThread is called by the entry that forked thread id when it returns
+// (AD-17). The root thread is shared by every top-level entry, so it ends
+// with the run instead, and ExitThread leaves it running.
+func (s *Session) ExitThread(id int) {
+	if id == ThreadID {
+		return
+	}
+	s.mu.Lock()
+	t := s.threads[id]
+	exit := t != nil && t.started && !t.exited && !s.ended
+	if exit {
+		t.exited = true
+	}
+	s.mu.Unlock()
+	if exit {
+		s.fe.Emit(ThreadExited{ThreadID: id})
+	}
+}
+
+// Threads returns the live threads, in id order.
+func (s *Session) Threads() []Thread {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []Thread{}
+	for _, t := range s.threads {
+		if t.started && !t.exited {
+			out = append(out, Thread{ID: t.id, Name: t.name})
+		}
+	}
+	slices.SortFunc(out, func(a, b Thread) int { return a.ID - b.ID })
+	return out
+}
+
+// threadLocked returns thread id's record, creating it unstarted.
+func (s *Session) threadLocked(id int) *thread {
+	t := s.threads[id]
+	if t == nil {
+		name := rootThreadName
+		if id != ThreadID {
+			name = fmt.Sprintf("thread %d", id)
+		}
+		t = &thread{id: id, name: name}
+		s.threads[id] = t
+	}
+	return t
+}
+
+// Enter implements Arriver. It mints the entry's frame, registers it as
+// live and pushes it on ctx's frame stack (AD-17). An entry with no frame in
+// ctx runs on the root thread (ForkThread); otherwise it inherits its parent
+// frame's thread, and its call site is the parent's latest stop.
+func (s *Session) Enter(ctx context.Context, stepperID, children int) (context.Context, func()) {
+	parent, _, nested := TopFrame(ctx)
+	var tid int
+	if nested {
+		tid = parent.ThreadID
+	} else {
+		tid = s.ForkThread()
+	}
+
+	s.mu.Lock()
+	s.frameSeq++
+	ref := FrameRef{FrameID: s.frameSeq, StepperID: stepperID, ThreadID: tid}
+	if nested {
+		ref.CallSite = CallSite{FrameID: parent.FrameID, StepperID: parent.StepperID}
+		if pf := s.frames[parent.FrameID]; pf != nil {
+			ref.CallSite.ChildIndex = pf.snap.Position.ChildIndex
+		}
+	}
+	s.frames[ref.FrameID] = &liveFrame{ref: ref, children: children, name: s.frameName(stepperID, children)}
+	s.mu.Unlock()
+
+	exit := func() {
+		s.mu.Lock()
+		delete(s.frames, ref.FrameID)
+		s.mu.Unlock()
+		if !nested {
+			s.ExitThread(tid)
+		}
+	}
+	return PushFrame(ctx, ref), exit
+}
+
+// frameName is the user path of stepper stepperID's child list: the
+// LineMap's end-of-entry stop (AD-10). s.mu must be held.
+func (s *Session) frameName(stepperID, children int) string {
+	if s.lines != nil && children >= 0 {
+		if p, ok := s.lines.Position(stepperID, children); ok && p.UserPath != "" {
+			return p.UserPath
+		}
+	}
+	return fmt.Sprintf("stepper %d", stepperID)
+}
+
+// Arrive implements Arriver. It takes the gate and, while holding it,
+// records batches as the Snapshot of the frame on top of ctx and decides
+// whether to stop (AD-9, AD-10). If it stops, it emits Paused and blocks
+// under the gate until a resume, Terminate or ctx's end. It emits nothing
+// when it doesn't stop.
 func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error {
 	s.gate.lock()
 	defer s.gate.unlock()
@@ -268,34 +496,52 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 		s.mu.Unlock()
 		return NewError(CodeSessionEnded, "the debug session ended")
 	}
-	if !s.configured || !s.stopNext {
-		s.mu.Unlock()
-		return nil
-	}
-	s.stopNext = false
-
-	s.frameSeq++
-	pos := Position{}
-	if s.lines != nil {
-		if p, ok := s.lines.Position(stepperID, childIndex); ok {
-			pos = p
-		}
-	}
-	pos.ThreadID, pos.FrameID = ThreadID, s.frameSeq
-	pos.StepperID, pos.ChildIndex, pos.File = stepperID, childIndex, s.pipeline
 	if batches == nil {
 		batches = []Batch{}
 	}
-	f := &Frame{ID: s.frameSeq, Snapshot: Snapshot{
-		SchemaVersion: SchemaVersion,
-		Position:      pos,
-		Batches:       batches,
-	}}
+
+	ref, depth, ok := TopFrame(ctx)
+	lf := s.frames[ref.FrameID]
+	if !ok || lf == nil || lf.ref.StepperID != stepperID {
+		// An Arrive outside any entry (no Enter): a one-off frame on the
+		// root thread.
+		ref, depth = FrameRef{StepperID: stepperID, ThreadID: ThreadID}, 1
+		lf = &liveFrame{ref: ref, children: -1, name: s.frameName(stepperID, -1)}
+	}
+	lf.snap = s.snapshot(ref, childIndex, batches)
+
+	if !s.configured {
+		s.mu.Unlock()
+		return nil
+	}
+	t := s.threadLocked(ref.ThreadID)
+	atEnd := lf.children >= 0 && childIndex == lf.children
+	reason, stop := s.shouldStop(t.step, ref, depth, atEnd)
+	if !stop {
+		s.mu.Unlock()
+		return nil
+	}
+	t.step = stepState{}
+
+	frames := []Frame{lfFrame(lf)}
+	if ok && s.frames[ref.FrameID] == lf {
+		frames = frames[:0]
+		for _, r := range FrameStack(ctx) {
+			if f := s.frames[r.FrameID]; f != nil {
+				frames = append(frames, lfFrame(f))
+			}
+		}
+	}
+	s.stopSeq++
+	st := &Stop{
+		ID: s.stopSeq, ThreadID: ref.ThreadID, Reason: reason, Frames: frames,
+		depth: depth, frameID: ref.FrameID, atEnd: atEnd,
+	}
 	resume := make(chan struct{})
-	s.frame, s.resume = f, resume
+	s.stop, s.resume = st, resume
 	s.mu.Unlock()
 
-	s.fe.Emit(Paused{ThreadID: ThreadID, Reason: "entry"})
+	s.fe.Emit(Paused{ThreadID: ref.ThreadID, Reason: reason})
 
 	select {
 	case <-resume:
@@ -305,25 +551,83 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 	case <-ctx.Done():
 		s.mu.Lock()
 		if s.resume == resume {
-			s.frame, s.resume = nil, nil
+			s.stop, s.resume = nil, nil
 		}
 		s.mu.Unlock()
 		return ctx.Err()
 	}
 }
 
-// Frame returns the stop the session is paused at, if any. The Snapshot is
-// immutable: callers must not modify it.
-func (s *Session) Frame() (Frame, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.frame == nil {
-		return Frame{}, false
+// shouldStop is the stop predicate (AD-9, AD-10) for an Arrive of frame ref
+// at stack depth depth; atEnd is true at the frame's end stop (childIndex
+// = n). step is the arriving thread's step state, set at the stop the
+// last command was issued at (depth d0, frame f0):
+//
+//   - Next stops at depth < d0 or in f0.
+//   - StepIn stops at the very next Arrive.
+//   - StepOut stops at depth < d0, or at f0's end stop when the command
+//     wasn't issued there.
+//
+// A top-level frame's parent is the run itself, so for d0 = 1 "the
+// parent's next stop" is the next stop of another top-level entry, e.g.
+// the output.processors stepper after pipeline.processors.
+//
+// A pending entry or Pause stops any Arrive first. s.mu must be held.
+func (s *Session) shouldStop(step stepState, ref FrameRef, depth int, atEnd bool) (string, bool) {
+	if s.entryPending {
+		s.entryPending, s.pausePending = false, false
+		return ReasonEntry, true
 	}
-	return *s.frame, true
+	if s.pausePending {
+		s.pausePending = false
+		return ReasonPause, true
+	}
+	same := ref.FrameID == step.frameID
+	topLevelSibling := step.depth == 1 && depth == 1 && !same
+	switch step.mode {
+	case stepIn:
+		return ReasonStep, true
+	case stepNext:
+		return ReasonStep, depth < step.depth || same || topLevelSibling
+	case stepOut:
+		return ReasonStep, depth < step.depth || topLevelSibling || (same && atEnd && !step.atEnd)
+	default:
+		return "", false
+	}
 }
 
-func (s *Session) resumeRun() error {
+// snapshot builds the Snapshot of frame ref at childIndex. s.mu must be
+// held.
+func (s *Session) snapshot(ref FrameRef, childIndex int, batches []Batch) Snapshot {
+	pos := Position{}
+	if s.lines != nil {
+		if p, ok := s.lines.Position(ref.StepperID, childIndex); ok {
+			pos = p
+		}
+	}
+	pos.ThreadID, pos.FrameID = ref.ThreadID, ref.FrameID
+	pos.StepperID, pos.ChildIndex, pos.File = ref.StepperID, childIndex, s.pipeline
+	return Snapshot{SchemaVersion: SchemaVersion, Position: pos, Batches: batches}
+}
+
+func lfFrame(f *liveFrame) Frame {
+	return Frame{ID: f.ref.FrameID, StepperID: f.ref.StepperID, Name: f.name, RepeatLabel: f.ref.RepeatLabel, Snapshot: f.snap}
+}
+
+// Stopped returns the stop the session is paused at, if any. Its Snapshots
+// are immutable: callers must not modify them.
+func (s *Session) Stopped() (Stop, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stop == nil {
+		return Stop{}, false
+	}
+	return *s.stop, true
+}
+
+// resumeRun resumes every thread (AD-9) and gives threadID (0: the stopped
+// thread) the step state mode, measured from the current stop.
+func (s *Session) resumeRun(threadID int, mode stepMode) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ended {
@@ -332,8 +636,32 @@ func (s *Session) resumeRun() error {
 	if s.resume == nil {
 		return NewError(CodeNotStopped, "the session is not stopped")
 	}
+	st := s.stop
+	if threadID == 0 || s.threads[threadID] == nil {
+		threadID = st.ThreadID
+	}
+	t := s.threadLocked(threadID)
+	t.step = stepState{mode: mode}
+	if threadID == st.ThreadID {
+		t.step.depth, t.step.frameID, t.step.atEnd = st.depth, st.frameID, st.atEnd
+	}
 	close(s.resume)
-	s.frame, s.resume = nil, nil
+	s.stop, s.resume = nil, nil
+	return nil
+}
+
+// pause makes the next Arrive on any thread stop with reason pause. While
+// the session is stopped, or before it runs, it changes nothing.
+func (s *Session) pause() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return NewError(CodeSessionEnded, "the debug session ended")
+	}
+	if s.stop != nil || !s.configured {
+		return nil
+	}
+	s.pausePending = true
 	return nil
 }
 
@@ -346,7 +674,7 @@ func (s *Session) terminate() {
 		s.ended = true
 		close(s.endedCh)
 	}
-	s.frame, s.resume = nil, nil
+	s.stop, s.resume = nil, nil
 	cancel, done := s.cancel, s.done
 	s.mu.Unlock()
 

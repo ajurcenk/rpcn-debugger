@@ -2,7 +2,7 @@
 
 A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-connect/) pipelines in VS Code. It captures one batch from a pipeline's input and steps it through the processors over the Debug Adapter Protocol.
 
-> **Status: tracer bullet.** A launch captures one batch from the pipeline's input without acknowledging it, stops before the first of `pipeline.processors`, shows the stop's line and each message's content, and on Step Over or Continue runs the batch to the end and terminates. Breakpoints, Step In/Out, nested processors and the input/output processors come later.
+> **Status: tracer bullet.** A launch captures one batch from the pipeline's input without acknowledging it, stops before the first processor (input, then pipeline, then output processors), shows the stop's line and each message's content, and steps the batch through the input, pipeline and output processors, nested ones included. Breakpoints come later.
 
 ## Layout
 
@@ -71,7 +71,9 @@ The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't ch
 
 ## Try it
 
-Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables** (Batches › batch 0 › message 0: content, metadata, and an `internal` node for `__` keys); Step Over ends the session. Breakpoints show as unverified for now.
+Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables** (Batches › batch 0 › message 0: content, metadata, and an `internal` node for `__` keys); Step Over moves to the end stop on the `processors:` line, and the next Step Over ends the session. Breakpoints show as unverified for now.
+
+Stepping: the debugger stops before each processor and once after the last one of each list (on the list's key line). Step Over (F10) runs a processor, nested children included; Step In (F11) enters a parent's processors (`branch`, `switch` cases, …), adding a frame to the call stack, each frame with its own batch under Variables; Step Out (Shift+F11) runs to the end of the current list and then back to its parent; Pause stops at the next processor.
 
 A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `env` and `envFile` (validated, applied in a later version; use `${env:NAME}` rather than literal secrets). Any other key fails the launch. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
 
