@@ -35,7 +35,8 @@ type Frame struct {
 	// Name is the user path of the entry's child list, e.g.
 	// pipeline.processors[0].branch.processors.
 	Name string
-	// RepeatLabel is the entry's repeat label; empty until entry 2.7.
+	// RepeatLabel is the entry's repeat label (AD-10), computed by its
+	// stepper, or "".
 	RepeatLabel string
 	// Snapshot is the message state at the frame's latest stop position.
 	Snapshot Snapshot
@@ -98,6 +99,25 @@ type liveFrame struct {
 	children int // -1 when unknown
 	name     string
 	snap     Snapshot
+	// sites are the per-call-site entry counters of the entries this frame
+	// entered (AD-10, AD-17).
+	sites map[siteKey]*siteCount
+}
+
+// siteKey names one call-site counter in a parent frame: the parent's stop
+// (childIndex), the call of the child processor there (MarkCall, or nil)
+// and the counter (a shared Entry.Site, or one stepper's).
+type siteKey struct {
+	childIndex int
+	call       *call
+	site       string
+	stepperID  int // -1 for a shared Site
+}
+
+// siteCount is one call site's counter.
+type siteCount struct {
+	entries int
+	memo    any
 }
 
 // Session owns all debug state (AD-3). A frontend drives it only through Do
@@ -135,6 +155,8 @@ type Session struct {
 	pausePending bool // the next Arrive on any thread stops
 	frameSeq     int
 	frames       map[int]*liveFrame
+	rootSites    map[siteKey]*siteCount // counters of entries with no parent frame
+	budgetWarned map[int]bool           // steppers whose retry time-budget warning went out (AD-8)
 	threads      map[int]*thread
 	stopSeq      int
 	stop         *Stop
@@ -149,12 +171,14 @@ type Session struct {
 // its events to fe.
 func NewSession(engine Engine, fe Frontend) *Session {
 	return &Session{
-		engine:      engine,
-		fe:          fe,
-		endedCh:     make(chan struct{}),
-		breakpoints: map[string][]int{},
-		frames:      map[int]*liveFrame{},
-		threads:     map[int]*thread{},
+		engine:       engine,
+		fe:           fe,
+		endedCh:      make(chan struct{}),
+		breakpoints:  map[string][]int{},
+		frames:       map[int]*liveFrame{},
+		rootSites:    map[siteKey]*siteCount{},
+		budgetWarned: map[int]bool{},
+		threads:      map[int]*thread{},
 	}
 }
 
@@ -490,8 +514,11 @@ func (s *Session) threadLocked(id int) *thread {
 // Enter implements Arriver. It mints the entry's frame, registers it as
 // live and pushes it on ctx's frame stack (AD-17). An entry with no frame in
 // ctx runs on the root thread (ForkThread); otherwise it inherits its parent
-// frame's thread, and its call site is the parent's latest stop.
-func (s *Session) Enter(ctx context.Context, stepperID, children int) (context.Context, func()) {
+// frame's thread, and its call site is the parent's latest stop. The
+// entry's repeat label comes from e.Label, given the call site's counter in
+// the parent frame (AD-10). Enter emits StepStarted, plus AttemptStarted for
+// a retry attempt; the exit func emits StepFinished.
+func (s *Session) Enter(ctx context.Context, e Entry) (context.Context, func(memo any)) {
 	parent, _, nested := TopFrame(ctx)
 	var tid int
 	if nested {
@@ -502,25 +529,92 @@ func (s *Session) Enter(ctx context.Context, stepperID, children int) (context.C
 
 	s.mu.Lock()
 	s.frameSeq++
-	ref := FrameRef{FrameID: s.frameSeq, StepperID: stepperID, ThreadID: tid}
+	ref := FrameRef{FrameID: s.frameSeq, StepperID: e.StepperID, ThreadID: tid, InRetry: e.Attempt}
+	sites, messages := s.rootSites, 0
 	if nested {
 		ref.CallSite = CallSite{FrameID: parent.FrameID, StepperID: parent.StepperID}
+		ref.InRetry = ref.InRetry || parent.InRetry
 		if pf := s.frames[parent.FrameID]; pf != nil {
 			ref.CallSite.ChildIndex = pf.snap.Position.ChildIndex
+			if pf.sites == nil {
+				pf.sites = map[siteKey]*siteCount{}
+			}
+			sites = pf.sites
+			for _, b := range pf.snap.Batches {
+				messages += len(b.Messages)
+			}
 		}
 	}
-	s.frames[ref.FrameID] = &liveFrame{ref: ref, children: children, name: s.frameName(stepperID, children)}
+	c := callOf(ctx)
+	if c != nil {
+		messages = c.messages
+	}
+	key := siteKey{childIndex: ref.CallSite.ChildIndex, call: c, site: e.Site, stepperID: -1}
+	if e.Site == "" {
+		key.stepperID = e.StepperID
+	}
+	site := sites[key]
+	if site == nil {
+		site = &siteCount{}
+		sites[key] = site
+	}
+	if e.Label != nil {
+		ref.RepeatLabel = e.Label(Site{Entries: site.entries, Messages: messages, Memo: site.memo})
+	}
+	site.entries++
+	lf := &liveFrame{ref: ref, children: e.Children, name: s.frameName(e.StepperID, e.Children)}
+	s.frames[ref.FrameID] = lf
+	ended := s.ended
 	s.mu.Unlock()
 
-	exit := func() {
+	if !ended {
+		s.fe.Emit(StepStarted{ThreadID: tid, FrameID: ref.FrameID, StepperID: e.StepperID, RepeatLabel: ref.RepeatLabel})
+		if e.Attempt {
+			s.fe.Emit(AttemptStarted{ThreadID: tid, FrameID: ref.FrameID, StepperID: e.StepperID, RepeatLabel: ref.RepeatLabel, UserPath: lf.name})
+		}
+	}
+
+	exit := func(memo any) {
 		s.mu.Lock()
 		delete(s.frames, ref.FrameID)
+		site.memo = memo
+		ended := s.ended
 		s.mu.Unlock()
+		if !ended {
+			s.fe.Emit(StepFinished{ThreadID: tid, FrameID: ref.FrameID})
+		}
 		if !nested {
 			s.ExitThread(tid)
 		}
 	}
 	return PushFrame(ctx, ref), exit
+}
+
+// Skip implements Arriver: it reports skipped as one MessagesSkipped event
+// at child childIndex of the entry on top of ctx.
+func (s *Session) Skip(ctx context.Context, stepperID, childIndex int, skipped []Skipped, of int) {
+	if len(skipped) == 0 {
+		return
+	}
+	ev := MessagesSkipped{ThreadID: ThreadID, StepperID: stepperID, ChildIndex: childIndex, Skipped: slices.Clone(skipped), Of: of}
+	if ref, _, ok := TopFrame(ctx); ok && ref.StepperID == stepperID {
+		ev.ThreadID, ev.FrameID = ref.ThreadID, ref.FrameID
+	}
+	s.mu.Lock()
+	ended := s.ended
+	ev.File = s.pipeline
+	if s.lines != nil {
+		if p, ok := s.lines.Position(stepperID, childIndex); ok {
+			ev.UserPath, ev.Line = p.UserPath, p.Line
+		}
+	}
+	s.mu.Unlock()
+	if ev.UserPath == "" {
+		ev.UserPath = fmt.Sprintf("stepper %d child %d", stepperID, childIndex)
+	}
+	if !ended {
+		s.fe.Emit(ev)
+	}
 }
 
 // frameName is the user path of stepper stepperID's child list: the
@@ -591,8 +685,17 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 	}
 	resume := make(chan struct{})
 	s.stop, s.resume = st, resume
+	// The first stop of each stepper inside a retry warns once (AD-8).
+	warnBudget := ref.InRetry && !s.budgetWarned[ref.StepperID]
+	if warnBudget {
+		s.budgetWarned[ref.StepperID] = true
+	}
+	name := lf.name
 	s.mu.Unlock()
 
+	if warnBudget {
+		s.fe.Emit(Output{Category: "console", Text: "Warning: " + name + " runs inside a retry. Pausing here holds up the retry, which changes its backoff and max_elapsed_time behaviour, so the output isn't guaranteed to match a real run while you pause inside it.\n"})
+	}
 	s.fe.Emit(Paused{ThreadID: ref.ThreadID, Reason: reason})
 
 	select {

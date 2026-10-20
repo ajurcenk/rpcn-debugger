@@ -1,0 +1,18 @@
+# branch demo: the branch's list runs once, on the request_map result.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+
+pipeline:
+  processors:
+    - branch:
+        request_map: 'root = this.n'
+        processors:
+          - mapping: 'root = this * 10'
+        result_map: 'root.branched = this'
+
+output:
+  drop: {}

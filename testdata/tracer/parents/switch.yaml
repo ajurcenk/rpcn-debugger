@@ -1,0 +1,21 @@
+# switch demo: 3 messages; each case's list runs once, on the messages that
+# match it.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - switch:
+        - check: 'this.n == 1'
+          processors:
+            - mapping: 'root = this.merge({"case": "one"})'
+        - processors:
+            - mapping: 'root = this.merge({"case": "other"})'
+
+output:
+  drop: {}

@@ -1,0 +1,20 @@
+# while demo: the loop runs 3 times. Press F5 and Step In: the call stack
+# labels each pass [loop 1], [loop 2], [loop 3].
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+
+pipeline:
+  processors:
+    - while:
+        check: 'this.loops.or(0) < 3'
+        processors:
+          - mapping: |
+              root = this
+              root.loops = this.loops.or(0) + 1
+
+output:
+  drop: {}

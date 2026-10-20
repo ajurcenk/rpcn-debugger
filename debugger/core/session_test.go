@@ -39,8 +39,8 @@ func batchAt(stepperID, childIndex int) []Batch {
 }
 
 func (st *fakeStepper) run(ctx context.Context, a Arriver, batch []Batch) error {
-	ctx, exit := a.Enter(ctx, st.id, len(st.children))
-	defer exit()
+	ctx, exit := a.Enter(ctx, Entry{StepperID: st.id, Children: len(st.children)})
+	defer exit(nil)
 	for i, c := range st.children {
 		b := batch
 		if b == nil {
@@ -131,6 +131,9 @@ type recorder struct {
 	// threads records ThreadStarted and ThreadExited, which are dropped
 	// otherwise.
 	threads bool
+	// steps records StepStarted (with its label) and StepFinished, which
+	// are dropped otherwise.
+	steps bool
 }
 
 func newRecorder() *recorder { return &recorder{events: make(chan event, 64)} }
@@ -144,6 +147,14 @@ func (r *recorder) Emit(ev Event) {
 	case ThreadExited:
 		if r.threads {
 			r.events <- event{"thread", fmt.Sprintf("exited %d", e.ThreadID)}
+		}
+	case StepStarted:
+		if r.steps {
+			r.events <- event{"step", fmt.Sprintf("started %d %s", e.StepperID, e.RepeatLabel)}
+		}
+	case StepFinished:
+		if r.steps {
+			r.events <- event{"step", "finished"}
 		}
 	case Paused:
 		r.events <- event{"stopped", e.Reason}

@@ -1,0 +1,23 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - catch:
+        - mapping: 'root.caught = true'
+    - retry:
+        processors:
+          - mapping: 'root.unbounded = true'
+    - retry:
+        max_retries: ${MAX_RETRIES:3}
+        processors:
+          - mapping: 'root.interpolated = true'
+
+error_handling:
+  strict: true
+
+output:
+  drop: {}

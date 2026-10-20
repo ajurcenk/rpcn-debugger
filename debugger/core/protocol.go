@@ -191,18 +191,44 @@ const (
 // Continued reports a resume. Every resume is process-wide (AD-9).
 type Continued struct{ ThreadID int }
 
-// MessagesSkipped reports messages a try stepper skipped (AD-11).
+// MessagesSkipped reports messages a stepper passed through a child
+// without running it, because they already failed (AD-7, AD-11).
 type MessagesSkipped struct {
-	ThreadID int
-	FrameID  int
-	Skipped  []Skipped
+	ThreadID  int
+	FrameID   int
+	StepperID int
+	// ChildIndex is the child they skip, and UserPath, File and Line its
+	// place in the user's file (Line 0 when unknown).
+	ChildIndex int
+	UserPath   string
+	File       string
+	Line       int
+	// Skipped names each message by its 0-based index in the entry's
+	// batches, counted across them in order, or, when Of > 0, the entry's
+	// one message by its index in the parent's batch of Of messages.
+	// Reason is SkipTry or SkipStrict.
+	Skipped []Skipped
+	Of      int
 }
+
+// The reasons of a skipped message.
+const (
+	// SkipTry: a try stepper doesn't run later children on a failed message.
+	SkipTry = "try"
+	// SkipStrict: under error_handling.strict, a batch whose first message
+	// failed skips the later children.
+	SkipStrict = "strict"
+)
 
 // AttemptStarted reports a new retry attempt with its repeat label.
 type AttemptStarted struct {
 	ThreadID    int
 	FrameID     int
+	StepperID   int
 	RepeatLabel string
+	// UserPath is the attempt's child list, e.g.
+	// pipeline.processors[0].retry.processors.
+	UserPath string
 }
 
 // StatementStepped reports a Bloblang statement step (AD-13).

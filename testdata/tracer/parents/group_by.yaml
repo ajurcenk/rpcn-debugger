@@ -1,0 +1,23 @@
+# group_by demo: 3 messages in 2 groups. Press F5 and Step In: the call
+# stack labels the groups [group 1] and [group 2], and the batch leaves
+# group_by split in two, as in the engine.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - group_by:
+        - check: 'this.n % 2 == 0'
+          processors:
+            - mapping: 'root = this.merge({"group": "even"})'
+        - check: 'this.n % 2 == 1'
+          processors:
+            - mapping: 'root = this.merge({"group": "odd"})'
+
+output:
+  drop: {}

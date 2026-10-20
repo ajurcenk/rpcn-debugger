@@ -1,0 +1,64 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: true
+    concurrent: false
+    lines: [9, 11, 14]
+    processors:
+        - catch:
+            - rpcn_debug_stepper:
+                id: 1
+                parent: 0
+                mode: all
+                strict: false
+                concurrent: false
+                lines: [10]
+                processors:
+                    - mapping: 'root.caught = true'
+        - retry:
+            processors:
+                - rpcn_debug_stepper:
+                    id: 2
+                    parent: 0
+                    mode: all
+                    strict: true
+                    concurrent: false
+                    repeat: attempt
+                    max_attempts: 0
+                    lines: [13]
+                    processors:
+                        - mapping: 'root.unbounded = true'
+        - retry:
+            max_retries: ${MAX_RETRIES:3}
+            processors:
+                - rpcn_debug_stepper:
+                    id: 3
+                    parent: 0
+                    mode: all
+                    strict: true
+                    concurrent: false
+                    repeat: attempt
+                    max_attempts: ${MAX_RETRIES:3}
+                    lines: [17]
+                    processors:
+                        - mapping: 'root.interpolated = true'
+# warnings
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors[1] line 11
+(0, 2) pipeline.processors[2] line 14
+(0, 3) pipeline.processors line 8
+(1, 0) pipeline.processors[0].catch[0] line 10
+(1, 1) pipeline.processors[0].catch line 9
+(2, 0) pipeline.processors[1].retry.processors[0] line 13
+(2, 1) pipeline.processors[1].retry.processors line 12
+(3, 0) pipeline.processors[2].retry.processors[0] line 17
+(3, 1) pipeline.processors[2].retry.processors line 16

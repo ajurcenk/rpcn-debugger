@@ -1,0 +1,19 @@
+# try demo: 3 messages; the first child fails message 2. Press F5 and Step
+# In: try enters its list once per message, the second child never stops on
+# message 2, and the Debug Console reports it as skipped.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - try:
+        - mapping: 'root = if this.n == 2 { throw("n is 2") } else { this }'
+        - mapping: 'root = this.merge({"after": true})'
+
+output:
+  drop: {}

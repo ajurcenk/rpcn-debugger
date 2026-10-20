@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -321,17 +322,195 @@ func TestFrameStack(t *testing.T) {
 	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); err != nil {
 		t.Fatal(err)
 	}
-	ctx, exit := s.Enter(root, 0, 3)
-	defer exit()
+	ctx, exit := s.Enter(root, Entry{StepperID: 0, Children: 3})
+	defer exit(nil)
 	if err := s.Arrive(ctx, 0, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	inner, exitInner := s.Enter(ctx, 1, 2)
-	defer exitInner()
+	inner, exitInner := s.Enter(ctx, Entry{StepperID: 1, Children: 2})
+	defer exitInner(nil)
 	f, depth, _ := TopFrame(inner)
 	parent, _, _ := TopFrame(ctx)
 	if depth != 2 || f.ThreadID != ThreadID || f.CallSite != (CallSite{FrameID: parent.FrameID, StepperID: 0, ChildIndex: 1}) {
 		t.Errorf("inner frame = %+v at depth %d", f, depth)
 	}
 	_ = do(s, Terminate{})
+}
+
+// funcEngine runs start as its pipeline, with lines as its LineMap.
+type funcEngine struct {
+	lines lines
+	start func(ctx context.Context, a Arriver) error
+}
+
+func (e funcEngine) Check(StartOptions) (CheckResult, error) { return CheckResult{Lines: e.lines}, nil }
+
+func (e funcEngine) Start(ctx context.Context, _ StartOptions, a Arriver) error {
+	return e.start(ctx, a)
+}
+
+func messages(n int) []Batch {
+	b := Batch{}
+	for i := range n {
+		b.Messages = append(b.Messages, Message{Index: i, Content: Content{Raw: []byte("{}")}})
+	}
+	return []Batch{b}
+}
+
+// Repeat labels come from per-call-site counters in the parent frame
+// (AD-10, AD-17): the Nth entry of a stepper from the same parent stop,
+// with the parent's message count there and the previous entry's memo.
+func TestEntryCounters(t *testing.T) {
+	rec := newRecorder()
+	rec.steps = true
+	s := NewSession(nil, rec)
+	label := func(site Site) string { return fmt.Sprintf("%d/%d %v", site.Entries+1, site.Messages, site.Memo) }
+
+	enter := func(ctx context.Context, e Entry, memo any) string {
+		t.Helper()
+		inner, exit := s.Enter(ctx, e)
+		f, _, _ := TopFrame(inner)
+		exit(memo)
+		return f.RepeatLabel
+	}
+	for entry := range 2 {
+		ctx, exit := s.Enter(context.Background(), Entry{StepperID: 0, Children: 2})
+		if err := s.Arrive(ctx, 0, 1, messages(3)); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for i := range 3 {
+			got = append(got, enter(ctx, Entry{StepperID: 1, Children: 1, Label: label}, i))
+		}
+		// Another stepper at the same stop counts on its own.
+		got = append(got, enter(ctx, Entry{StepperID: 2, Children: 1, Label: label}, nil))
+		// Steppers sharing a Site share the counter.
+		got = append(got, enter(ctx, Entry{StepperID: 3, Children: 1, Label: label, Site: "group"}, nil))
+		got = append(got, enter(ctx, Entry{StepperID: 4, Children: 1, Label: label, Site: "group"}, nil))
+		// Another stop of the parent is another call site.
+		if err := s.Arrive(ctx, 0, 0, messages(1)); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, enter(ctx, Entry{StepperID: 1, Children: 1, Label: label}, nil))
+		got = append(got, enter(ctx, Entry{StepperID: 1, Children: 1}, nil))
+		exit(nil)
+		// Each parent entry starts its counters afresh.
+		want := []string{"1/3 <nil>", "2/3 0", "3/3 1", "1/3 <nil>", "1/3 <nil>", "2/3 <nil>", "1/1 <nil>", ""}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("parent entry %d: labels = %q, want %q", entry, got, want)
+		}
+	}
+
+	// StepStarted carries the label; StepFinished follows each exit.
+	if ev := rec.next(t); ev != (event{"step", "started 0 "}) {
+		t.Errorf("first event = %+v, want step started 0", ev)
+	}
+	if ev := rec.next(t); ev != (event{"step", "started 1 1/3 <nil>"}) {
+		t.Errorf("second event = %+v, want step started 1 with its label", ev)
+	}
+	if ev := rec.next(t); ev != (event{"step", "finished"}) {
+		t.Errorf("third event = %+v, want step finished", ev)
+	}
+}
+
+// A retry attempt emits AttemptStarted, and the first stop of each stepper
+// inside a retry warns once about its time budget (AD-8).
+func TestAttemptsAndTimeBudget(t *testing.T) {
+	e := funcEngine{
+		lines: lines{
+			{0, 0}: {UserPath: "pipeline.processors[0]", Line: 11},
+			{0, 1}: {UserPath: "pipeline.processors", Line: 10},
+			{1, 0}: {UserPath: "pipeline.processors[0].retry.processors[0]", Line: 13},
+			{1, 1}: {UserPath: "pipeline.processors[0].retry.processors", Line: 12},
+			{2, 0}: {UserPath: "pipeline.processors[0].retry.processors[0].try[0]", Line: 14},
+			{2, 1}: {UserPath: "pipeline.processors[0].retry.processors[0].try", Line: 14},
+		},
+		start: func(ctx context.Context, a Arriver) error {
+			ctx, exit := a.Enter(ctx, Entry{StepperID: 0, Children: 1})
+			defer exit(nil)
+			if err := a.Arrive(ctx, 0, 0, messages(1)); err != nil {
+				return err
+			}
+			for i := range 2 {
+				in, exitIn := a.Enter(ctx, Entry{StepperID: 1, Children: 1, Attempt: true, Label: func(Site) string { return fmt.Sprintf("[attempt %d/2]", i+1) }})
+				if err := a.Arrive(in, 1, 0, messages(1)); err != nil {
+					return err
+				}
+				// A try inside the attempt is inside the retry too.
+				try, exitTry := a.Enter(in, Entry{StepperID: 2, Children: 1})
+				a.Skip(try, 2, 0, []Skipped{{Index: 0, Reason: SkipTry}}, 0)
+				if err := a.Arrive(try, 2, 1, messages(1)); err != nil {
+					return err
+				}
+				exitTry(nil)
+				exitIn(nil)
+			}
+			return a.Arrive(ctx, 0, 1, messages(1))
+		},
+	}
+	rec := &recorder{events: make(chan event, 64)}
+	s := NewSession(e, &skipRecorder{rec})
+	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := do(s, ConfigurationDone{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = do(s, Terminate{}) })
+
+	var got []string
+	for {
+		ev := rec.next(t)
+		got = append(got, ev.kind+" "+ev.detail)
+		if ev.kind == "terminated" {
+			break
+		}
+		if ev.kind == "stopped" {
+			if err := do(s, StepIn{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	const warn = "output Warning: pipeline.processors[0].retry.processors runs inside a retry."
+	const warnTry = "output Warning: pipeline.processors[0].retry.processors[0].try runs inside a retry."
+	const skipped = "skipped 2/0 pipeline.processors[0].retry.processors[0].try[0] line 14 [{0 try}]"
+	want := []string{
+		"stopped entry",
+		"attempt [attempt 1/2] pipeline.processors[0].retry.processors",
+		warn, "stopped step",
+		skipped,
+		warnTry, "stopped step",
+		"attempt [attempt 2/2] pipeline.processors[0].retry.processors",
+		"stopped step",
+		skipped,
+		"stopped step",
+		"stopped step",
+		"terminated ",
+	}
+	for i := range got {
+		// The rest of the warning is prose.
+		if j := strings.Index(got[i], "inside a retry."); strings.HasPrefix(got[i], "output Warning") && j > 0 {
+			got[i] = got[i][:j+len("inside a retry.")]
+		}
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if st, ok := s.Stopped(); ok {
+		t.Errorf("still stopped at %+v", st)
+	}
+}
+
+// skipRecorder records AttemptStarted and MessagesSkipped in detail.
+type skipRecorder struct{ *recorder }
+
+func (r *skipRecorder) Emit(ev Event) {
+	switch e := ev.(type) {
+	case AttemptStarted:
+		r.events <- event{"attempt", e.RepeatLabel + " " + e.UserPath}
+	case MessagesSkipped:
+		r.events <- event{"skipped", fmt.Sprintf("%d/%d %s line %d %v", e.StepperID, e.ChildIndex, e.UserPath, e.Line, e.Skipped)}
+	default:
+		r.recorder.Emit(ev)
+	}
 }

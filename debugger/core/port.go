@@ -8,12 +8,20 @@ type Arriver interface {
 	// Captured is called once the batch is captured, before the first
 	// Arrive: kept of its total messages are stepped (AD-4 maxMessages).
 	Captured(kept, total int)
-	// Enter starts one entry of stepper stepperID, whose list has children
-	// child processors (AD-17). It returns ctx with the entry's frame pushed
-	// on the frame stack, which the stepper passes to every Arrive and to
-	// its children, and the exit func it calls when the entry returns. An
-	// entry whose ctx has no frame runs on the root thread.
-	Enter(ctx context.Context, stepperID, children int) (context.Context, func())
+	// Enter starts entry e (AD-17). It returns ctx with the entry's frame
+	// pushed on the frame stack, which the stepper passes to every Arrive
+	// and to its children, and the exit func it calls when the entry
+	// returns, with the memo the next entry at the same call site sees in
+	// Site.Memo (nil for none). An entry whose ctx has no frame runs on the
+	// root thread.
+	Enter(ctx context.Context, e Entry) (context.Context, func(memo any))
+	// Skip reports messages that the entry on top of ctx passes through
+	// child childIndex without running it, because the first message of
+	// their batch already failed (AD-7: try mode, or strict). Each message
+	// is reported once per entry. With of > 0, the entry is one message of
+	// its parent's batch of of messages, and skipped names it by its index
+	// there; otherwise indices count across the entry's batches.
+	Skip(ctx context.Context, stepperID, childIndex int, skipped []Skipped, of int)
 	// Arrive is called at each stop position of the entry whose frame is on
 	// top of ctx: before child childIndex runs, and after the last child
 	// (childIndex = children, AD-10). batches are the stepper's batches,

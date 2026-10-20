@@ -1,0 +1,26 @@
+# retry demo: the child fails on its first two attempts and succeeds on the
+# third. Press F5 and Step In: the call stack labels each attempt
+# [attempt 1/3] … [attempt 3/3], the Debug Console reports every attempt,
+# and the first stop inside the retry warns that pausing there changes its
+# backoff timing.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+
+pipeline:
+  processors:
+    - retry:
+        max_retries: 3
+        backoff:
+          initial_interval: 1ms
+          max_interval: 1ms
+        processors:
+          - mapping: |
+              let attempt = counter()
+              root = if $attempt <= 2 { throw("flaky, attempt %d".format($attempt)) } else { this.merge({"attempts": $attempt}) }
+
+output:
+  drop: {}

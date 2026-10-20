@@ -77,17 +77,19 @@ func (a *arriver) Captured(kept, total int) {
 	a.mu.Unlock()
 }
 
-func (a *arriver) Enter(ctx context.Context, stepperID, _ int) (context.Context, func()) {
+func (a *arriver) Enter(ctx context.Context, e core.Entry) (context.Context, func(any)) {
 	a.mu.Lock()
 	a.frames++
-	ref := core.FrameRef{FrameID: a.frames, StepperID: stepperID, ThreadID: core.ThreadID}
+	ref := core.FrameRef{FrameID: a.frames, StepperID: e.StepperID, ThreadID: core.ThreadID}
 	a.mu.Unlock()
-	return core.PushFrame(ctx, ref), func() {
+	return core.PushFrame(ctx, ref), func(any) {
 		a.mu.Lock()
 		a.exits++
 		a.mu.Unlock()
 	}
 }
+
+func (a *arriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 
 func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
 	a.mu.Lock()
@@ -315,7 +317,7 @@ func TestNestedStepsAndDelivers(t *testing.T) {
 // Every rewrite matrix pipeline that should build does build and deliver:
 // aliases, opaque parents and processor_resources included.
 func TestRewrittenConfigsBuild(t *testing.T) {
-	for _, name := range []string{"nested", "alias", "concurrent", "processor-resources", "resource-concurrent", "strict", "top-level", "dropped", "stdout", "merge", "composite", "unknown-taint"} {
+	for _, name := range []string{"nested", "alias", "concurrent", "processor-resources", "resource-concurrent", "strict", "top-level", "dropped", "stdout", "merge", "composite", "unknown-taint", "strict-parents"} {
 		t.Run(name, func(t *testing.T) {
 			a := engine.New(standard(), testLogger(), load)
 			path := filepath.Join("..", "rewrite", "testdata", name+".yaml")

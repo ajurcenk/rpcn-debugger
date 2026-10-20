@@ -25,3 +25,11 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-rewrite-rejects-undefined-resource-references-plan.md`
   summary: The AD-7 child-list table (branch/while/retry → processors; try/catch/for_each → list; switch/group_by → cases[].processors) is hand-copied in walker.processor, childLists, refChecker.processor and the taint scan (scanProcessor/refs); unify it into one table so a new AD-7 parent can't be added to one walk and missed by the others — for the 2.10 refactor sweep.
   evidence: debugger/rewrite/walk.go and refs.go; the 2.13 review found the copies already drifting (opaque vs refs reference search).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-stepper-modes-nested-parents-and-ctx-propagation-plan.md`
+  summary: Retry `[attempt i/max]` is inferred (previous entry failed, attempts remain, identical input JSON), so when max_elapsed_time moves retry to the next message and that message is byte-identical (common with generate), its first attempt continues the previous count; and within one while call, a child that splits the batch makes one loop show as several `[loop i]` entries. Both need an engine-side marker; revisit with an upstream hook or a different detection — label-only, output is unaffected.
+  evidence: benthos processor_retry.go:254-258 (backoff.Stop moves to the next message), processor_while.go:159 (ExecuteAll over all batches per loop); 2.7 review findings 3 and 4.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-stepper-modes-nested-parents-and-ctx-propagation-plan.md`
+  summary: Strict-mode skip has no end-to-end equivalence check (only the unit test against a hand port of ExecuteTryAll); cover it in the 2.9 corpus's strict-mode row.
+  evidence: no strict sample under testdata/tracer/parents; strict-parents.yaml is only built in TestRewrittenConfigsBuild.

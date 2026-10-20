@@ -16,6 +16,7 @@ processor_resources:
             mode: try
             strict: false
             concurrent: false
+            repeat: msg
             lines: [22]
             processors:
                 - mapping: 'root = this'

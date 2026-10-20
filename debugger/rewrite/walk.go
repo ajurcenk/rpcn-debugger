@@ -15,6 +15,55 @@ const (
 	modeTry = "try"
 )
 
+// The repeat label kinds a stepper computes its label by (AD-10).
+const (
+	repeatMsg     = "msg"     // for_each, try: one entry per message
+	repeatAttempt = "attempt" // retry: one entry per attempt
+	repeatLoop    = "loop"    // while: one entry per loop
+	repeatGroup   = "group"   // group_by: one entry per group
+)
+
+// kind is what the stepper of one child list is told about its parent.
+type kind struct {
+	mode string
+	// repeat is the repeat label kind, or "" for none (branch, switch
+	// cases, catch and top-level lists).
+	repeat string
+	// maxAttempts is a retry's max_retries as written, or nil.
+	maxAttempts *yaml.Node
+	// noStrict is set for catch: ExecuteCatchAll runs every child on the
+	// caught messages, whatever error_handling.strict says.
+	noStrict bool
+}
+
+// all is the kind of a plain ExecuteAll list.
+var all = kind{mode: modeAll}
+
+// parentKind returns the kind of the child lists of parent component name
+// with config v (AD-7, AD-10).
+func parentKind(name string, v *yaml.Node) kind {
+	switch name {
+	case "try":
+		return kind{mode: modeTry, repeat: repeatMsg}
+	case "catch":
+		return kind{mode: modeAll, noStrict: true}
+	case "for_each":
+		return kind{mode: modeAll, repeat: repeatMsg}
+	case "while":
+		return kind{mode: modeAll, repeat: repeatLoop}
+	case "group_by":
+		return kind{mode: modeAll, repeat: repeatGroup}
+	case "retry":
+		k := kind{mode: modeAll, repeat: repeatAttempt}
+		if m := value(v, "max_retries"); m != nil && m.Kind == yaml.ScalarNode && !isNull(m) {
+			c := *m
+			k.maxAttempts = &c
+		}
+		return k
+	}
+	return all
+}
+
 // walker wraps child processor lists in steppers (AD-6), giving each a
 // dense id in depth-first pre-order (AD-16) and recording its stops.
 type walker struct {
@@ -37,7 +86,7 @@ type walker struct {
 // wrap returns the stepper processor around list, the child list at path
 // whose key is on keyLine, and wraps the lists inside its children. eng is
 // the engine path the stepper is built at.
-func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, mode string) (*yaml.Node, error) {
+func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, k kind) (*yaml.Node, error) {
 	id := w.next
 	w.next++
 	// The stepper, its config and its child list all stand for the list.
@@ -58,24 +107,42 @@ func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, mo
 	// The end-of-entry stop (AD-10).
 	w.stops[stop{id, len(list.Content)}] = core.Position{UserPath: path, Line: keyLine}
 
+	strict := w.strict
+	if k.noStrict {
+		strict = scalar("!!bool", "false")
+	}
+	conf := []*yaml.Node{
+		scalar("!!str", "id"), scalar("!!int", strconv.Itoa(id)),
+		scalar("!!str", "parent"), scalar("!!int", strconv.Itoa(parent)),
+		scalar("!!str", "mode"), scalar("!!str", k.mode),
+		scalar("!!str", "strict"), strict,
+		scalar("!!str", "concurrent"), scalar("!!bool", "false"),
+	}
+	if k.repeat != "" {
+		conf = append(conf, scalar("!!str", "repeat"), scalar("!!str", k.repeat))
+	}
+	if k.repeat == repeatAttempt {
+		// max_retries as written: an interpolation resolves in the engine.
+		maxAttempts := k.maxAttempts
+		if maxAttempts == nil {
+			maxAttempts = scalar("!!int", "0")
+		}
+		conf = append(conf, scalar("!!str", "max_attempts"), maxAttempts)
+	}
+	conf = append(conf,
+		scalar("!!str", "lines"), lines,
+		scalar("!!str", "processors"), list,
+	)
 	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
 		scalar("!!str", StepperName),
-		{Kind: yaml.MappingNode, Content: []*yaml.Node{
-			scalar("!!str", "id"), scalar("!!int", strconv.Itoa(id)),
-			scalar("!!str", "parent"), scalar("!!int", strconv.Itoa(parent)),
-			scalar("!!str", "mode"), scalar("!!str", mode),
-			scalar("!!str", "strict"), w.strict,
-			scalar("!!str", "concurrent"), scalar("!!bool", "false"),
-			scalar("!!str", "lines"), lines,
-			scalar("!!str", "processors"), list,
-		}},
+		{Kind: yaml.MappingNode, Content: conf},
 	}}, nil
 }
 
 // list wraps the child list v at path (key on keyLine) and returns its
 // replacement, a one-element list holding the stepper, or nil when there is
 // nothing to step. eng is the engine path of the list.
-func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, mode string) (*yaml.Node, error) {
+func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, k kind) (*yaml.Node, error) {
 	if isNull(v) {
 		return nil, nil
 	}
@@ -85,7 +152,7 @@ func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, mode 
 	if len(v.Content) == 0 {
 		return nil, nil
 	}
-	st, err := w.wrap(v, path, eng+".0", keyLine, parent, mode)
+	st, err := w.wrap(v, path, eng+".0", keyLine, parent, k)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +161,7 @@ func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, mode 
 
 // inner wraps the processors field of mapping m (a branch, while, retry,
 // switch case or group_by group) at path, engine path eng.
-func (w *walker) inner(m *yaml.Node, path, eng string, parent int, mode string) error {
+func (w *walker) inner(m *yaml.Node, path, eng string, parent int, k kind) error {
 	if isNull(m) {
 		return nil
 	}
@@ -102,8 +169,8 @@ func (w *walker) inner(m *yaml.Node, path, eng string, parent int, mode string) 
 		return invalid(m.Line, path, "%s is not a mapping", path)
 	}
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		if k := m.Content[i]; k.Value == "processors" {
-			st, err := w.list(m.Content[i+1], path+".processors", eng+".processors", k.Line, parent, mode)
+		if m.Content[i].Value == "processors" {
+			st, err := w.list(m.Content[i+1], path+".processors", eng+".processors", m.Content[i].Line, parent, k)
 			if err != nil {
 				return err
 			}
@@ -164,25 +231,22 @@ func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 		if base, ok := baseLine(k, v); ok {
 			w.bases[eng] = base
 		}
-		kind, msg := classify(k.Value, v)
-		if kind == concurrent || kind == unknown {
+		class, msg := classify(k.Value, v)
+		if class == concurrent || class == unknown {
 			w.warn(k.Line, cp, "%s", msg)
 			continue
 		}
-		if kind == leaf {
+		if class == leaf {
 			continue
 		}
+		pk := parentKind(k.Value, v)
 		switch k.Value {
 		case "branch", "while", "retry":
-			if err := w.inner(v, cp, ce, parent, modeAll); err != nil {
+			if err := w.inner(v, cp, ce, parent, pk); err != nil {
 				return err
 			}
 		case "try", "catch", "for_each":
-			mode := modeAll
-			if k.Value == "try" {
-				mode = modeTry
-			}
-			st, err := w.list(v, cp, ce, k.Line, parent, mode)
+			st, err := w.list(v, cp, ce, k.Line, parent, pk)
 			if err != nil {
 				return err
 			}
@@ -197,7 +261,7 @@ func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 				return invalid(v.Line, cp, "%s is not a list", cp)
 			}
 			for c, cs := range v.Content {
-				if err := w.inner(cs, child(cp, c), ce+"."+strconv.Itoa(c), parent, modeAll); err != nil {
+				if err := w.inner(cs, child(cp, c), ce+"."+strconv.Itoa(c), parent, pk); err != nil {
 					return err
 				}
 			}

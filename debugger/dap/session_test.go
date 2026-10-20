@@ -84,8 +84,8 @@ func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	if batches == nil {
 		batches = []core.Batch{{Messages: []core.Message{jsonMessage(0, `{"greeting":"hello"}`)}}}
 	}
-	ctx, exit := a.Enter(ctx, 0, 1)
-	defer exit()
+	ctx, exit := a.Enter(ctx, core.Entry{StepperID: 0, Children: 1})
+	defer exit(nil)
 	if err := a.Arrive(ctx, 0, 0, batches); err != nil {
 		return err
 	}
@@ -112,8 +112,8 @@ func atBatch(stepper, child int) []core.Batch {
 }
 
 func (e *fakeEngine) startNested(ctx context.Context, a core.Arriver) error {
-	ctx, exit := a.Enter(ctx, 0, 2)
-	defer exit()
+	ctx, exit := a.Enter(ctx, core.Entry{StepperID: 0, Children: 2})
+	defer exit(nil)
 	if err := a.Arrive(ctx, 0, 0, atBatch(0, 0)); err != nil {
 		return err
 	}
@@ -121,14 +121,14 @@ func (e *fakeEngine) startNested(ctx context.Context, a core.Arriver) error {
 	if err := a.Arrive(ctx, 0, 1, atBatch(0, 1)); err != nil {
 		return err
 	}
-	inner, exitInner := a.Enter(ctx, 1, 1)
+	inner, exitInner := a.Enter(ctx, core.Entry{StepperID: 1, Children: 1})
 	for i := range 2 {
 		if err := a.Arrive(inner, 1, i, atBatch(1, i)); err != nil {
-			exitInner()
+			exitInner(nil)
 			return err
 		}
 	}
-	exitInner()
+	exitInner(nil)
 	if err := a.Arrive(ctx, 0, 2, atBatch(0, 2)); err != nil {
 		return err
 	}

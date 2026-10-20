@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/google/go-dap"
@@ -397,17 +399,64 @@ func (f frontend) Emit(ev core.Event) {
 		m.Body.Category = e.Category
 		m.Body.Output = e.Text
 		msg = m
+	case core.MessagesSkipped:
+		m := &dap.OutputEvent{Event: f.s.event("output")}
+		m.Body.Category = "console"
+		m.Body.Output = skippedText(e)
+		if e.File != "" && e.Line > 0 {
+			m.Body.Source = &dap.Source{Name: filepath.Base(e.File), Path: e.File}
+			m.Body.Line = e.Line
+		}
+		msg = m
+	case core.AttemptStarted:
+		m := &dap.OutputEvent{Event: f.s.event("output")}
+		m.Body.Category = "console"
+		m.Body.Output = "retry " + e.UserPath + " " + e.RepeatLabel + "\n"
+		msg = m
 	case core.Terminated:
 		msg = &dap.TerminatedEvent{Event: f.s.event("terminated")}
 	default:
-		// StepStarted, StepFinished, MessagesSkipped, AttemptStarted,
-		// StatementStepped, BreakpointResolved, Delivered.
+		// StepStarted and StepFinished (the repeat label shows in the stack
+		// frame names instead), StatementStepped, BreakpointResolved,
+		// Delivered.
 		f.s.log.Debug("Session event without a DAP rendering", "event", fmt.Sprintf("%T", ev))
 		return
 	}
 	if err := f.s.send(msg); err != nil {
 		f.s.log.Warn("sending DAP event failed", "error", err)
 	}
+}
+
+// skippedText tells the user which messages skipped a child, and why. A
+// message of a try (or strict for_each) entry is named by its place in the
+// parent's batch, as its [msg i/n] label is; other skips are a whole batch
+// whose first message failed (the engine's rule, AD-7), named by index in
+// the entry's batches as the Variables view does.
+func skippedText(e core.MessagesSkipped) string {
+	if len(e.Skipped) == 0 {
+		return ""
+	}
+	rule := "try"
+	if e.Skipped[0].Reason == core.SkipStrict {
+		rule = "error_handling.strict"
+	}
+	at := e.UserPath
+	if e.Line > 0 {
+		at += fmt.Sprintf(" (line %d)", e.Line)
+	}
+	if e.Of > 0 {
+		return fmt.Sprintf("Skipped message %d of %d at %s: it already failed, so %s runs no later processor on it\n",
+			e.Skipped[0].Index+1, e.Of, at, rule)
+	}
+	idx := make([]string, len(e.Skipped))
+	for i, sk := range e.Skipped {
+		idx[i] = strconv.Itoa(sk.Index)
+	}
+	what := "message " + idx[0]
+	if len(idx) > 1 {
+		what = "messages " + strings.Join(idx, ", ")
+	}
+	return fmt.Sprintf("Skipped %s at %s: the first message of the batch already failed, so %s runs no later processor on the batch\n", what, at, rule)
 }
 
 // stackFrames renders the stopped thread's stack, innermost first (AD-17):

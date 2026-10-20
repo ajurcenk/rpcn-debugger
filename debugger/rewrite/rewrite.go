@@ -143,7 +143,7 @@ func Rewrite(src []byte) (Plan, error) {
 		// AddProcessorYAML, so top-level stepper k is built at
 		// root.pipeline.processors.<k>.
 		eng := "root.pipeline.processors." + strconv.Itoa(len(plan.Steppers))
-		stepper, err := w.wrap(lists[i], s.name+".processors", eng, listKeys[i].Line, -1, modeAll)
+		stepper, err := w.wrap(lists[i], s.name+".processors", eng, listKeys[i].Line, -1, all)
 		if err != nil {
 			return Plan{}, err
 		}

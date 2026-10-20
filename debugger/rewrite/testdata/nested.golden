@@ -55,6 +55,7 @@ rpcn_debug_stepper:
                 mode: try
                 strict: false
                 concurrent: false
+                repeat: msg
                 lines: [21, 22]
                 processors:
                     - mapping: 'root.tried = true'
@@ -77,6 +78,7 @@ rpcn_debug_stepper:
                 mode: all
                 strict: false
                 concurrent: false
+                repeat: msg
                 lines: [27]
                 processors:
                     - mapping: 'root.each = true'
@@ -89,6 +91,7 @@ rpcn_debug_stepper:
                     mode: all
                     strict: false
                     concurrent: false
+                    repeat: loop
                     lines: [31]
                     processors:
                         - mapping: 'root.loops = this.loops.or(0) + 1'
@@ -101,6 +104,7 @@ rpcn_debug_stepper:
                     mode: all
                     strict: false
                     concurrent: false
+                    repeat: group
                     lines: [35]
                     processors:
                         - mapping: 'root.group = 0'
@@ -113,6 +117,8 @@ rpcn_debug_stepper:
                     mode: all
                     strict: false
                     concurrent: false
+                    repeat: attempt
+                    max_attempts: 2
                     lines: [39]
                     processors:
                         - mapping: 'root.retried = true'
@@ -134,6 +140,7 @@ rpcn_debug_stepper:
                                 mode: try
                                 strict: false
                                 concurrent: false
+                                repeat: msg
                                 lines: [44]
                                 processors:
                                     - mapping: 'root = this'

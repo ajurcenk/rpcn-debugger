@@ -20,6 +20,7 @@ rpcn_debug_stepper:
                 mode: try
                 strict: true
                 concurrent: false
+                repeat: msg
                 lines: [10]
                 processors:
                     - mapping: 'root.a = 1'
