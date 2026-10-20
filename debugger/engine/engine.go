@@ -73,11 +73,11 @@ func (a *Adapter) Check(pipeline, _ string) (core.CheckResult, error) {
 	return core.CheckResult{Lines: lines, Warnings: conf.Warnings}, nil
 }
 
-// Start captures one batch without acking it, stops the capture stream, then
-// feeds the batch through the stepper into rpcn_debug_sink. It returns nil
-// once the sink has the result.
-func (a *Adapter) Start(ctx context.Context, pipeline, _ string, arr core.Arriver) error {
-	conf, _, err := a.load(pipeline)
+// Start captures one batch without acking it, stops the capture stream,
+// truncates the batch to opts.MaxMessages, then feeds it through the stepper
+// into rpcn_debug_sink. It returns nil once the sink has the result.
+func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Arriver) error {
+	conf, _, err := a.load(opts.Pipeline)
 	if err != nil {
 		return err
 	}
@@ -85,10 +85,11 @@ func (a *Adapter) Start(ctx context.Context, pipeline, _ string, arr core.Arrive
 	if err != nil {
 		return err
 	}
-	batch, err := r.capture(ctx)
+	batch, total, err := r.capture(ctx, opts.MaxMessages)
 	if err != nil {
 		return err
 	}
+	arr.Captured(len(batch), total)
 	if err := r.step(ctx, batch); err != nil {
 		return err
 	}
@@ -213,6 +214,8 @@ func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.Can
 
 // nopArriver never stops; Check builds streams with it and never runs them.
 type nopArriver struct{}
+
+func (nopArriver) Captured(int, int) {}
 
 func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error {
 	return errors.New("not running")

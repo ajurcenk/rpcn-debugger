@@ -8,11 +8,26 @@ package core
 type Command interface{ command() }
 
 // Launch checks the pipeline file. Nothing runs until ConfigurationDone.
+// Frontends decode and validate their launch arguments into it (for DAP,
+// dap.LaunchConfig, which owns the defaults; AD-12).
 type Launch struct {
 	// Pipeline is the pipeline YAML file; a relative one resolves against
-	// Cwd, or the process's working directory when Cwd is "".
+	// Cwd.
 	Pipeline string
-	Cwd      string
+	// Cwd is the directory relative paths resolve against. A relative Cwd
+	// resolves against the process's working directory, and "" means that
+	// directory.
+	Cwd string
+	// MaxMessages is the most messages of the captured batch to step
+	// (AD-4); the rest are dropped, never acked. 0 means no limit.
+	MaxMessages int
+	// Env holds environment variables for the pipeline's ${VAR}
+	// interpolations. Carried, not applied yet (entry 2.4, AD-22).
+	Env map[string]string
+	// EnvFile names a file of environment variables; a relative one
+	// resolves against Cwd, and it must exist. Carried, not applied yet
+	// (entry 2.4, AD-22).
+	EnvFile string
 }
 
 // ConfigurationDone starts the debuggee.

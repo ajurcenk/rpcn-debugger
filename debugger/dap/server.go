@@ -3,7 +3,6 @@ package dap
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -88,13 +87,6 @@ func (s *server) run() error {
 	}
 }
 
-// launchArgs are the launch keys this entry reads. Other keys are ignored;
-// the strict LaunchConfig arrives later (AD-12).
-type launchArgs struct {
-	Pipeline string `json:"pipeline"`
-	Cwd      string `json:"cwd"`
-}
-
 // handle answers one request: it maps the request to a protocol command
 // (AD-3) and the Session's answer to a response. It reports done once the
 // session is over.
@@ -107,13 +99,18 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 		return false, s.send(resp)
 
 	case *dap.LaunchRequest:
-		var args launchArgs
-		if len(q.Arguments) > 0 {
-			if err := json.Unmarshal(q.Arguments, &args); err != nil {
-				return false, s.sendFailure(r, core.NewError(core.CodeLaunchInvalid, "invalid launch arguments: %v", err))
-			}
+		cfg, err := decodeLaunch(q.Arguments)
+		if err != nil {
+			return false, s.sendFailure(r, err)
 		}
-		if _, err := s.do(core.Launch{Pipeline: args.Pipeline, Cwd: args.Cwd}); err != nil {
+		launch := core.Launch{
+			Pipeline:    cfg.Pipeline,
+			Cwd:         cfg.Cwd,
+			MaxMessages: cfg.MaxMessages,
+			Env:         cfg.Env,
+			EnvFile:     cfg.EnvFile,
+		}
+		if _, err := s.do(launch); err != nil {
 			return false, s.sendFailure(r, err)
 		}
 		if err := s.send(&dap.LaunchResponse{Response: s.response(r)}); err != nil {

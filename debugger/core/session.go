@@ -2,6 +2,10 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -39,6 +43,9 @@ type Session struct {
 	mu          sync.Mutex
 	pipeline    string
 	cwd         string
+	maxMessages int
+	env         map[string]string // carried for entry 2.4, not applied
+	envFile     string            // carried for entry 2.4, not applied
 	lines       LineMap
 	launched    bool
 	configured  bool
@@ -71,7 +78,7 @@ func NewSession(engine Engine, fe Frontend) *Session {
 func (s *Session) Do(_ context.Context, cmd Command) (Result, error) {
 	switch c := cmd.(type) {
 	case Launch:
-		return nil, s.launch(c.Pipeline, c.Cwd)
+		return nil, s.launch(c)
 	case ConfigurationDone:
 		return nil, s.configurationDone()
 	case SetBreakpoints:
@@ -109,31 +116,42 @@ func notSupported(what, by string) error {
 	return NewError(CodeNotSupported, "%s is not supported yet: it arrives with %s", what, by)
 }
 
-// launch checks the pipeline file. A relative pipeline resolves against cwd,
-// or against the process's working directory when cwd is empty. Nothing runs
-// until ConfigurationDone.
-func (s *Session) launch(pipeline, cwd string) error {
-	if pipeline == "" {
+// launch checks the launch and the pipeline file. A relative cwd resolves
+// against the process's working directory, and relative pipeline and
+// envFile paths against cwd. Nothing runs until ConfigurationDone.
+func (s *Session) launch(c Launch) error {
+	if c.Pipeline == "" {
 		return NewError(CodeLaunchInvalid, `the launch configuration has no "pipeline": set it to the pipeline YAML file to debug`)
 	}
-	if !filepath.IsAbs(pipeline) {
-		base := cwd
-		if base == "" {
-			wd, err := os.Getwd()
-			if err != nil {
-				return NewError(CodeLaunchInvalid, "resolve pipeline %q: %v", pipeline, err)
-			}
-			base = wd
-		}
-		pipeline = filepath.Join(base, pipeline)
+	if c.MaxMessages < 0 {
+		return NewError(CodeLaunchInvalid, `"maxMessages" must be at least 1, not %d`, c.MaxMessages)
 	}
-	// A relative cwd must not leave a relative path: frontends open and
-	// highlight the frame's file by it.
-	abs, err := filepath.Abs(pipeline)
+	// Every path ends up absolute: frontends open and highlight the frame's
+	// file by it.
+	cwd, err := filepath.Abs(c.Cwd)
 	if err != nil {
-		return NewError(CodeLaunchInvalid, "resolve pipeline %q: %v", pipeline, err)
+		return NewError(CodeLaunchInvalid, `resolve "cwd" %q: %v`, c.Cwd, err)
 	}
-	pipeline = abs
+	pipeline := resolve(cwd, c.Pipeline)
+	envFile := ""
+	if c.EnvFile != "" {
+		envFile = resolve(cwd, c.EnvFile)
+		fi, err := os.Stat(envFile)
+		if errors.Is(err, fs.ErrNotExist) {
+			return NewError(CodeLaunchInvalid, `"envFile" %s does not exist`, envFile)
+		}
+		if err != nil {
+			return NewError(CodeLaunchInvalid, `"envFile": %v`, err)
+		}
+		if fi.IsDir() {
+			return NewError(CodeLaunchInvalid, `"envFile" %s is a directory, not a file`, envFile)
+		}
+	}
+	var env map[string]string
+	if c.Env != nil {
+		env = make(map[string]string, len(c.Env))
+		maps.Copy(env, c.Env)
+	}
 
 	s.mu.Lock()
 	if s.ended {
@@ -153,6 +171,7 @@ func (s *Session) launch(pipeline, cwd string) error {
 
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.launched = pipeline, cwd, res.Lines, true
+	s.maxMessages, s.env, s.envFile = c.MaxMessages, env, envFile
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
 	for _, w := range res.Warnings {
@@ -176,7 +195,8 @@ func (s *Session) configurationDone() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.done = cancel, make(chan struct{})
-	go s.run(ctx, s.pipeline, s.cwd, s.done)
+	opts := StartOptions{Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages}
+	go s.run(ctx, opts, s.done)
 	return nil
 }
 
@@ -194,9 +214,9 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 	return res
 }
 
-func (s *Session) run(ctx context.Context, pipeline, cwd string, done chan struct{}) {
+func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}) {
 	defer close(done)
-	err := s.engine.Start(ctx, pipeline, cwd, s)
+	err := s.engine.Start(ctx, opts, s)
 
 	s.mu.Lock()
 	ended := s.ended
@@ -211,6 +231,29 @@ func (s *Session) run(ctx context.Context, pipeline, cwd string, done chan struc
 		s.fe.Emit(Output{Category: "stderr", Text: "The debug run failed: " + err.Error() + "\n"})
 	}
 	s.fe.Emit(Terminated{})
+}
+
+// Captured implements Arriver. When the capture dropped messages for
+// maxMessages, it tells the user how many it kept.
+func (s *Session) Captured(kept, total int) {
+	if kept >= total {
+		return
+	}
+	s.mu.Lock()
+	ended := s.ended
+	s.mu.Unlock()
+	if ended {
+		return
+	}
+	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", kept, total)})
+}
+
+// resolve returns path made absolute against the absolute directory base.
+func resolve(base, path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Join(base, path)
 }
 
 // Arrive implements Arriver. It takes the gate, decides whether to stop and,

@@ -33,7 +33,7 @@ The binary is pure Go (`CGO_ENABLED=0`), so no C toolchain or system libraries a
 task ci
 ```
 
-This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit tests, the equivalence cases and the integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task test:go`, `task test:equivalence`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
+This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit tests, the equivalence cases and the integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task lint:schema`, `task test:go`, `task test:equivalence`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
 
 `task test:equivalence` runs every case in `testdata/equivalence/` through its own input and processors, with no debugger, and lists each case as a subtest. To add a case, create `testdata/equivalence/<name>/pipeline.yaml`; its `output` is replaced by a collector, so any output will do.
 
@@ -72,6 +72,8 @@ The setting is machine-scoped, so a workspace's `.vscode/settings.json` can't ch
 ## Try it
 
 Open `testdata/tracer/pipeline.yaml` and press F5 (with no `launch.json`, or a `Debug pipeline` entry without `pipeline`): VS Code stops before the mapping with the captured message under **Variables** (Batches › batch 0 › message 0: content, metadata, and an `internal` node for `__` keys); Step Over ends the session. Breakpoints show as unverified for now.
+
+A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `env` and `envFile` (validated, applied in a later version; use `${env:NAME}` rather than literal secrets). Any other key fails the launch. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
 
 ## License
 

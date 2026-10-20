@@ -31,6 +31,7 @@ type fakeEngine struct {
 	batches   []core.Batch // nil: one batch of one {"greeting":"hello"} message
 	delivered chan []core.Batch
 	ended     chan error
+	opts      chan core.StartOptions // nil: not recorded
 }
 
 func newFakeEngine() *fakeEngine {
@@ -53,7 +54,10 @@ func (e *fakeEngine) Check(string, string) (core.CheckResult, error) {
 	return core.CheckResult{Lines: fakeLines{{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13}}}, nil
 }
 
-func (e *fakeEngine) Start(ctx context.Context, _, _ string, a core.Arriver) error {
+func (e *fakeEngine) Start(ctx context.Context, opts core.StartOptions, a core.Arriver) error {
+	if e.opts != nil {
+		e.opts <- opts
+	}
 	err := e.start(ctx, a)
 	e.ended <- err
 	return err

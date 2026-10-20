@@ -5,6 +5,9 @@ import "context"
 // Arriver is what a stepper calls at each stop position (AD-9). The Session
 // implements it.
 type Arriver interface {
+	// Captured is called once the batch is captured, before the first
+	// Arrive: kept of its total messages are stepped (AD-4 maxMessages).
+	Captured(kept, total int)
 	// Arrive is called before child childIndex of stepper stepperID runs,
 	// with the stepper's batches, built from its deep copy (AD-19). It
 	// blocks while the session is stopped there. A non-nil error (code
@@ -40,12 +43,24 @@ type Engine interface {
 	// Check reads and rewrites the pipeline file without running anything.
 	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
 	Check(pipeline, cwd string) (CheckResult, error)
-	// Start captures one batch from the pipeline's input and steps it
-	// through the processors, calling a.Arrive at every stop position. It
-	// returns nil once the batch is delivered, an Error with code
-	// NOTHING_CAPTURED when the input yields nothing, or an error when ctx
-	// ends or the run fails.
-	Start(ctx context.Context, pipeline, cwd string, a Arriver) error
+	// Start captures one batch from the pipeline's input, keeps at most
+	// opts.MaxMessages of it, and steps it through the processors, calling
+	// a.Captured once and a.Arrive at every stop position. It returns nil
+	// once the batch is delivered, an Error with code NOTHING_CAPTURED when
+	// the input yields nothing, or an error when ctx ends or the run fails.
+	Start(ctx context.Context, opts StartOptions, a Arriver) error
+}
+
+// StartOptions are the launch options an Engine runs with. The Session
+// fills them from Launch, with paths resolved.
+type StartOptions struct {
+	// Pipeline is the absolute path of the pipeline file.
+	Pipeline string
+	// Cwd is the absolute directory relative paths resolve against.
+	Cwd string
+	// MaxMessages is the most messages of the captured batch to step; the
+	// rest are dropped, never acked. 0 means no limit.
+	MaxMessages int
 }
 
 // Frontend receives the Session's events. Emit may be called from any

@@ -13,6 +13,8 @@ const binary = path.resolve(process.env.RPCN_DEBUG_BIN ?? '../bin/rpcn-debug');
 const tracerPipeline = path.resolve('../testdata/tracer/pipeline.yaml');
 // The line of the sample's mapping, where the session stops.
 const mappingLine = 16;
+// The truncation sample: one batch of 12 messages.
+const batch12Pipeline = path.resolve('../testdata/tracer/batch12.yaml');
 
 // DebugClient.start() spawns `runtime executable`, which would pass a stray
 // positional argument to rpcn-debug. The test spawns the binary itself and
@@ -134,6 +136,76 @@ test('F5 path: captures, stops before the mapping, steps over and terminates', a
 
     const terminated = dc.waitForEvent('terminated');
     await dc.nextRequest({ threadId });
+    await terminated;
+
+    const disc = await dc.disconnectRequest();
+    assert.equal(disc.success, true);
+    assert.equal(await exited, 0);
+  } finally {
+    if (proc.exitCode === null) {
+      proc.kill();
+    }
+  }
+});
+
+test('a launch with an unknown key fails, naming the key', async () => {
+  const proc = spawn(binary, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const exited = exitCode(proc);
+  try {
+    const dc = new StdioDebugClient();
+    dc.attach(proc);
+    await dc.initializeRequest();
+
+    await assert.rejects(
+      dc.launchRequest({ pipeline: tracerPipeline, maxMesages: 5 } as DebugProtocol.LaunchRequestArguments),
+      (err: Error) => {
+        assert.match(err.message, /maxMesages/);
+        return true;
+      },
+    );
+
+    const disc = await dc.disconnectRequest();
+    assert.equal(disc.success, true);
+    assert.equal(await exited, 0);
+  } finally {
+    if (proc.exitCode === null) {
+      proc.kill();
+    }
+  }
+});
+
+test('a batch of 12 is truncated to the default maxMessages of 10', async () => {
+  const proc = spawn(binary, [], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const exited = exitCode(proc);
+  try {
+    const dc = new StdioDebugClient();
+    dc.attach(proc);
+    await dc.initializeRequest();
+
+    const initialized = dc.waitForEvent('initialized');
+    const launch = await dc.launchRequest({
+      pipeline: 'batch12.yaml',
+      cwd: path.dirname(batch12Pipeline),
+    } as DebugProtocol.LaunchRequestArguments);
+    assert.equal(launch.success, true);
+    await initialized;
+
+    const truncated = dc.assertOutput('console', 'captured 10 of 12 messages (maxMessages)');
+    const stopped = dc.waitForEvent('stopped');
+    await dc.configurationDoneRequest();
+    await truncated;
+    await stopped;
+
+    const threadId = (await dc.threadsRequest()).body.threads[0].id;
+    const frame = (await dc.stackTraceRequest({ threadId })).body.stackFrames[0];
+    assert.equal(frame.source?.path, batch12Pipeline);
+    const scopes = await dc.scopesRequest({ frameId: frame.id });
+    const batch = await child(dc, scopes.body.scopes[0].variablesReference, 'batch 0');
+    const messages = await dc.variablesRequest({ variablesReference: batch.variablesReference });
+    assert.equal(messages.body.variables.length, 10);
+
+    const terminated = dc.waitForEvent('terminated');
+    await dc.continueRequest({ threadId });
     await terminated;
 
     const disc = await dc.disconnectRequest();

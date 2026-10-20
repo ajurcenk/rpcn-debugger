@@ -47,9 +47,43 @@
           {
             "type": "redpanda-connect",
             "request": "launch",
-            "name": "Debug pipeline"
+            "name": "Debug pipeline",
+            "pipeline": "${file}"
           }
-        ]
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "cwd": {
+                "description": "The directory that relative paths (pipeline, envFile) resolve against. A relative cwd resolves against the debugger's working directory. When unset, the workspace folder is used.",
+                "type": "string"
+              },
+              "env": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Parsed and validated, but not applied yet.",
+                "type": "object"
+              },
+              "envFile": {
+                "description": "A file of NAME=value environment variables for the pipeline's ${VAR} interpolations. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Parsed and validated, but not applied yet.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxMessages": {
+                "default": 10,
+                "description": "The most messages of the captured batch to step through. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept.",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "pipeline": {
+                "description": "The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged.",
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     ]
   },

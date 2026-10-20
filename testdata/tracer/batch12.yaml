@@ -1,0 +1,19 @@
+# Truncation sample: one batch of 12 generated messages. Press F5 on this
+# file: the default maxMessages (10) keeps the first 10, and the Debug
+# Console says "captured 10 of 12 messages (maxMessages)".
+input:
+  generate:
+    count: 12
+    batch_size: 12
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.doubled = this.n * 2
+
+output:
+  drop: {}

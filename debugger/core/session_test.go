@@ -26,6 +26,10 @@ type fakeEngine struct {
 	children  int
 	batch     []Batch
 	delivered chan []Batch
+	// captured is the (kept, total) the engine reports; zero: the batch's
+	// own size, untruncated.
+	captured [2]int
+	opts     chan StartOptions
 }
 
 func (e *fakeEngine) Check(string, string) (CheckResult, error) {
@@ -38,10 +42,19 @@ func (e *fakeEngine) Check(string, string) (CheckResult, error) {
 	}, nil
 }
 
-func (e *fakeEngine) Start(ctx context.Context, _, _ string, a Arriver) error {
+func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) error {
+	if e.opts != nil {
+		e.opts <- opts
+	}
 	if e.startErr != nil {
 		return e.startErr
 	}
+	kept, total := e.captured[0], e.captured[1]
+	if kept == 0 && total == 0 && len(e.batch) > 0 {
+		kept = len(e.batch[0].Messages)
+		total = kept
+	}
+	a.Captured(kept, total)
 	for i := range e.children {
 		if err := a.Arrive(ctx, 0, i, e.batch); err != nil {
 			return err
@@ -232,7 +245,7 @@ func (e *pathEngine) Check(p, _ string) (CheckResult, error) {
 	*e.got = p
 	return CheckResult{Lines: lines{}}, nil
 }
-func (e *pathEngine) Start(context.Context, string, string, Arriver) error {
+func (e *pathEngine) Start(context.Context, StartOptions, Arriver) error {
 	return nil
 }
 
@@ -380,4 +393,96 @@ func TestLaunchWarnings(t *testing.T) {
 	}
 	rec.none(t)
 	s.terminate()
+}
+
+func TestLaunchOptionsReachTheEngine(t *testing.T) {
+	e := newEngine()
+	e.opts = make(chan StartOptions, 1)
+	s := NewSession(e, newRecorder())
+	if err := do(s, Launch{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := do(s, ConfigurationDone{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = do(s, Terminate{}) })
+	select {
+	case got := <-e.opts:
+		if want := (StartOptions{Pipeline: "/w/p.yaml", Cwd: "/w", MaxMessages: 7}); got != want {
+			t.Errorf("Start options = %+v, want %+v", got, want)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the engine did not start")
+	}
+}
+
+func TestLaunchEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	s := NewSession(&pathEngine{got: &got}, newRecorder())
+	if err := do(s, Launch{Pipeline: "p.yaml", Cwd: dir, EnvFile: ".env", Env: map[string]string{"B": "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	envFile, env := s.envFile, s.env
+	s.mu.Unlock()
+	if want := filepath.Join(dir, ".env"); envFile != want {
+		t.Errorf("envFile = %q, want %q", envFile, want)
+	}
+	if env["B"] != "2" {
+		t.Errorf("env = %v, want B=2", env)
+	}
+	if got != filepath.Join(dir, "p.yaml") {
+		t.Errorf("pipeline = %q", got)
+	}
+}
+
+func TestLaunchInvalidOptions(t *testing.T) {
+	dir := t.TempDir()
+	for name, tc := range map[string]struct {
+		launch Launch
+		want   string
+	}{
+		"missing env file":  {Launch{Pipeline: "p.yaml", Cwd: dir, EnvFile: ".env"}, `"envFile"`},
+		"env file is a dir": {Launch{Pipeline: "p.yaml", Cwd: dir, EnvFile: "."}, `"envFile"`},
+		"negative max":      {Launch{Pipeline: "p.yaml", Cwd: dir, MaxMessages: -1}, `"maxMessages"`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got string
+			s := NewSession(&pathEngine{got: &got}, newRecorder())
+			err := do(s, tc.launch)
+			if !HasCode(err, CodeLaunchInvalid) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("launch = %v, want LAUNCH_INVALID naming %s", err, tc.want)
+			}
+			if got != "" {
+				t.Error("the engine checked the pipeline after an invalid launch")
+			}
+		})
+	}
+}
+
+func TestTruncationOutput(t *testing.T) {
+	e := newEngine()
+	e.captured = [2]int{10, 12}
+	s, rec := launched(t, e)
+	if ev := rec.next(t); ev != (event{"output", "captured 10 of 12 messages (maxMessages)\n"}) {
+		t.Errorf("first event = %+v, want the truncation output", ev)
+	}
+	if ev := rec.next(t); ev.kind != "stopped" {
+		t.Errorf("second event = %+v, want stopped", ev)
+	}
+	_ = do(s, Terminate{})
+}
+
+func TestNoTruncationNoOutput(t *testing.T) {
+	e := newEngine()
+	e.captured = [2]int{3, 3}
+	s, rec := launched(t, e)
+	if ev := rec.next(t); ev.kind != "stopped" {
+		t.Errorf("first event = %+v, want stopped and no output", ev)
+	}
+	_ = do(s, Terminate{})
 }

@@ -57,9 +57,25 @@ func (r *run) buildCapture(got chan<- service.MessageBatch) (*service.Stream, er
 }
 
 // capture runs the capture stream until it delivers its first batch, then
-// stops it before stepping starts. It returns a core.Error with code
+// stops it before stepping starts. It keeps the first maxMessages messages
+// of the batch (all of them when maxMessages is 0) and also returns the
+// batch's total count. The dropped messages are nacked like the rest: no
+// message is ever acked (AD-4, AD-5). It returns a core.Error with code
 // NOTHING_CAPTURED when the input closes first.
-func (r *run) capture(ctx context.Context) (service.MessageBatch, error) {
+func (r *run) capture(ctx context.Context, maxMessages int) (batch service.MessageBatch, total int, err error) {
+	batch, err = r.captureFirst(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	total = len(batch)
+	if maxMessages > 0 && total > maxMessages {
+		batch = batch[:maxMessages:maxMessages]
+	}
+	return batch, total, nil
+}
+
+// captureFirst runs the capture stream and returns its first batch.
+func (r *run) captureFirst(ctx context.Context) (service.MessageBatch, error) {
 	got := make(chan service.MessageBatch, 1)
 	strm, err := r.buildCapture(got)
 	if err != nil {

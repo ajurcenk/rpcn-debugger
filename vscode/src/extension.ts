@@ -5,10 +5,11 @@ import { fillLaunchConfig } from './launchConfig';
 const debugType = 'redpanda-connect';
 
 // The extension stays thin (AD-12): it registers the `redpanda-connect` debug
-// type, fills a missing `pipeline` from the active editor, and starts the
-// rpcn-debug binary as a DAP adapter over stdio. The binary comes from the
-// `rpcnDebug.binaryPath` setting (AD-23 MVP); bundling arrives with the local
-// release.
+// type, fills a missing `pipeline` from the active editor and a missing `cwd`
+// from the workspace folder, and starts the rpcn-debug binary as a DAP
+// adapter over stdio. The launch.json schema in package.json is generated
+// from Go (task gen:schema). The binary comes from the `rpcnDebug.binaryPath`
+// setting (AD-23 MVP); bundling arrives with the local release.
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.debug.registerDebugAdapterDescriptorFactory(debugType, new AdapterFactory()),
@@ -31,11 +32,11 @@ class AdapterFactory implements vscode.DebugAdapterDescriptorFactory {
 
 class ConfigurationProvider implements vscode.DebugConfigurationProvider {
   resolveDebugConfiguration(
-    _folder: vscode.WorkspaceFolder | undefined,
+    folder: vscode.WorkspaceFolder | undefined,
     config: vscode.DebugConfiguration,
   ): vscode.DebugConfiguration {
     const editor = vscode.window.activeTextEditor;
     const activeFile = editor?.document.uri.scheme === 'file' ? editor.document.uri.fsPath : undefined;
-    return fillLaunchConfig(config, debugType, activeFile) as vscode.DebugConfiguration;
+    return fillLaunchConfig(config, debugType, activeFile, folder?.uri.fsPath) as vscode.DebugConfiguration;
   }
 }

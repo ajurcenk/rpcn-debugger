@@ -22,6 +22,7 @@ import (
 
 var (
 	samplePipeline = filepath.Join("..", "..", "testdata", "tracer", "pipeline.yaml")
+	batch12        = filepath.Join("..", "..", "testdata", "tracer", "batch12.yaml")
 	nestedPipeline = filepath.Join("..", "..", "testdata", "tracer", "nested.yaml")
 )
 
@@ -57,10 +58,17 @@ type arrival struct {
 
 // arriver records arrivals and, when block is set, waits on it at each one.
 type arriver struct {
-	mu    sync.Mutex
-	got   []arrival
-	block chan struct{}
-	seen  chan struct{}
+	mu       sync.Mutex
+	got      []arrival
+	captured [][2]int // kept, total
+	block    chan struct{}
+	seen     chan struct{}
+}
+
+func (a *arriver) Captured(kept, total int) {
+	a.mu.Lock()
+	a.captured = append(a.captured, [2]int{kept, total})
+	a.mu.Unlock()
 }
 
 func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
@@ -100,7 +108,7 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, samplePipeline, "", arr); err != nil {
+	if err := a.Start(ctx, core.StartOptions{Pipeline: samplePipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(arr.got) != 1 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
@@ -161,7 +169,7 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, path, "", arr); !core.HasCode(err, core.CodeNothingCaptured) {
+	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); !core.HasCode(err, core.CodeNothingCaptured) {
 		t.Fatalf("Start = %v, want NOTHING_CAPTURED", err)
 	}
 	if len(arr.got) != 0 {
@@ -199,7 +207,7 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, path, "", arr); err != nil {
+	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	// The input stepper stops before its child; the deleted message never
@@ -228,7 +236,7 @@ func TestNestedStepsAndDelivers(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, nestedPipeline, "", arr); err != nil {
+	if err := a.Start(ctx, core.StartOptions{Pipeline: nestedPipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
 	// Ids: 0 input, 1 pipeline, 2 branch, 3 and 4 the switch cases, 5 output.
@@ -270,7 +278,7 @@ func TestRewrittenConfigsBuild(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := a.Start(ctx, path, "", &arriver{}); err != nil {
+			if err := a.Start(ctx, core.StartOptions{Pipeline: path}, &arriver{}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -296,7 +304,7 @@ output:
 			a := engine.New(standard(), testLogger(), load)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			err := a.Start(ctx, path, "", &arriver{})
+			err := a.Start(ctx, core.StartOptions{Pipeline: path}, &arriver{})
 			if strict && err == nil {
 				t.Error("strict: the failed message was delivered")
 			}
@@ -327,7 +335,7 @@ func TestEndWhileStopped(t *testing.T) {
 	a := engine.New(standard(), testLogger(), load)
 	arr := &arriver{block: make(chan struct{}), seen: make(chan struct{}, 1)}
 	done := make(chan error, 1)
-	go func() { done <- a.Start(context.Background(), samplePipeline, "", arr) }()
+	go func() { done <- a.Start(context.Background(), core.StartOptions{Pipeline: samplePipeline}, arr) }()
 	select {
 	case <-arr.seen:
 	case <-time.After(30 * time.Second):
@@ -387,7 +395,7 @@ func TestCaptureNeverAcks(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, path, "", arr); err != nil {
+	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(arr.got) != 1 {
@@ -448,5 +456,46 @@ output:
 	defer mu.Unlock()
 	if opened != 0 {
 		t.Errorf("Check opened the cache resource %d times", opened)
+	}
+}
+
+// The capture keeps the first maxMessages messages of the batch and reports
+// the batch's full count; without a limit it keeps all of them.
+func TestCaptureTruncatesToMaxMessages(t *testing.T) {
+	for name, tc := range map[string]struct {
+		max, kept int
+	}{
+		"default limit": {max: 10, kept: 10},
+		"no limit":      {max: 0, kept: 12},
+		"above batch":   {max: 20, kept: 12},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := engine.New(standard(), testLogger(), load)
+			arr := &arriver{}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.Start(ctx, core.StartOptions{Pipeline: batch12, MaxMessages: tc.max}, arr); err != nil {
+				t.Fatal(err)
+			}
+			if len(arr.captured) != 1 || arr.captured[0] != [2]int{tc.kept, 12} {
+				t.Errorf("Captured calls = %v, want one with %d of 12", arr.captured, tc.kept)
+			}
+			if len(arr.got) != 1 || len(arr.got[0].batches) != 1 {
+				t.Fatalf("arrivals = %+v, want one stop with one batch", arr.got)
+			}
+			msgs := arr.got[0].batches[0].Messages
+			if len(msgs) != tc.kept {
+				t.Fatalf("messages at the stop = %d, want %d", len(msgs), tc.kept)
+			}
+			for i, m := range msgs {
+				var v struct{ N int }
+				if err := json.Unmarshal(m.Content.Raw, &v); err != nil {
+					t.Fatal(err)
+				}
+				if v.N != i+1 {
+					t.Errorf("message %d has n = %d, want %d (the first messages are kept, in order)", i, v.N, i+1)
+				}
+			}
+		})
 	}
 }

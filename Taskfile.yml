@@ -35,6 +35,16 @@ tasks:
           exit 1
         fi
 
+  gen:schema:
+    desc: Generate the launch.json schema and initialConfigurations in vscode/package.json from dap.LaunchConfig (AD-12)
+    cmds:
+      - go run ./cmd/gen-launch-schema
+
+  lint:schema:
+    desc: Fail if vscode/package.json's launch schema is stale against dap.LaunchConfig (AD-12)
+    cmds:
+      - go run ./cmd/gen-launch-schema -check
+
   test:go:
     desc: Run the Go tests
     cmds:
@@ -88,6 +98,7 @@ tasks:
       - task: build:go
       - task: lint:go
       - task: lint:gomod
+      - task: lint:schema
       - task: test:go
       - task: test:equivalence
       - task: test:integration
