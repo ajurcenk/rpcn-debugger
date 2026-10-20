@@ -3,7 +3,7 @@ title: 'Session stepping semantics, frames and threads'
 type: 'feature'
 ticket: '6'
 created: '2026-10-19'
-status: 'built'
+status: done
 baseline_revision: 'b861d149cf01940ecd0564d8369468ef6959c1f3'
 route: 'full'
 route_source: 'auto'
@@ -142,6 +142,8 @@ context:
 - An `Arrive` without an `Enter` (old-style fakes) still works as a one-off frame on the root thread.
 - `debugger/dap/server_test.go`'s unknown-request case now uses `restart` instead of `stepIn` (stepIn is implemented).
 - Verified: `go test -race -count=1 ./debugger/...` PASS; `task ci` exit 0 (lint 0 issues, equivalence and integration unchanged, TS adapter tests including a new nested Step Over/In/Out test). The VS Code manual checks (F10/F11/Shift+F11 on nested.yaml, Pause with a `sleep` processor) were not run.
+
+- 2026-10-20 VS Code check (user): on `nested.yaml`, F10, F11 and Shift+F11 walked lines 12 → 11 → 18 → 21 (2 frames, outer frame's batch shown) → 20 → 23. Pause during a 3s `sleep` stopped at the next processor. All ACs met. The scratch pipeline was deleted.
 
 ## Review Triage Log
 
