@@ -47,6 +47,8 @@ Implementation (2026-10-22):
   - `test/equivalence/equivalence_test.go`: every run must be free of "The debug run failed".
   - `testdata/equivalence/strict/expect.yaml`: requires the note.
 
+- 2026-10-22: the full `task ci` passed with Docker running again; the integration step had been blocked by a stopped Docker daemon, unrelated to this change.
+
 ## Review Triage Log
 
 Pass 1 (quick): high 0, medium 0, low 4, false 0, maybe-false 0. Three were patched and one deferred.
