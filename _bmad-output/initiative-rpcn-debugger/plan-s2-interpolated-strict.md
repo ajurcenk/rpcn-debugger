@@ -3,7 +3,7 @@ title: 'Interpolated error_handling.strict applies to the step stream'
 type: 'bugfix'
 ticket: ''
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: '6d633ec0a1b961d2656ea7426362bbe1af19fe61'
 route: 'full'
 route_source: 'auto'
