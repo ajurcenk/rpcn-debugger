@@ -79,6 +79,11 @@ type Error struct {
 	UserPath string
 	// Line is the 1-based line in the user's file, or 0 when unknown.
 	Line int
+	// Inline is set when Message already names every location inline (a
+	// config error with one file position per lint error): Error then
+	// omits the location suffix, which would read as the last one's.
+	// UserPath and Line still hold the first location.
+	Inline bool
 }
 
 // NewError returns an Error with code and a formatted message.
@@ -89,8 +94,12 @@ func NewError(code Code, format string, args ...any) Error {
 // Error returns the message, followed by the user path and line when known.
 func (e Error) Error() string { return e.Message + e.location() }
 
-// location is the " (at <UserPath>, line N)" suffix of Error, or "".
+// location is the " (at <UserPath>, line N)" suffix of Error, or "" (also
+// when Inline is set).
 func (e Error) location() string {
+	if e.Inline {
+		return ""
+	}
 	var at []string
 	if e.UserPath != "" {
 		at = append(at, e.UserPath)

@@ -43,6 +43,10 @@ type Plan struct {
 	// paths and bases back Translate (see walker).
 	paths map[string]string
 	bases map[string]int
+	// positions backs FilePosition: one map per encoded part, and src
+	// holds the lines of the user's file.
+	positions map[string]posMap
+	src       []string
 }
 
 // stop is one LineMap key (AD-16).
@@ -87,14 +91,19 @@ func Rewrite(src []byte) (Plan, error) {
 		}
 	}
 
-	w := &walker{stops: map[stop]core.Position{}, paths: map[string]string{}, bases: map[string]int{}}
-	var plan Plan
+	w := &walker{
+		stops: map[stop]core.Position{}, paths: map[string]string{}, bases: map[string]int{},
+		src: strings.Split(string(src), "\n"), procs: map[*yaml.Node]string{}, anchors: map[*yaml.Node]*yaml.Node{},
+	}
+	plan := Plan{positions: map[string]posMap{}, src: w.src}
 	plan.Strict, w.strict = strict(root)
 	if isInterpolated(w.strict) {
 		w.warn(w.strict.Line, "error_handling.strict", "strict is an interpolation, so it is applied per stepper only, not to the whole step stream")
 	}
+	capture := without(input, "processors")
+	w.procs[capture] = "input"
 	var err error
-	if plan.Input, err = encode(without(input, "processors")); err != nil {
+	if plan.Input, plan.positions[core.PartInput], err = w.encodeMapped(capture); err != nil {
 		return Plan{}, err
 	}
 
@@ -151,10 +160,11 @@ func Rewrite(src []byte) (Plan, error) {
 		if err != nil {
 			return Plan{}, err
 		}
-		enc, err := encode(stepper)
+		enc, pm, err := w.encodeMapped(stepper)
 		if err != nil {
 			return Plan{}, err
 		}
+		plan.positions[core.StepperPart(len(plan.Steppers))] = pm
 		plan.Steppers = append(plan.Steppers, enc)
 	}
 	if !isNull(resources) {
@@ -183,12 +193,19 @@ func Rewrite(src []byte) (Plan, error) {
 	// the steppers and the *_resources sections reach the engine.
 	res := &yaml.Node{Kind: yaml.MappingNode}
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if strings.HasSuffix(root.Content[i].Value, "_resources") {
-			res.Content = append(res.Content, root.Content[i], root.Content[i+1])
+		if k, v := root.Content[i], root.Content[i+1]; strings.HasSuffix(k.Value, "_resources") {
+			res.Content = append(res.Content, k, v)
+			if v.Kind == yaml.SequenceNode {
+				for j, e := range v.Content {
+					if _, ok := w.procs[e]; !ok {
+						w.procs[e] = resourcePath(k.Value, j, e)
+					}
+				}
+			}
 		}
 	}
 	if len(res.Content) > 0 {
-		if plan.Resources, err = encode(res); err != nil {
+		if plan.Resources, plan.positions[core.PartResources], err = w.encodeMapped(res); err != nil {
 			return Plan{}, err
 		}
 	}

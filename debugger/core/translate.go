@@ -1,6 +1,9 @@
 package core
 
-import "regexp"
+import (
+	"regexp"
+	"strconv"
+)
 
 // enginePathRef finds engine paths (root.pipeline.processors.0…) in text.
 var enginePathRef = regexp.MustCompile(`\broot(?:\.[A-Za-z0-9_]+)+`)
@@ -19,3 +22,14 @@ func TranslateText(tr Translate, text string) string {
 		return m
 	})
 }
+
+// The config parts the engine adds to its streams, as the rewrite names
+// them for its position map (AD-6): the capture input, the resources and
+// each top-level stepper (StepperPart).
+const (
+	PartInput     = "input"
+	PartResources = "resources"
+)
+
+// StepperPart returns the part name of top-level stepper i.
+func StepperPart(i int) string { return "stepper/" + strconv.Itoa(i) }

@@ -81,6 +81,13 @@ type walker struct {
 	// tainted holds the processor_resources labels used inside a
 	// concurrent parent; they stay unwrapped.
 	tainted map[string]bool
+	// src holds the lines of the user's file, procs the user path of each
+	// processor, child list and component node, and anchors the source
+	// node each synthesized stepper node stands for: the position map of
+	// every encoded part is built from them (FilePosition).
+	src     []string
+	procs   map[*yaml.Node]string
+	anchors map[*yaml.Node]*yaml.Node
 }
 
 // wrap returns the stepper processor around list, the child list at path
@@ -93,11 +100,13 @@ func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, k 
 	w.paths[eng] = path
 	w.paths[eng+"."+StepperName] = path
 	w.paths[eng+"."+StepperName+".processors"] = path
+	w.procs[list] = path
 	lines := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Style: yaml.FlowStyle}
 	for i, c := range list.Content {
 		cp := child(path, i)
 		ce := eng + "." + StepperName + ".processors." + strconv.Itoa(i)
 		w.paths[ce] = cp
+		w.procs[c] = cp
 		w.stops[stop{id, i}] = core.Position{UserPath: cp, Line: c.Line}
 		lines.Content = append(lines.Content, scalar("!!int", strconv.Itoa(c.Line)))
 		if err := w.processor(c, cp, ce, id); err != nil {
@@ -133,10 +142,11 @@ func (w *walker) wrap(list *yaml.Node, path, eng string, keyLine, parent int, k 
 		scalar("!!str", "lines"), lines,
 		scalar("!!str", "processors"), list,
 	)
-	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
-		scalar("!!str", StepperName),
-		{Kind: yaml.MappingNode, Content: conf},
-	}}, nil
+	// The wrapper's own keys belong to the list it wraps.
+	confNode := &yaml.Node{Kind: yaml.MappingNode, Content: conf}
+	st := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{scalar("!!str", StepperName), confNode}}
+	w.anchors[st], w.anchors[confNode] = list, list
+	return st, nil
 }
 
 // list wraps the child list v at path (key on keyLine) and returns its
@@ -156,7 +166,9 @@ func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, k kin
 	if err != nil {
 		return nil, err
 	}
-	return &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{st}}, nil
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{st}}
+	w.anchors[seq] = v
+	return seq, nil
 }
 
 // inner wraps the processors field of mapping m (a branch, while, retry,
@@ -303,6 +315,7 @@ func (w *walker) resources(list *yaml.Node) error {
 			eng = QualifyResource(ResourcePath, label)
 		}
 		w.paths[eng] = path
+		w.procs[entry] = path
 		if label != "" && w.tainted[label] {
 			// Unwrapped, so only the entry's own mapping has a base line.
 			w.entryBases(entry, eng)

@@ -565,6 +565,30 @@ func TestServeUndefinedResource(t *testing.T) {
 	c.next("response", "disconnect")
 }
 
+// TestServeLintErrorAtFileLine is entry 12: a lint error in a processor
+// fails the launch at the file line and the processor's user path, not at
+// a position in the rewritten config.
+func TestServeLintErrorAtFileLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lint.yaml")
+	src := "input:\n  generate:\n    count: 1\n    interval: \"\"\n    mapping: 'root = {}'\n\n" +
+		"pipeline:\n  processors:\n    - mapping: 'root = this'\n    - mapping: 'root = '\noutput:\n  drop: {}\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t)
+	c.send("initialize", map[string]any{})
+	c.next("response", "initialize")
+	c.send("launch", map[string]any{"pipeline": path})
+	m := c.next("response", "launch")
+	if m.Success || errorID(m) != core.Number(core.CodePipelineInvalid) ||
+		!strings.Contains(m.Message, path+": lint errors: pipeline.processors[1]: (line 10, column 24) expected query") ||
+		strings.Contains(m.Message, "(at ") || strings.Contains(m.Message, "rewritten config") {
+		t.Errorf("launch = %+v, want PIPELINE_INVALID at pipeline.processors[1], line 10", m)
+	}
+	c.send("disconnect", map[string]any{})
+	c.next("response", "disconnect")
+}
+
 // syncBuffer is a bytes.Buffer safe for the log handler's writes and the
 // test's reads.
 type syncBuffer struct {

@@ -38,6 +38,12 @@ type Configs struct {
 	// Delivery positions the Delivered Snapshots: the top-level output
 	// key (AD-21). Check returns it in its CheckResult.
 	Delivery core.Position
+	// Positions maps a line and column in the YAML of one config part
+	// (core.PartInput, core.StepperPart(k) or core.PartResources) to the
+	// user's file, with the
+	// user path of the innermost processor there (AD-6). It may be nil;
+	// config errors then keep the rewritten config's positions.
+	Positions func(part string, line, col int) (fileLine, fileCol int, userPath string, ok bool)
 }
 
 // Loader reads and rewrites a pipeline file.
@@ -166,12 +172,12 @@ func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandl
 	}
 	if r.conf.Resources != "" {
 		if err := b.AddResourcesYAML(r.conf.Resources); err != nil {
-			return nil, nil, fmt.Errorf("resources: %w", err)
+			return nil, nil, r.configError(core.PartResources, "resources", err)
 		}
 	}
 	for i, st := range r.conf.Steppers {
 		if err := b.AddProcessorYAML(st); err != nil {
-			return nil, nil, fmt.Errorf("%s: %w", r.stepperName(i), err)
+			return nil, nil, r.configError(core.StepperPart(i), r.stepperName(i), err)
 		}
 	}
 	if err := b.AddOutputYAML(SinkName + ": {}"); err != nil {

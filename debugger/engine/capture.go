@@ -24,11 +24,11 @@ func (r *run) configureCapture(got chan<- service.MessageBatch) (*service.Stream
 	b := r.builder()
 	if r.conf.Resources != "" {
 		if err := b.AddResourcesYAML(r.conf.Resources); err != nil {
-			return nil, fmt.Errorf("resources: %w", err)
+			return nil, r.configError(core.PartResources, "resources", err)
 		}
 	}
 	if err := b.AddInputYAML(r.conf.Input); err != nil {
-		return nil, fmt.Errorf("input: %w", err)
+		return nil, r.configError(core.PartInput, "input", err)
 	}
 	var once sync.Once
 	if err := b.AddBatchConsumerFunc(func(_ context.Context, batch service.MessageBatch) error {
