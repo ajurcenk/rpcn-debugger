@@ -3,7 +3,7 @@ title: 'Equivalence corpus and scripted Step Over driver'
 type: 'feature'
 ticket: '9'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '2d287b8ed3ad030bc2f7d61f846fe1dd88366d1a'
 route: 'full'
 route_source: 'auto'
