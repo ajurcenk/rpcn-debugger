@@ -73,3 +73,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
   summary: Delivered — the AD-7 child-list table (from 2.13) is now one `parents` table in debugger/rewrite/walk.go with a shared `childLists` iterator used by the walker, refChecker and the taint scan.
   evidence: entry 2.10 (refactor sweep); every rewrite golden byte-identical before and after.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-vs-code-acceptance-run-plan.md`
+  summary: Benthos's own strict-mode Warn ("Rejecting N of M message(s) for output 'rpcn_debug_sink' … (example error: failed assignment (line 1): …)") reaches the Debug Console with the internal sink name and an unshifted mid-message Bloblang line; have the AD-15 handler render the sink as "dry-run output" and shift the embedded `(line N)` — cosmetic, for a later logging touch-up or epic-safe-against-real-systems (which changes the output).
+  evidence: seen in the 2.11 acceptance probe on testdata/tracer/acceptance-strict.yaml; debugger/logging.go shifts only the leading Bloblang `(line N):`.

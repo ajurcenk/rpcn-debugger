@@ -1,0 +1,81 @@
+# epic-tracer acceptance demo (2.11): one batch of 3 messages through every
+# in-scope parent. Press F5, then step with F10 (Next), F11 (Step In) and
+# Shift+F11 (Step Out); Continue (F5) to the end to see the delivery.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root = {"n": counter()}
+      meta source = "acceptance"
+      meta kafka_key = ("k" + counter().string()).bytes()
+      meta __rpcn_internal = "x"
+  processors:
+    - mapping: |
+        root = this
+        root.from_input = true
+
+pipeline:
+  processors:
+    - for_each:
+        - mapping: |
+            root = this
+            root.each = true
+    - switch:
+        - check: this.n == 1
+          processors:
+            - branch:
+                request_map: root = this.n
+                processors:
+                  - mapping: root = this * 10
+                result_map: root.branched = this
+        - processors:
+            - mapping: |
+                root = this
+                root.case = "other"
+    - try:
+        - mapping: |
+            root = if this.n == 2 { throw("n is 2") } else { this }
+        - mapping: |
+            root = this
+            root.tried = true
+    - catch:
+        - mapping: |
+            root = this
+            root.caught = true
+    - while:
+        check: this.loops.or(0) < 2
+        processors:
+          - mapping: |
+              root = this
+              root.loops = this.loops.or(0) + 1
+    - retry:
+        max_retries: 2
+        backoff:
+          initial_interval: 1ms
+          max_interval: 1ms
+        processors:
+          - mapping: |
+              root = this
+              root.retried = true
+    - group_by:
+        - check: this.n == 1
+          processors:
+            - mapping: |
+                root = this
+                root.group = "one"
+        - check: this.n != 1
+          processors:
+            - mapping: |
+                root = this
+                root.group = "rest"
+
+output:
+  processors:
+    - mapping: |
+        root = this
+        root.from_output = true
+  drop: {}
+  batching:
+    count: 3

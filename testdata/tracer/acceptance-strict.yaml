@@ -1,0 +1,24 @@
+# epic-tracer acceptance demo (2.11), strict mode: message 1 (the batch's
+# first) fails at the first processor, so error_handling.strict skips the
+# second processor for the whole batch (no "after" on any message), and the
+# output rejects message 1: a Debug Console note, not a run failure.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: 'root = {"n": counter()}'
+
+pipeline:
+  processors:
+    - mapping: |
+        root = if this.n == 1 { throw("n is 1") } else { this }
+    - mapping: |
+        root = this
+        root.after = true
+
+output:
+  drop: {}
+
+error_handling:
+  strict: true
