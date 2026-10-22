@@ -3,7 +3,7 @@ title: 'Launch lint errors at file lines'
 type: 'feature'
 ticket: '12'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: 'fce1700b3dc6ccbc109c7243916504040c6086a6'
 route: 'full'
 route_source: 'auto'
@@ -101,6 +101,8 @@ context:
   - The part names live once in `core` (`PartInput`, `PartResources`, `StepperPart(i)`), used by both rewrite and engine.
 - Deviation, matrix row "Bad input field": `generate: {count: x}` passes lint (Check), so it never reaches this code. It fails only at Run, where the error is `field 'count': yaml: unmarshal errors: line 1: …`, relative to the field rather than the part, which is a runtime error and out of scope. The test uses an unknown field (`nope: 2` at line 3) instead.
 - The YAML-line test uses `a: b: c` as the bad value. For a flow error like `[a: b`, yaml.v3 itself reports the line above, and the map doesn't correct yaml.v3's own marks.
+
+- 2026-10-21 VS Code check (user): F5 on a pipeline with a broken second mapping failed the launch naming `pipeline.processors[1]` and its file line, with no rewritten-config position. AC 1 met. The scratch pipeline was deleted.
 
 ## Review Triage Log
 
