@@ -77,3 +77,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-vs-code-acceptance-run-plan.md`
   summary: Benthos's own strict-mode Warn ("Rejecting N of M message(s) for output 'rpcn_debug_sink' … (example error: failed assignment (line 1): …)") reaches the Debug Console with the internal sink name and an unshifted mid-message Bloblang line; have the AD-15 handler render the sink as "dry-run output" and shift the embedded `(line N)` — cosmetic, for a later logging touch-up or epic-safe-against-real-systems (which changes the output).
   evidence: seen in the 2.11 acceptance probe on testdata/tracer/acceptance-strict.yaml; debugger/logging.go shifts only the leading Bloblang `(line N):`.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/epic-tracer-retrospective.md`
+  summary: Spec reconciliation for A6 — narrow AD-8's time-budget clause to `retry` (backoff, max_elapsed_time), the only time-budgeted parent the debugger can pause inside. Branch and workflow have no timeout field, workflow runs as one opaque step, and pausing near a rate limit changes only throttling, not output. User decision 2026-10-22; no code change.
+  evidence: benthos v4.81 internal/impl/pure/processor_branch.go and processor_workflow.go (time used only for latency metrics); processor_rate_limit.go (a leaf, with only a `resource` field); the warning lives in debugger/core/session.go (InRetry).
