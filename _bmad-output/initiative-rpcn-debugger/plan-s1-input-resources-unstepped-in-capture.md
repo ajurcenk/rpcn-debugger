@@ -3,7 +3,7 @@ title: 'Resources used by the input run unstepped during capture'
 type: 'bugfix'
 ticket: ''
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: '57e20a2d9a741fd6a9d429d15136f2d30e7e89a4'
 route: 'oneshot'
 route_source: 'auto'
