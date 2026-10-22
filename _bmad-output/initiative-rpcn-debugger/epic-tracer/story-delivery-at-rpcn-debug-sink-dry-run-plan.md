@@ -3,7 +3,7 @@ title: 'Delivery at rpcn_debug_sink (dry-run)'
 type: 'feature'
 ticket: '8'
 created: '2026-10-21'
-status: 'built'
+status: done
 baseline_revision: '5231a100f822651614f2265c5a1867ea10665926'
 route: 'full'
 route_source: 'auto'
@@ -109,6 +109,8 @@ context:
 - Batching warning: one per non-null `batching` field found in `output` and `output_resources` (walks broker/switch children; `processors` lists skipped), each naming its path and line. Golden render gained a `# delivery` section; new cases `batching.yaml`, `batching-top.yaml`.
 - `testdata/tracer/parents/for_each.yaml` was back to `count: 3`: commit 5231a10 had set `count: 10`, which made `TestParents/for_each` fail at HEAD (the debugger captures one batch of 3; the reference run delivered 4 batches). The file's own comment says one batch of 3.
 - Tests: engine (`TestSinkDeliversInOrder`, `TestSinkNothingDelivered`, delivery in the sample test), core (`TestDelivered`, `TestNothingDelivered`), dap (`delivered_test.go`: rendering, 4 KiB cut, event JSON, nothing delivered), dapdrive (tracer, group_by, error, deleted, batching warning, large content), serve tests read the new events.
+
+- 2026-10-21 VS Code check (user): the tracer sample printed the Delivered block with content and metadata and ended with no dialog; group_by printed one Delivered per output batch; a pipeline with `batching` showed the warning at launch. All ACs met. The scratch pipeline was deleted.
 
 ## Review Triage Log
 
