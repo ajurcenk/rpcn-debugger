@@ -529,3 +529,64 @@ output:
 		t.Errorf("event content is not the full 10 KiB")
 	}
 }
+
+// S1 (epic-tracer retrospective): a resource used in the input tree runs
+// during capture without being stepped; the same resource used in the
+// pipeline is still stepped. The resource nests a try, so its inner stepper
+// checks for its parent's frame (AD-17) in both streams.
+func TestInputResourceUnstepped(t *testing.T) {
+	const src = `
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {"a": 1}'
+        processors:
+          - resource: r
+pipeline:
+  processors:
+    - mutation: 'root.b = 2'%s
+processor_resources:
+  - label: r
+    branch:
+      processors:
+        - try:
+            - mapping: 'root.c = 3'
+      result_map: 'root.c = this.c'
+output:
+  drop: {}
+`
+	for name, c := range map[string]struct {
+		extra    string
+		resStops int
+	}{
+		"input only":         {"", 0},
+		"input and pipeline": {"\n    - resource: r", 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := runScript(t, writeYAML(t, fmt.Sprintf(src, c.extra)), dapdrive.Always(dapdrive.StepIn))
+			if len(res.Stops) == 0 || res.Stops[0].UserPath != "pipeline.processors[0]" {
+				t.Fatalf("stops = %+v, want the first at pipeline.processors[0]", res.Stops)
+			}
+			n := 0
+			for _, s := range res.Stops {
+				if strings.HasPrefix(s.UserPath, "processor_resources.r.") && !s.End {
+					n++
+				}
+			}
+			if n != c.resStops {
+				t.Errorf("stops inside processor_resources.r = %d, want %d: %+v", n, c.resStops, res.Stops)
+			}
+			for _, o := range res.Output {
+				if strings.Contains(o, "CTX_LOST") {
+					t.Errorf("output %q, want no CTX_LOST", o)
+				}
+			}
+			if len(res.Delivered) != 1 || len(res.Delivered[0]) != 1 || res.Delivered[0][0].Content != `{"a":1,"b":2,"c":3}` {
+				t.Errorf("delivered = %+v, want one message with c set during capture", res.Delivered)
+			}
+		})
+	}
+}

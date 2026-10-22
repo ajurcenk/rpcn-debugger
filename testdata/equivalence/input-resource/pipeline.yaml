@@ -1,0 +1,32 @@
+# A processor resource used both in the input tree (a broker input's
+# processors) and in the pipeline. In the input it runs during capture,
+# unstepped; in the pipeline it is stepped. Each run of the branch adds 1 to
+# k, so k is 2 only if both ran exactly once per message.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+processor_resources:
+  - label: count
+    branch:
+      processors:
+        - mapping: 'root.k = this.k.or(0) + 1'
+      result_map: 'root.k = this.k'
+
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 2
+          batch_size: 2
+          interval: ""
+          mapping: |
+            root.n = counter()
+        processors:
+          - resource: count
+
+pipeline:
+  processors:
+    - resource: count
+    - mutation: 'root.after = true'
+
+output:
+  drop: {}

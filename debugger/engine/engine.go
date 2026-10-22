@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -123,9 +122,13 @@ func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Ar
 	return nil
 }
 
-// run is one debug run on its own env clone (AD-1).
+// run is one debug run on its own env clones (AD-1).
 type run struct {
-	env      *service.Environment
+	env *service.Environment
+	// capEnv builds the capture stream. Its rpcn_debug_stepper never stops:
+	// processors in the input tree, resources they use included, run during
+	// capture without being stepped.
+	capEnv   *service.Environment
 	log      *slog.Logger
 	conf     Configs
 	lookup   func(string) (string, bool) // nil: the process environment
@@ -135,12 +138,15 @@ type run struct {
 }
 
 func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr core.Arriver) (*run, error) {
-	r := &run{env: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr}}
+	r := &run{env: a.env.Clone(), capEnv: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr}}
 	var err error
 	if r.strict, err = r.resolveStrict(); err != nil {
 		return nil, err
 	}
 	if err = registerStepper(r.env, arr); err != nil {
+		return nil, fmt.Errorf("register %s: %w", StepperName, err)
+	}
+	if err = registerStepper(r.capEnv, nopArriver{}); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
 	if err := registerSink(r.env, r.sink); err != nil {
@@ -190,8 +196,8 @@ func (r *run) resolveStrict() (bool, error) {
 // logger writes to stdout and the default http server binds :4195. It
 // resolves ${VAR} through the session's lookup (AD-22); the builder applies
 // it in every Add*YAML call, so it is set before any of them.
-func (r *run) builder() *service.StreamBuilder {
-	b := r.env.NewStreamBuilder()
+func (r *run) builder(env *service.Environment) *service.StreamBuilder {
+	b := env.NewStreamBuilder()
 	b.SetLogger(r.log)
 	b.SetHTTPMux(http.NewServeMux())
 	if r.lookup != nil {
@@ -214,7 +220,7 @@ func (r *run) stepperName(i int) string {
 // configureStep sets up, without building, the step stream: a producer
 // func, the steppers in order and the sink, plus the shared resources.
 func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandlerFunc, error) {
-	b := r.builder()
+	b := r.builder(r.env)
 	b.SetStrict(r.strict)
 	produce, err := b.AddBatchProducerFunc()
 	if err != nil {
@@ -306,19 +312,21 @@ func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.Can
 	return nil
 }
 
-// nopArriver never stops; Check builds streams with it and never runs them.
+// nopArriver never stops. Check builds streams with it and never runs them,
+// and the capture stream runs its steppers with it, so input-tree processors
+// run unstepped.
 type nopArriver struct{}
 
 func (nopArriver) Captured(int, int) {}
 
+// Enter pushes a frame, so a nested stepper finds one and does not report
+// CTX_LOST (AD-17). Nothing reads it: only the Session uses frames.
 func (nopArriver) Enter(ctx context.Context, _ core.Entry) (context.Context, func(any)) {
-	return ctx, func(any) {}
+	return core.PushFrame(ctx, core.FrameRef{}), func(any) {}
 }
 
 func (nopArriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 
-func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error {
-	return errors.New("not running")
-}
+func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error { return nil }
 
 func (nopArriver) Deliver(context.Context, core.Batch) {}

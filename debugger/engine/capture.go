@@ -19,9 +19,10 @@ var errNotAcked = errors.New("rpcn-debug captures batches without acknowledging 
 // configureCapture sets up, without building, the capture stream: the
 // user's input block, then a consumer func that keeps the first batch it
 // receives in got and nacks every batch. The Add* calls parse and lint the
-// config, so Check uses this alone: Build would open every resource.
+// config, so Check uses this alone: Build would open every resource. It
+// builds on r.capEnv, whose steppers never stop.
 func (r *run) configureCapture(got chan<- service.MessageBatch) (*service.StreamBuilder, error) {
-	b := r.builder()
+	b := r.builder(r.capEnv)
 	if r.conf.Resources != "" {
 		if err := b.AddResourcesYAML(r.conf.Resources); err != nil {
 			return nil, r.configError(core.PartResources, "resources", err)
