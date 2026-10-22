@@ -630,6 +630,26 @@ func TestRunFailureTranslated(t *testing.T) {
 	}
 }
 
+// A strict output rejection (entry 2.14) ends the run normally: a console
+// note and no run failure (the nothing-delivered line is the normal path,
+// covered by TestNothingDelivered).
+func TestStrictRejectionIsNotAFailure(t *testing.T) {
+	e := newEngine()
+	e.startErr = NewError(CodeStrictRejected, "rejected due to failed processing: boom")
+	_, rec := launched(t, e)
+	var outs []string
+	for ev := rec.next(t); ev.kind != "terminated"; ev = rec.next(t) {
+		if ev.kind == "output" {
+			outs = append(outs, ev.detail)
+		}
+	}
+	all := strings.Join(outs, "")
+	if !strings.Contains(all, "error_handling.strict: the output rejected") || !strings.Contains(all, ": rejected due to failed processing: boom") ||
+		strings.Contains(all, "The debug run failed") {
+		t.Errorf("outputs = %q, want the strict note with the rejection and no run failure", outs)
+	}
+}
+
 // A launch error from Check names the user's path.
 func TestLaunchErrorTranslated(t *testing.T) {
 	e := newEngine()

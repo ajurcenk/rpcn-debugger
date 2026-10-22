@@ -9,7 +9,9 @@ import (
 )
 
 // Code is a registry code: the stable, UPPER_SNAKE name of one kind of
-// Session failure (AD-3).
+// Session failure (AD-3), or of an outcome the engine reports to the Session
+// through an error that isn't one (STRICT_REJECTED: the Session ends the run
+// normally and it never reaches a frontend as an error).
 type Code string
 
 // The error registry. Every code has a fixed number (see Number), which is
@@ -39,6 +41,10 @@ const (
 	CodeCtxLost Code = "CTX_LOST"
 	// CodeLicenseRequired: an enterprise component needs a license (AD-22).
 	CodeLicenseRequired Code = "LICENSE_REQUIRED"
+	// CodeStrictRejected: under error_handling.strict, the output rejected
+	// the messages that failed a processing step. It ends a run normally:
+	// the debuggee behaved as it would in production.
+	CodeStrictRejected Code = "STRICT_REJECTED"
 )
 
 // numbers is the registry: code → stable DAP error id.
@@ -52,6 +58,7 @@ var numbers = map[Code]int{
 	CodeRunFailed:       1007,
 	CodeCtxLost:         1008,
 	CodeLicenseRequired: 1009,
+	CodeStrictRejected:  1010,
 }
 
 // Codes returns every registry code, in number order.

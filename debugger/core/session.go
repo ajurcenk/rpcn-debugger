@@ -363,6 +363,19 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	if ended {
 		return // Terminate: the frontend is gone.
 	}
+	if HasCode(err, CodeStrictRejected) {
+		s.mu.Lock()
+		tr := s.translate
+		s.mu.Unlock()
+		var ce Error
+		detail := err.Error()
+		if errors.As(err, &ce) {
+			detail = ce.Message
+		}
+		s.fe.Emit(Output{Category: "console", Text: "error_handling.strict: the output rejected the messages that failed a processing step, " +
+			"so they were not delivered (in production the input would see them nacked): " + TranslateText(tr, detail) + "\n"})
+		err = nil
+	}
 	switch {
 	case err == nil:
 		s.mu.Lock()

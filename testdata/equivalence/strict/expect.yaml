@@ -14,3 +14,4 @@ stops:
     frames: 1
 output:
   - 'error_handling.strict runs no later processor on the batch'
+  - 'error_handling.strict: the output rejected the messages that failed a processing step'

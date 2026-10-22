@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -230,10 +231,20 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 		return ctx.Err()
 	}
 	if prodErr != nil {
+		if r.conf.Strict && strings.Contains(prodErr.Error(), strictRejection) {
+			// Expected strict behaviour, not a failure: the output nacks the
+			// messages that failed a processing step.
+			return core.NewError(core.CodeStrictRejected, "%v", prodErr)
+		}
 		return fmt.Errorf("deliver the batch: %w", prodErr)
 	}
 	return stopErr
 }
+
+// strictRejection is how benthos v4.81 (internal/component/output/
+// async_writer.go) wraps each message a strict output rejects. Its
+// batch.Error type is internal (AD-2), so the text is what can be matched.
+const strictRejection = "rejected due to failed processing"
 
 // stop stops strm and waits for its Run to return.
 func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.CancelFunc) error {

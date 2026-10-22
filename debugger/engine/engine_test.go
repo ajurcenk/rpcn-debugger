@@ -752,3 +752,35 @@ output:
 		t.Error("a failed Check carries no translator")
 	}
 }
+
+// Entry 2.14: under error_handling.strict, the output rejecting a message that
+// failed a processing step ends the run with STRICT_REJECTED, not a delivery
+// failure; without strict the same pipeline delivers the failed message.
+func TestStrictRejection(t *testing.T) {
+	src := `
+input:
+  generate: {count: 1, interval: "", mapping: 'root = {"n": 1}'}
+pipeline:
+  processors:
+    - mapping: 'root = throw("boom")'
+output:
+  drop: {}
+`
+	for _, strict := range []bool{true, false} {
+		body := src
+		if strict {
+			body += "error_handling:\n  strict: true\n"
+		}
+		path := writePipeline(t, body)
+		a := engine.New(standard(), testLogger(), load)
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		err := a.Start(ctx, core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(nil, nil)}, &arriver{})
+		cancel()
+		switch {
+		case strict && !core.HasCode(err, core.CodeStrictRejected):
+			t.Errorf("strict: Start = %v, want STRICT_REJECTED", err)
+		case !strict && err != nil:
+			t.Errorf("not strict: Start = %v, want nil", err)
+		}
+	}
+}

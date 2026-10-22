@@ -122,13 +122,24 @@ hitl = false
 risk = "high"
 
 [[entry]]
+id = 14
+type = "story"
+title = "Strict-mode output rejection is not a run failure"
+description = "Under `error_handling.strict`, the output nacks messages that failed a processing step (benthos async_writer: `rejected due to failed processing`); the engine recognises that rejection and the Session reports it as an expected strict outcome in the Debug Console, not as `The debug run failed`, while delivered batches and `Nothing was delivered` behave as usual (found in 2.9)."
+verify = "The `strict` equivalence case's runs show the strict-rejection note and no `The debug run failed` line, still match the reference, and a non-strict processor error still reports as before."
+covers = ["CAP-11", "CAP-12"]
+after = [9]
+hitl = false
+risk = "low"
+
+[[entry]]
 id = 10
 type = "story"
 title = "Refactor sweep"
-description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1–9, 12 and 13; scope pushed out of another entry becomes a new entry."
+description = "Cleanup only, scoped when it starts from the plans and deferred review findings of entries 1–9 and 12–14; scope pushed out of another entry becomes a new entry."
 verify = "`task ci` is green with no behaviour change."
 covers = []
-after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13]
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14]
 hitl = false
 risk = "low"
 

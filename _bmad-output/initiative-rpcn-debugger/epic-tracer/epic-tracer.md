@@ -53,3 +53,4 @@ Not `output: real`/`none`, input classes or the group override (epic-safe-agains
 - Decision: a `processor_resources` entry referenced from inside an opaque concurrent parent is left unwrapped by the rewrite, with a warning. The rewrite sees `resource:` references statically. epic-concurrency lifts this (user, 2026-10-16).
 - Decision: the `resources[]` launch key belongs to epic-local-release (user, 2026-10-16).
 - Decision: two entries added from the 2.4 review (user, 2026-10-20): 12 "Launch lint errors at file lines" (after 4 and 5, built after 8) and 13 "Rewrite rejects undefined resource references" (after 5, built before 7). The refactor sweep (10) also waits on both.
+- Decision: entry 14 "Strict-mode output rejection is not a run failure" added from the 2.9 findings, as a new entry before the sweep, not sweep scope (user, 2026-10-22). The sweep (10) also waits on it.

@@ -45,3 +45,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-equivalence-corpus-and-scripted-step-over-driver-plan.md`
   summary: Under error_handling.strict, the output rejecting a failed message (normal strict behaviour) surfaces as "The debug run failed: deliver the batch: rejected due to failed processing: …" although the delivered batches match the reference; report it as an expected strict rejection (e.g. a console note naming the rejected messages) instead of a run failure — needs a user decision on wording, then a small entry.
   evidence: seen in the 2.9 strict corpus case (testdata/equivalence/strict); core.Session run reports the producer's error as RUN_FAILED output.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-strict-mode-output-rejection-is-not-a-run-failure-plan.md`
+  summary: Under strict, STRICT_REJECTED is chosen when the producer's error text contains "rejected due to failed processing"; in a mixed batch benthos folds a write failure of the passing messages into the same batch.Error, whose Error() is the first (rejection) message, so a real write failure would be reported as the expected strict note — for epic-safe-against-real-systems, when `output: real` lets the sink's write fail (distinguish via the rejected count vs the batch, or the sink's own error record).
+  evidence: benthos v4.81 internal/component/output/async_writer.go ~251-283 (rejectErr.Failed(i, werr)) and internal/batch/error.go:115; latent today because rpcn_debug_sink.WriteBatch always returns nil.

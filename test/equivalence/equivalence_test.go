@@ -342,6 +342,11 @@ func checkRun(e expect, ref Reference, res dapdrive.Result, log string, cmd dapd
 	if strings.Contains(output, string(core.CodeCtxLost)) {
 		errs = append(errs, fmt.Errorf("the Debug Console shows %s:\n%s", core.CodeCtxLost, output))
 	}
+	// A run that behaves as in production never fails (entry 2.14: a strict
+	// output rejection is an expected outcome, not a failure).
+	if strings.Contains(output, "The debug run failed") {
+		errs = append(errs, fmt.Errorf("the Debug Console shows a run failure:\n%s", output))
+	}
 	if len(res.Stops) == 0 || res.Stops[0].Reason != "entry" {
 		errs = append(errs, fmt.Errorf("the first stop is not the entry stop: %+v", res.Stops))
 	}
