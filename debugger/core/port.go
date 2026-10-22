@@ -29,6 +29,11 @@ type Arriver interface {
 	// stopped there. A non-nil error (code SESSION_ENDED, or ctx's error)
 	// means the session ended and the stepper must deliver nothing.
 	Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error
+	// Deliver reports one batch rpcn_debug_sink received, after
+	// output.processors, built from its deep copy (AD-19, AD-21). The sink
+	// calls it once per batch, in the order received; the Session emits it
+	// as Delivered.
+	Deliver(ctx context.Context, batch Batch)
 }
 
 // LineMap maps a stop position to the user's file (AD-6, AD-16). Position
@@ -64,6 +69,11 @@ type CheckResult struct {
 	// Warnings are the launch warnings for the user (opaque parents, stdio
 	// redirects), in rewrite order. The Session emits each as an Output.
 	Warnings []string
+	// Delivery is where Delivered Snapshots are positioned (AD-21): the
+	// user path output and the line of the top-level output key (0 when
+	// the pipeline has none). Only UserPath and Line are read; an empty
+	// UserPath means output.
+	Delivery Position
 }
 
 // Engine is the port the Session reaches the engine through. The adapter
@@ -76,7 +86,8 @@ type Engine interface {
 	Check(opts StartOptions) (CheckResult, error)
 	// Start captures one batch from the pipeline's input, keeps at most
 	// opts.MaxMessages of it, and steps it through the processors, calling
-	// a.Captured once and a.Arrive at every stop position. It returns nil
+	// a.Captured once, a.Arrive at every stop position and a.Deliver for
+	// every batch rpcn_debug_sink receives. It returns nil
 	// once the batch is delivered, an Error with code NOTHING_CAPTURED when
 	// the input yields nothing, or an error when ctx ends or the run fails.
 	Start(ctx context.Context, opts StartOptions, a Arriver) error

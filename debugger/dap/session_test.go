@@ -34,8 +34,11 @@ type fakeEngine struct {
 	slow      time.Duration // how long the nested tree's first child runs
 	batches   []core.Batch  // nil: one batch of one {"greeting":"hello"} message
 	delivered chan []core.Batch
-	ended     chan error
-	opts      chan core.StartOptions // nil: not recorded
+	// deliver are the batches reported through Deliver at the end; nil:
+	// the batches of the end stop.
+	deliver []core.Batch
+	ended   chan error
+	opts    chan core.StartOptions // nil: not recorded
 }
 
 func newFakeEngine() *fakeEngine {
@@ -61,7 +64,7 @@ func (e *fakeEngine) Check(core.StartOptions) (core.CheckResult, error) {
 	return core.CheckResult{Lines: fakeLines{
 		{0, 0}: {UserPath: "pipeline.processors[0]", Line: 13},
 		{0, 1}: {UserPath: "pipeline.processors", Line: 12},
-	}}, nil
+	}, Delivery: core.Position{UserPath: "output", Line: 20}}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, opts core.StartOptions, a core.Arriver) error {
@@ -92,8 +95,19 @@ func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	if err := a.Arrive(ctx, 0, 1, batches); err != nil {
 		return err
 	}
+	e.deliverAll(ctx, a, batches)
 	e.delivered <- batches
 	return nil
+}
+
+// deliverAll reports e.deliver, or else batches, through a.Deliver.
+func (e *fakeEngine) deliverAll(ctx context.Context, a core.Arriver, batches []core.Batch) {
+	if e.deliver != nil {
+		batches = e.deliver
+	}
+	for _, b := range batches {
+		a.Deliver(ctx, b)
+	}
 }
 
 // The nested tree: stepper 0 (pipeline.processors, key line 10) with a
@@ -132,6 +146,7 @@ func (e *fakeEngine) startNested(ctx context.Context, a core.Arriver) error {
 	if err := a.Arrive(ctx, 0, 2, atBatch(0, 2)); err != nil {
 		return err
 	}
+	e.deliverAll(ctx, a, atBatch(0, 2))
 	e.delivered <- atBatch(0, 2)
 	return nil
 }
@@ -159,7 +174,7 @@ func startServer(t *testing.T, eng core.Engine) *client {
 	go func() {
 		r := bufio.NewReader(outR)
 		for {
-			m, err := dap.ReadProtocolMessage(r)
+			m, err := readMessage(r)
 			if err != nil {
 				close(c.msgs)
 				return
@@ -169,6 +184,39 @@ func startServer(t *testing.T, eng core.Engine) *client {
 	}()
 	t.Cleanup(func() { _ = inW.Close() })
 	return c
+}
+
+// readMessage reads one DAP message. go-dap can't decode the custom
+// rpcnDelivered event, so it is decoded into the server's own type.
+func readMessage(r *bufio.Reader) (dap.Message, error) {
+	raw, err := dap.ReadBaseMessage(r)
+	if err != nil {
+		return nil, err
+	}
+	m, err := dap.DecodeProtocolMessage(raw)
+	if err == nil {
+		return m, nil
+	}
+	var ev deliveredEvent
+	if jerr := json.Unmarshal(raw, &ev); jerr == nil && ev.Type == "event" && ev.Event.Event == deliveredEventName {
+		return &ev, nil
+	}
+	return nil, err
+}
+
+// delivery reads the Debug Console text and the rpcnDelivered event of
+// delivered batch n.
+func (c *client) delivery(n int) (string, *deliveredEvent) {
+	c.t.Helper()
+	out := c.event("output").(*dap.OutputEvent)
+	if !strings.HasPrefix(out.Body.Output, fmt.Sprintf("Delivered batch %d ", n)) {
+		c.t.Errorf("output = %q, want delivered batch %d", out.Body.Output, n)
+	}
+	ev := c.event(deliveredEventName).(*deliveredEvent)
+	if ev.Body.Batch != n {
+		c.t.Errorf("rpcnDelivered batch = %d, want %d", ev.Body.Batch, n)
+	}
+	return out.Body.Output, ev
 }
 
 func (c *client) send(command string, args any) {
@@ -372,6 +420,9 @@ func TestF5StopThenResume(t *testing.T) {
 				}
 				c.send(command, map[string]any{"threadId": 1})
 				c.response(command, true)
+			}
+			if _, ev := c.delivery(1); len(ev.Body.Snapshot.Batches) != 1 || ev.Body.Snapshot.Position.UserPath != "output" {
+				t.Errorf("rpcnDelivered = %+v", ev.Body)
 			}
 			c.threadEvent("exited")
 			c.event("terminated")
@@ -765,6 +816,7 @@ func TestUnsupportedCommands(t *testing.T) {
 	}
 	c.send("continue", map[string]any{"threadId": 1})
 	c.response("continue", true)
+	c.delivery(1)
 	c.threadEvent("exited")
 	c.event("terminated")
 	c.send("disconnect", map[string]any{})

@@ -78,6 +78,7 @@ func TestNestedStack(t *testing.T) {
 	c.stepTo("stepOut", "step", 10, 1) // the pipeline's end stop
 	c.send("next", map[string]any{"threadId": 1})
 	c.response("next", true)
+	c.delivery(1)
 	c.threadEvent("exited")
 	c.event("terminated")
 

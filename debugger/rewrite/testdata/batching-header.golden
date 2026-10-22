@@ -1,0 +1,10 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+# warnings
+# delivery
+output line 9
+# lines

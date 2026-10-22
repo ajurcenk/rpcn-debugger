@@ -33,6 +33,7 @@ func render(p Plan, err error) string {
 	for _, w := range p.Warnings {
 		fmt.Fprintf(&b, "%s\n", w)
 	}
+	fmt.Fprintf(&b, "# delivery\n%s line %d\n", p.Delivery.UserPath, p.Delivery.Line)
 	b.WriteString("# lines\n")
 	keys := make([]stop, 0, len(p.stops))
 	for k := range p.stops {

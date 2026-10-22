@@ -33,6 +33,8 @@ rpcn_debug_stepper:
             resource: rl
         - resource: ${PROC:named}
 # warnings
+# delivery
+output line 34
 # lines
 (0, 0) pipeline.processors[0] line 11
 (0, 1) pipeline.processors[1] line 16

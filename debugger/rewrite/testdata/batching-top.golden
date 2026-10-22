@@ -1,0 +1,11 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+# warnings
+output.batching (line 9): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
+# delivery
+output line 7
+# lines

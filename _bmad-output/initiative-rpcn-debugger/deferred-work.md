@@ -33,3 +33,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-stepper-modes-nested-parents-and-ctx-propagation-plan.md`
   summary: Strict-mode skip has no end-to-end equivalence check (only the unit test against a hand port of ExecuteTryAll); cover it in the 2.9 corpus's strict-mode row.
   evidence: no strict sample under testdata/tracer/parents; strict-parents.yaml is only built in TestRewrittenConfigsBuild.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-delivery-at-rpcn-debug-sink-dry-run-plan.md`
+  summary: Reset the delivered-batch counters (core.Session.delivered and the DAP server's numbering) when Restart re-steps the batch, so numbering starts at 1 and "Nothing was delivered" is reported per run — for epic-edit-restart-replay (AD-20).
+  evidence: debugger/core/session.go `delivered` and debugger/dap/server.go `delivered atomic.Int64` are never reset; latent while Restart is NOT_SUPPORTED.

@@ -3,7 +3,7 @@
 // stop with a Script (Step In at every stop, say) until the run terminates,
 // and returns what each stop showed: its line, user path, frame stack with
 // repeat labels and batches, plus the Debug Console output and the
-// delivered batches.
+// delivered batches (from the rpcnDelivered events).
 //
 // It is a plain (non-test) package so other packages' tests can import it.
 // It speaks DAP as raw JSON, so it needs no go-dap (AD-3).
@@ -12,6 +12,7 @@ package dapdrive
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	_ "github.com/redpanda-data/connect/v4/public/components/all"
 
 	"github.com/ajurcenk/rpcn-debugger/debugger"
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 	"github.com/ajurcenk/rpcn-debugger/debugger/rewrite"
 )
 
@@ -123,9 +125,9 @@ type Result struct {
 	Stops []Stop
 	// Output holds the text of every output event, in order.
 	Output []string
-	// Delivered are the batches at the last stop when it is the end stop
-	// of a top-level entry: what rpcn_debug_sink receives (AD-21). It is
-	// nil when the run ended elsewhere (a Continue, say).
+	// Delivered are the batches rpcn_debug_sink received (AD-21), in
+	// order, from the rpcnDelivered events. It is nil when nothing was
+	// delivered.
 	Delivered []Batch
 }
 
@@ -351,18 +353,57 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			if _, err := c.request(string(cmd), map[string]any{"threadId": b.ThreadID}); err != nil {
 				return res, err
 			}
-		case "terminated":
-			if n := len(res.Stops); n > 0 {
-				if last := res.Stops[n-1]; last.End && len(last.Frames) == 1 {
-					res.Delivered = last.Batches
-				}
+		case "rpcnDelivered":
+			b, err := deliveredBatches(ev.Body, len(res.Delivered)+1)
+			if err != nil {
+				return res, err
 			}
+			res.Delivered = append(res.Delivered, b...)
+		case "terminated":
 			if _, err := c.request("disconnect", map[string]any{}); err != nil {
 				return res, err
 			}
 			return res, nil
 		}
 	}
+}
+
+// deliveredBatches decodes the body of rpcnDelivered event number n,
+// {batch, snapshot}, into the batches its AD-11 Snapshot holds, shown the
+// way the Variables view shows messages.
+func deliveredBatches(body json.RawMessage, n int) ([]Batch, error) {
+	var b struct {
+		Batch    int           `json:"batch"`
+		Snapshot core.Snapshot `json:"snapshot"`
+	}
+	if err := json.Unmarshal(body, &b); err != nil {
+		return nil, fmt.Errorf("bad rpcnDelivered body %s: %w", body, err)
+	}
+	if b.Batch != n {
+		return nil, fmt.Errorf("rpcnDelivered batch %d, want %d", b.Batch, n)
+	}
+	var out []Batch
+	for _, sb := range b.Snapshot.Batches {
+		batch := Batch{}
+		for _, m := range sb.Messages {
+			msg := Message{Error: m.Error, Metadata: map[string]Meta{}}
+			if m.Content.Text != nil {
+				msg.Content = *m.Content.Text
+			} else {
+				msg.Content = base64.StdEncoding.EncodeToString(m.Content.Raw)
+			}
+			for _, md := range m.Metadata {
+				v := md.Value
+				if md.Text != nil {
+					v = *md.Text
+				}
+				msg.Metadata[md.Key] = Meta{Type: string(md.Type), Value: v}
+			}
+			batch = append(batch, msg)
+		}
+		out = append(out, batch)
+	}
+	return out, nil
 }
 
 // stop reads the stack and the innermost frame's batches of the stop on

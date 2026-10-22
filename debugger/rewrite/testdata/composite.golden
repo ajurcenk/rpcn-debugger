@@ -32,6 +32,8 @@ rpcn_debug_stepper:
 input.broker.inputs[0].processors (line 8): this processor list runs during capture, not stepped
 output.broker.outputs[0].processors (line 21): this processor list is not run in dry-run
 output.broker.outputs[1].switch.cases[0].output.processors (line 28): this processor list is not run in dry-run
+# delivery
+output line 17
 # lines
 (0, 0) input.processors[0] line 11
 (0, 1) input.processors line 10

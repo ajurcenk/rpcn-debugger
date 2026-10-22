@@ -34,6 +34,10 @@ type Plan struct {
 	// Strict is error_handling.strict, for the step stream (AD-4(b)). It is
 	// false when strict is an interpolation (then only steppers get it).
 	Strict bool
+	// Delivery is where rpcn_debug_sink's Delivered Snapshots are
+	// positioned (AD-21): the user path output and the line of the
+	// top-level output key, or 0 when there is none.
+	Delivery core.Position
 
 	stops map[stop]core.Position
 	// paths and bases back Translate (see walker).
@@ -159,12 +163,20 @@ func Rewrite(src []byte) (Plan, error) {
 		}
 	}
 	w.warnNestedLists(input, "input", "runs during capture, not stepped")
-	if out := value(root, "output"); out != nil {
+	plan.Delivery = core.Position{UserPath: "output"}
+	if k, out := field(root, "output"); out != nil {
+		plan.Delivery.Line = k.Line
 		w.warnStdout(out, "output")
 		w.warnNestedLists(out, "output", "is not run in dry-run")
+		w.warnBatching(out, "output")
 	}
 	if res := value(root, "output_resources"); res != nil {
 		w.warnStdout(res, "output_resources")
+		if res.Kind == yaml.SequenceNode {
+			for i, e := range res.Content {
+				w.warnBatching(e, resourcePath("output_resources", i, e))
+			}
+		}
 	}
 
 	// metrics, tracer, http and logger are dropped (AD-5): only the input,

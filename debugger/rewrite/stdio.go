@@ -29,6 +29,68 @@ func (w *walker) warnStdout(n *yaml.Node, path string) {
 	})
 }
 
+// warnBatching warns about every non-null batching field of an output in
+// the output block n at path, the children of composite outputs (broker,
+// switch, fallback, retry, …) included: rpcn_debug_sink records the batches
+// as received and applies no output batching (AD-21). Only an output's own
+// batching field counts, not a user map key that happens to be named
+// batching (e.g. an HTTP header).
+func (w *walker) warnBatching(n *yaml.Node, path string) {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		p := path + "." + k.Value
+		switch k.Value {
+		case "label", "processors":
+		case "batching":
+			w.batchingField(k, v, p)
+		default:
+			w.outputConfig(v, p)
+		}
+	}
+}
+
+// outputConfig checks the config v of the output component at path: its own
+// batching field, then the output blocks it holds.
+func (w *walker) outputConfig(v *yaml.Node, path string) {
+	switch {
+	case v == nil:
+	case v.Kind == yaml.SequenceNode: // fallback: a list of outputs
+		for i, o := range v.Content {
+			w.warnBatching(o, child(path, i))
+		}
+	case v.Kind == yaml.MappingNode:
+		for i := 0; i+1 < len(v.Content); i += 2 {
+			k, c := v.Content[i], v.Content[i+1]
+			p := path + "." + k.Value
+			switch {
+			case k.Value == "batching":
+				w.batchingField(k, c, p)
+			case k.Value == "outputs" && c.Kind == yaml.SequenceNode:
+				for j, o := range c.Content {
+					w.warnBatching(o, child(p, j))
+				}
+			case k.Value == "output" && c.Kind == yaml.MappingNode:
+				w.warnBatching(c, p)
+			case k.Value == "cases" && c.Kind == yaml.SequenceNode:
+				for j, cs := range c.Content {
+					if o := value(cs, "output"); o != nil {
+						w.warnBatching(o, child(p, j)+".output")
+					}
+				}
+			}
+		}
+	}
+}
+
+func (w *walker) batchingField(k, v *yaml.Node, path string) {
+	if !isNull(v) {
+		w.warn(k.Line, path, "output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ")
+	}
+}
+
 // find returns the first key named name in n (outside processor lists) and
 // its user path.
 func find(n *yaml.Node, path, name string) (*yaml.Node, string) {
@@ -48,6 +110,11 @@ func find(n *yaml.Node, path, name string) (*yaml.Node, string) {
 // order, skipping processors lists (they hold no inputs or outputs). It
 // stops when fn returns true, and reports whether it did.
 func walkKeys(n *yaml.Node, path string, fn func(k *yaml.Node, path string) bool) bool {
+	return walkPairs(n, path, func(k, _ *yaml.Node, p string) bool { return fn(k, p) })
+}
+
+// walkPairs is walkKeys with each key's value.
+func walkPairs(n *yaml.Node, path string, fn func(k, v *yaml.Node, path string) bool) bool {
 	if n == nil {
 		return false
 	}
@@ -59,13 +126,13 @@ func walkKeys(n *yaml.Node, path string, fn func(k *yaml.Node, path string) bool
 				continue
 			}
 			p := path + "." + k.Value
-			if fn(k, p) || walkKeys(n.Content[i+1], p, fn) {
+			if fn(k, n.Content[i+1], p) || walkPairs(n.Content[i+1], p, fn) {
 				return true
 			}
 		}
 	case yaml.SequenceNode:
 		for i, c := range n.Content {
-			if walkKeys(c, child(path, i), fn) {
+			if walkPairs(c, child(path, i), fn) {
 				return true
 			}
 		}

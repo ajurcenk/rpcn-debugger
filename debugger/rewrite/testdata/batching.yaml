@@ -1,0 +1,31 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  broker:
+    batching:
+      count: 5
+    outputs:
+      - drop: {}
+        processors:
+          - mapping: 'root = this'
+      - switch:
+          cases:
+            - output:
+                drop: {}
+                batching: {count: 2, period: 1s}
+      - drop: {}
+        batching: ~
+
+output_resources:
+  - label: other
+    drop: {}
+    batching:
+      count: 3

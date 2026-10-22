@@ -143,7 +143,9 @@ type Session struct {
 	lookup      func(string) (string, bool) // env, then envFile, then the process (AD-22)
 	lines       LineMap
 	translate   Translate
-	runDone     bool // the run emitted Terminated: Log sends nothing more
+	delivery    Position // where Delivered Snapshots are positioned (AD-21)
+	delivered   int      // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
+	runDone     bool     // the run emitted Terminated: Log sends nothing more
 	launched    bool
 	configured  bool
 	breakpoints map[string][]int
@@ -297,6 +299,7 @@ func (s *Session) launch(c Launch) error {
 
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
+	s.delivery = res.Delivery
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -361,6 +364,13 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 		return // Terminate: the frontend is gone.
 	}
 	switch {
+	case err == nil:
+		s.mu.Lock()
+		none := s.delivered == 0
+		s.mu.Unlock()
+		if none {
+			s.fe.Emit(Output{Category: "console", Text: "Nothing was delivered to dry-run output\n"})
+		}
 	case HasCode(err, CodeNothingCaptured):
 		s.fe.Emit(Output{Category: "console", Text: err.Error() + "\n"})
 	case err != nil:
@@ -400,6 +410,28 @@ func (s *Session) Captured(kept, total int) {
 		return
 	}
 	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", kept, total)})
+}
+
+// Deliver implements Arriver: it emits batch as one Delivered event, in the
+// order the sink received it (AD-21). Its Snapshot is positioned at the
+// user path output, on the line of the top-level output key, on the root
+// thread; it has no frame or stepper (FrameID 0, StepperID -1).
+func (s *Session) Deliver(_ context.Context, batch Batch) {
+	if batch.Messages == nil {
+		batch.Messages = []Message{}
+	}
+	s.mu.Lock()
+	if s.ended {
+		s.mu.Unlock()
+		return
+	}
+	s.delivered++
+	pos := Position{ThreadID: ThreadID, StepperID: -1, UserPath: s.delivery.UserPath, File: s.pipeline, Line: s.delivery.Line}
+	s.mu.Unlock()
+	if pos.UserPath == "" {
+		pos.UserPath = "output"
+	}
+	s.fe.Emit(Delivered{Snapshot: Snapshot{SchemaVersion: SchemaVersion, Position: pos, Batches: []Batch{batch}}})
 }
 
 // Translator returns the Translate of the launched pipeline, or nil before

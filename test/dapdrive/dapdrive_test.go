@@ -416,3 +416,158 @@ output:
 	}
 	sameAsReference(t, pipeline, res.Delivered)
 }
+
+// runScript runs pipeline with script.
+func runScript(t *testing.T, pipeline string, script Script) Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := Run(ctx, Options{Pipeline: pipeline, Script: script})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func writeYAML(t *testing.T, src string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pipeline.yaml")
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// Continue on the tracer sample: one delivered batch in the Debug Console,
+// with its content and metadata, and one rpcnDelivered event (AD-21).
+func TestDeliveredTracer(t *testing.T) {
+	pipeline := "../../testdata/tracer/pipeline.yaml"
+	res := runScript(t, pipeline, Always(Continue))
+	got := outputs(res, "Delivered")
+	want := "Delivered batch 1 (1 messages) to dry-run output\n" +
+		`  message 0: {"doubled":2,"greeting":"hello","n":1}` + "\n" +
+		"    __rpcn_internal = x (internal)\n" +
+		"    kafka_key = k1\n" +
+		"    source = tracer\n"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("delivered output = %q, want %q", got, want)
+	}
+	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 1 {
+		t.Fatalf("delivered = %+v, want one batch of one message", res.Delivered)
+	}
+	if m := res.Delivered[0][0].Metadata["kafka_key"]; m != (Meta{"bytes", "k1"}) {
+		t.Errorf("kafka_key = %+v", m)
+	}
+	if n := len(outputs(res, "Nothing was delivered")); n != 0 {
+		t.Errorf("%d nothing-delivered notes", n)
+	}
+	sameAsReference(t, pipeline, res.Delivered)
+}
+
+// Continue on group_by: one Delivered entry per output batch.
+func TestDeliveredGroupBy(t *testing.T) {
+	pipeline := filepath.Join(parents, "group_by.yaml")
+	res := runScript(t, pipeline, Always(Continue))
+	if got := outputs(res, "Delivered batch"); len(got) != 2 ||
+		!strings.HasPrefix(got[0], "Delivered batch 1 ") || !strings.HasPrefix(got[1], "Delivered batch 2 ") {
+		t.Errorf("delivered output = %q, want batches 1 and 2", got)
+	}
+	sameAsReference(t, pipeline, res.Delivered)
+}
+
+// A message error survives to the output: its error line shows under it.
+func TestDeliveredError(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root.n = 1'
+pipeline:
+  processors:
+    - mapping: 'root = throw("boom")'
+output:
+  drop: {}
+`)
+	res := runScript(t, pipeline, Always(Continue))
+	got := outputs(res, "Delivered")
+	if len(got) != 1 || !strings.Contains(got[0], "\n    error: failed assignment (line 1): boom\n") {
+		t.Errorf("delivered output = %q, want the error line", got)
+	}
+	sameAsReference(t, pipeline, res.Delivered)
+}
+
+// Every message deleted: nothing delivered, a note, and a clean end.
+func TestNothingDelivered(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root.n = 1'
+pipeline:
+  processors:
+    - mapping: 'root = deleted()'
+output:
+  drop: {}
+`)
+	res := runScript(t, pipeline, Always(Continue))
+	if res.Delivered != nil {
+		t.Errorf("delivered = %+v, want nothing", res.Delivered)
+	}
+	if got := outputs(res, "Nothing was delivered"); len(got) != 1 {
+		t.Errorf("outputs = %q, want one nothing-delivered note", res.Output)
+	}
+}
+
+// An output with batching warns once at launch; the delivery is unbatched.
+func TestBatchingWarning(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: 'root.n = counter()'
+output:
+  drop: {}
+  batching: {count: 5}
+`)
+	res := runScript(t, pipeline, Always(Continue))
+	want := "Warning: output.batching (line 10): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ\n"
+	if got := outputs(res, "Warning: output.batching"); len(got) != 1 || got[0] != want {
+		t.Errorf("warnings = %q, want %q", got, want)
+	}
+	// The captured batch of 3 is delivered as is: no output batching
+	// (count 5 would have held it until the stream closed).
+	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 3 {
+		t.Errorf("delivered = %+v, want the one batch of 3", res.Delivered)
+	}
+
+	plain := runScript(t, filepath.Join(parents, "for_each.yaml"), Always(Continue))
+	if got := outputs(plain, "Warning: "); len(got) != 0 {
+		t.Errorf("warnings without batching = %q", got)
+	}
+}
+
+// Large content: the console shows the first 4 KiB, the event all of it.
+func TestDeliveredLarge(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = "x".repeat(10240)'
+output:
+  drop: {}
+`)
+	res := runScript(t, pipeline, Always(Continue))
+	got := outputs(res, "Delivered")
+	want := "Delivered batch 1 (1 messages) to dry-run output\n  message 0: " + strings.Repeat("x", 4096) + "… 6144 more bytes\n"
+	if len(got) != 1 || got[0] != want {
+		t.Errorf("delivered output = %.120q…", got)
+	}
+	if len(res.Delivered) != 1 || len(res.Delivered[0][0].Content) != 10240 {
+		t.Errorf("event content is not the full 10 KiB")
+	}
+}

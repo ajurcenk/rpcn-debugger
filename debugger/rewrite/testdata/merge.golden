@@ -58,6 +58,8 @@ rpcn_debug_stepper:
             request_map: 'root = this'
             result_map: 'root.b = this'
 # warnings
+# delivery
+output line 31
 # lines
 (0, 0) input.processors[0] line 7
 (0, 1) input.processors line 6

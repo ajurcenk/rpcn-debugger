@@ -10,4 +10,6 @@ input_resources:
         interval: ""
         mapping: 'root = {}'
 # warnings
+# delivery
+output line 14
 # lines

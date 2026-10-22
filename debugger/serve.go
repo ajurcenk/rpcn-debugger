@@ -82,5 +82,6 @@ func loadPipeline(path string) (engine.Configs, core.LineMap, error) {
 		Warnings:   plan.Warnings,
 		Strict:     plan.Strict,
 		Translator: plan,
+		Delivery:   plan.Delivery,
 	}, plan, nil
 }

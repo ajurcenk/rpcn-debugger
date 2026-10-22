@@ -35,6 +35,9 @@ type Configs struct {
 	// Translator maps engine paths and Bloblang lines back to the user's
 	// file (AD-6). Check returns it in its CheckResult; it may be nil.
 	Translator core.Translate
+	// Delivery positions the Delivered Snapshots: the top-level output
+	// key (AD-21). Check returns it in its CheckResult.
+	Delivery core.Position
 }
 
 // Loader reads and rewrites a pipeline file.
@@ -78,7 +81,7 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	if _, _, err := r.configureStep(); err != nil {
 		return failed, fmt.Errorf("%s: %w", pipeline, err)
 	}
-	return core.CheckResult{Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings}, nil
+	return core.CheckResult{Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings, Delivery: conf.Delivery}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream,
@@ -116,7 +119,7 @@ type run struct {
 }
 
 func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr core.Arriver) (*run, error) {
-	r := &run{env: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{}}
+	r := &run{env: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr}}
 	if err := registerStepper(r.env, arr); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
@@ -251,3 +254,5 @@ func (nopArriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error {
 	return errors.New("not running")
 }
+
+func (nopArriver) Deliver(context.Context, core.Batch) {}

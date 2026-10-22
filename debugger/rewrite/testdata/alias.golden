@@ -15,6 +15,8 @@ rpcn_debug_stepper:
     processors:
         - mapping: 'root = 2'
 # warnings
+# delivery
+output line 13
 # lines
 (0, 0) pipeline.processors[0] line 11
 (0, 1) pipeline.processors line 10

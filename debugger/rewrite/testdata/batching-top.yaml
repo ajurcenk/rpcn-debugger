@@ -1,0 +1,9 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+output:
+  drop: {}
+  batching: {count: 5}

@@ -3,6 +3,7 @@ package dap
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/google/go-dap"
 
@@ -62,6 +65,8 @@ type server struct {
 
 	mu  sync.Mutex // guards seq and every write to w
 	seq int
+
+	delivered atomic.Int64 // Delivered batches so far, numbering them from 1
 }
 
 func (s *server) run() error {
@@ -413,18 +418,126 @@ func (f frontend) Emit(ev core.Event) {
 		m.Body.Category = "console"
 		m.Body.Output = "retry " + e.UserPath + " " + e.RepeatLabel + "\n"
 		msg = m
+	case core.Delivered:
+		f.delivered(e)
+		return
 	case core.Terminated:
 		msg = &dap.TerminatedEvent{Event: f.s.event("terminated")}
 	default:
 		// StepStarted and StepFinished (the repeat label shows in the stack
-		// frame names instead), StatementStepped, BreakpointResolved,
-		// Delivered.
+		// frame names instead), StatementStepped, BreakpointResolved.
 		f.s.log.Debug("Session event without a DAP rendering", "event", fmt.Sprintf("%T", ev))
 		return
 	}
 	if err := f.s.send(msg); err != nil {
 		f.s.log.Warn("sending DAP event failed", "error", err)
 	}
+}
+
+// deliveredEventName is the custom DAP event that carries each delivered
+// batch as data. VS Code ignores events it doesn't know; tooling (the test
+// driver, a future webview, AD-12) reads it instead of the console text.
+const deliveredEventName = "rpcnDelivered"
+
+// deliveredEvent is the rpcnDelivered event. go-dap has no type for a
+// custom event, so it embeds the generic dap.Event and adds a body.
+type deliveredEvent struct {
+	dap.Event
+	Body deliveredBody `json:"body"`
+}
+
+// deliveredBody is the rpcnDelivered body: the batch's number in the
+// session, from 1, and its AD-11 Snapshot.
+type deliveredBody struct {
+	Batch    int           `json:"batch"`
+	Snapshot core.Snapshot `json:"snapshot"`
+}
+
+// delivered renders one Delivered event twice (AD-21): as Debug Console
+// text, and as the rpcnDelivered event with the full Snapshot.
+func (f frontend) delivered(e core.Delivered) {
+	n := int(f.s.delivered.Add(1))
+	out := &dap.OutputEvent{Event: f.s.event("output")}
+	out.Body.Category = "console"
+	out.Body.Output = deliveredText(n, e.Snapshot)
+	if p := e.Snapshot.Position; p.File != "" && p.Line > 0 {
+		out.Body.Source = &dap.Source{Name: filepath.Base(p.File), Path: p.File}
+		out.Body.Line = p.Line
+	}
+	ev := &deliveredEvent{Event: f.s.event(deliveredEventName), Body: deliveredBody{Batch: n, Snapshot: e.Snapshot}}
+	for _, msg := range []dap.Message{out, ev} {
+		if err := f.s.send(msg); err != nil {
+			f.s.log.Warn("sending DAP event failed", "error", err)
+			return
+		}
+	}
+}
+
+// maxDeliveredContent bounds each message's content in the Debug Console;
+// the rpcnDelivered event always carries all of it.
+const maxDeliveredContent = 4096
+
+// deliveredText renders delivered batch n for the Debug Console: a header,
+// then each message's content (text, or base64 when it isn't UTF-8), its
+// metadata as key = value lines (internal keys marked) and its error.
+func deliveredText(n int, snap core.Snapshot) string {
+	var b strings.Builder
+	for _, batch := range snap.Batches {
+		fmt.Fprintf(&b, "Delivered batch %d (%d messages) to dry-run output\n", n, len(batch.Messages))
+		for _, m := range batch.Messages {
+			content, b64, more := consoleContent(m.Content)
+			label := fmt.Sprintf("  message %d", m.Index)
+			if b64 {
+				label += " (base64)"
+			}
+			b.WriteString(label + ": " + strings.ReplaceAll(content, "\n", "\n    "))
+			if more > 0 {
+				fmt.Fprintf(&b, "… %d more bytes", more)
+			}
+			b.WriteString("\n")
+			for _, md := range m.Metadata {
+				value := md.Value
+				if md.Text != nil {
+					value = *md.Text
+				} else if md.Type == core.MetaBytes {
+					value += " (base64)"
+				}
+				line := "    " + md.Key + " = " + value
+				if md.Internal {
+					line += " (internal)"
+				}
+				b.WriteString(strings.ReplaceAll(line, "\n", "\n      ") + "\n")
+			}
+			if m.Error != "" {
+				b.WriteString("    error: " + m.Error + "\n")
+			}
+		}
+	}
+	return b.String()
+}
+
+// consoleContent returns c's text (or its base64, with isBase64 set when it
+// isn't UTF-8), cut to its first maxDeliveredContent bytes, and how many
+// bytes the cut left out. A text cut never splits a character.
+func consoleContent(c core.Content) (text string, isBase64 bool, more int) {
+	raw := c.Raw
+	if c.Text != nil {
+		raw = []byte(*c.Text)
+	}
+	cut := len(raw)
+	if cut > maxDeliveredContent {
+		cut = maxDeliveredContent
+		if c.Text != nil {
+			for cut > 0 && !utf8.RuneStart(raw[cut]) {
+				cut--
+			}
+		}
+	}
+	more = len(raw) - cut
+	if c.Text != nil {
+		return string(raw[:cut]), false, more
+	}
+	return base64.StdEncoding.EncodeToString(raw[:cut]), true, more
 }
 
 // skippedText tells the user which messages skipped a child, and why. A

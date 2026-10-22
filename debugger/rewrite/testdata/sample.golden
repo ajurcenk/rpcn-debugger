@@ -22,6 +22,8 @@ rpcn_debug_stepper:
             root = this
             root.doubled = this.n * 2
 # warnings
+# delivery
+output line 20
 # lines
 (0, 0) pipeline.processors[0] line 16
 (0, 1) pipeline.processors line 15

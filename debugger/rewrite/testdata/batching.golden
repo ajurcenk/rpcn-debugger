@@ -1,0 +1,31 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+output_resources:
+    - label: other
+      drop: {}
+      batching:
+        count: 3
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9]
+    processors:
+        - mapping: 'root = this'
+# warnings
+output.broker.outputs[0].processors (line 17): this processor list is not run in dry-run
+output.broker.batching (line 13): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
+output.broker.outputs[1].switch.cases[0].output.batching (line 23): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
+output_resources.other.batching (line 30): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
+# delivery
+output line 11
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors line 8

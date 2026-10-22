@@ -1,0 +1,13 @@
+# A user map key named batching (an HTTP header) is not output batching:
+# no warning.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+output:
+  http_client:
+    url: http://localhost:1/x
+    headers:
+      batching: "on"

@@ -51,6 +51,8 @@ rpcn_debug_stepper:
                     processors:
                         - mapping: 'root.interpolated = true'
 # warnings
+# delivery
+output line 22
 # lines
 (0, 0) pipeline.processors[0] line 9
 (0, 1) pipeline.processors[1] line 11

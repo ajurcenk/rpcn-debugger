@@ -5,4 +5,6 @@ generate:
     mapping: 'root = 1'
 # resources
 # warnings
+# delivery
+output line 11
 # lines

@@ -36,15 +36,25 @@ type skipCall struct {
 // site per stepper id, like a parent frame's counter, and gives each entry
 // Site.Messages = messages.
 type spyArriver struct {
-	mu       sync.Mutex
-	messages int
-	sites    map[int]*core.Site
-	labels   []string
-	attempts int
-	skips    []skipCall
-	arrives  []int // childIndex of each Arrive
-	threads  []int // the thread on top of ctx at each Arrive
-	inner    core.Arriver
+	mu        sync.Mutex
+	messages  int
+	sites     map[int]*core.Site
+	labels    []string
+	attempts  int
+	skips     []skipCall
+	arrives   []int // childIndex of each Arrive
+	threads   []int // the thread on top of ctx at each Arrive
+	delivered []core.Batch
+	inner     core.Arriver
+}
+
+func (a *spyArriver) Deliver(ctx context.Context, b core.Batch) {
+	a.mu.Lock()
+	a.delivered = append(a.delivered, b)
+	a.mu.Unlock()
+	if a.inner != nil {
+		a.inner.Deliver(ctx, b)
+	}
 }
 
 func (a *spyArriver) Captured(int, int) {}

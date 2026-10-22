@@ -165,6 +165,7 @@ func TestServeTracerSample(t *testing.T) {
 					c.send(resume, map[string]any{"threadId": 1})
 					c.next("response", resume)
 				}
+				c.delivered(`{"doubled":2,"greeting":"hello","n":1}`)
 				c.next("event", "thread")
 				c.next("event", "terminated")
 			}
@@ -381,10 +382,36 @@ func continueToEnd(t *testing.T, c *wire) {
 	t.Helper()
 	c.send("continue", map[string]any{"threadId": 1})
 	c.next("response", "continue")
+	c.delivered("")
 	c.next("event", "thread")
 	c.next("event", "terminated")
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
+}
+
+// delivered reads the one delivered batch's Debug Console text and its
+// rpcnDelivered event; with content set, the batch's one message must
+// have it.
+func (c *wire) delivered(content string) {
+	c.t.Helper()
+	var out struct {
+		Output string `json:"output"`
+	}
+	_ = json.Unmarshal(c.next("event", "output").Body, &out)
+	if !strings.HasPrefix(out.Output, "Delivered batch 1 (1 messages) to dry-run output\n") {
+		c.t.Errorf("output = %q, want delivered batch 1", out.Output)
+	}
+	var ev struct {
+		Batch    int           `json:"batch"`
+		Snapshot core.Snapshot `json:"snapshot"`
+	}
+	_ = json.Unmarshal(c.next("event", "rpcnDelivered").Body, &ev)
+	if ev.Batch != 1 || len(ev.Snapshot.Batches) != 1 || len(ev.Snapshot.Batches[0].Messages) != 1 {
+		c.t.Fatalf("rpcnDelivered = %+v, want batch 1 of one message", ev)
+	}
+	if got := string(ev.Snapshot.Batches[0].Messages[0].Content.Raw); content != "" && got != content {
+		c.t.Errorf("delivered content = %s, want %s", got, content)
+	}
 }
 
 // F5 on the nested demo stops before the first input.processors child,
@@ -438,6 +465,7 @@ func TestServeNestedStepping(t *testing.T) {
 	c.stepTo("next", 35, 1)    // output.processors' end stop
 	c.send("next", map[string]any{"threadId": 1})
 	c.next("response", "next")
+	c.delivered(`{"branched":10,"case":"one","from_input":true,"from_output":true,"n":1}`)
 	c.next("event", "thread")
 	c.next("event", "terminated")
 	c.send("disconnect", map[string]any{})
@@ -616,7 +644,7 @@ output:
 				outputs = append(outputs, body)
 			case m.Type == "event" && m.Event == "terminated":
 				done = true
-			case m.Type == "event" && m.Event == "thread":
+			case m.Type == "event" && (m.Event == "thread" || m.Event == "rpcnDelivered"):
 			default:
 				t.Fatalf("unexpected %+v", m)
 			}
@@ -632,7 +660,7 @@ output:
 		if strings.Contains(o.Output, "Input type") || strings.Contains(o.Output, "now active") {
 			t.Errorf("Info chatter reached the Debug Console: %q", o.Output)
 		}
-		if strings.Contains(o.Output, "boom") {
+		if strings.Contains(o.Output, "boom") && !strings.HasPrefix(o.Output, "Delivered") {
 			errLine = o.Output
 			if o.Category != "stderr" {
 				t.Errorf("error output category = %q, want stderr", o.Category)

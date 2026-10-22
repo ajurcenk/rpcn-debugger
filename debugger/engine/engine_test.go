@@ -36,7 +36,7 @@ func load(path string) (engine.Configs, core.LineMap, error) {
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict}, p, nil
+	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict, Delivery: p.Delivery}, p, nil
 }
 
 func writePipeline(t *testing.T, src string) string {
@@ -69,6 +69,14 @@ type arriver struct {
 	captured [][2]int // kept, total
 	block    chan struct{}
 	seen     chan struct{}
+	// delivered are the batches the sink reported, in order.
+	delivered []core.Batch
+}
+
+func (a *arriver) Deliver(_ context.Context, b core.Batch) {
+	a.mu.Lock()
+	a.delivered = append(a.delivered, b)
+	a.mu.Unlock()
 }
 
 func (a *arriver) Captured(kept, total int) {
@@ -169,6 +177,95 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	}
 	if e := meta["__rpcn_internal"]; e.Value != "x" || !e.Internal {
 		t.Errorf("__rpcn_internal = %+v, want internal", e)
+	}
+
+	// The sink reports the one delivered batch (AD-21), positioned at the
+	// top-level output key.
+	if res.Delivery.UserPath != "output" || res.Delivery.Line != 20 {
+		t.Errorf("Delivery = %+v, want output at line 20", res.Delivery)
+	}
+	if len(arr.delivered) != 1 || len(arr.delivered[0].Messages) != 1 ||
+		!strings.Contains(string(arr.delivered[0].Messages[0].Content.Raw), `"doubled":2`) {
+		t.Fatalf("delivered = %+v, want the mapped message", arr.delivered)
+	}
+	dm := map[string]core.Meta{}
+	for _, e := range arr.delivered[0].Messages[0].Metadata {
+		dm[e.Key] = e
+	}
+	if dm["source"].Value != "tracer" || !dm["__rpcn_internal"].Internal {
+		t.Errorf("delivered metadata = %+v", dm)
+	}
+}
+
+// The sink reports every batch it receives, in order, after
+// output.processors (AD-21), and each report is a deep copy (AD-19).
+func TestSinkDeliversInOrder(t *testing.T) {
+	path := writePipeline(t, `
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: 'root.n = counter()'
+pipeline:
+  processors:
+    - group_by:
+        - check: 'this.n == 2'
+    - mapping: 'root = this'
+output:
+  processors:
+    - mapping: 'root = this.merge({"from_output": true})'
+    - mapping: 'root = if this.n == 3 { throw("boom") } else { this }'
+  drop: {}
+`)
+	a := engine.New(standard(), testLogger(), load)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	arr := &arriver{}
+	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, b := range arr.delivered {
+		var msgs []string
+		for _, m := range b.Messages {
+			msgs = append(msgs, fmt.Sprintf("%d:%s:%s", m.Index, m.Content.Raw, m.Error))
+		}
+		got = append(got, strings.Join(msgs, " | "))
+	}
+	// group_by puts the matching group first, then the rest.
+	want := []string{
+		`0:{"from_output":true,"n":2}:`,
+		`0:{"from_output":true,"n":1}: | 1:{"from_output":true,"n":3}:failed assignment (line 1): boom`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("delivered:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A run whose messages are all deleted delivers nothing.
+func TestSinkNothingDelivered(t *testing.T) {
+	path := writePipeline(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+pipeline:
+  processors:
+    - mapping: 'root = deleted()'
+output:
+  drop: {}
+`)
+	a := engine.New(standard(), testLogger(), load)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	arr := &arriver{}
+	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+		t.Fatal(err)
+	}
+	if len(arr.delivered) != 0 {
+		t.Errorf("delivered = %+v, want nothing", arr.delivered)
 	}
 }
 

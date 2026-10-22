@@ -22,6 +22,8 @@ rpcn_debug_stepper:
         - mapping: 'root = this'
 # warnings
 pipeline.processors[0].openai_chat_completion (line 9): openai_chat_completion is not a parent processor the debugger knows, so it runs as one step and nothing inside it is stepped
+# delivery
+output line 17
 # lines
 (0, 0) pipeline.processors[0] line 9
 (0, 1) pipeline.processors[1] line 15
