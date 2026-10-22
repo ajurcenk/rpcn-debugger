@@ -5,7 +5,7 @@ parent: initiative-rpcn-debugger
 covers: [CAP-1, CAP-3, CAP-4, CAP-11, CAP-12]
 after: []
 assignee: ""
-status: in-progress
+status: done
 risk: high
 ---
 
@@ -54,3 +54,4 @@ Not `output: real`/`none`, input classes or the group override (epic-safe-agains
 - Decision: the `resources[]` launch key belongs to epic-local-release (user, 2026-10-16).
 - Decision: two entries added from the 2.4 review (user, 2026-10-20): 12 "Launch lint errors at file lines" (after 4 and 5, built after 8) and 13 "Rewrite rejects undefined resource references" (after 5, built before 7). The refactor sweep (10) also waits on both.
 - Decision: entry 14 "Strict-mode output rejection is not a run failure" added from the 2.9 findings, as a new entry before the sweep, not sweep scope (user, 2026-10-22). The sweep (10) also waits on it.
+- Closed 2026-10-22 (user): all 14 entries done, and Done when 1–6 met. The user's 2.11 acceptance checklist passed in VS Code with the installed .vsix, `task ci` is green, and `main` is pushed to github.com/ajurcenk/rpcn-debugger. Items left for later epics are in deferred-work.md.
