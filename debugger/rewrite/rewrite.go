@@ -32,8 +32,15 @@ type Plan struct {
 	// Warnings are the launch warnings for the user, in rewrite order.
 	Warnings []string
 	// Strict is error_handling.strict, for the step stream (AD-4(b)). It is
-	// false when strict is an interpolation (then only steppers get it).
+	// false when strict is an interpolation: StrictExpr then holds it.
 	Strict bool
+	// StrictExpr is error_handling.strict verbatim (as a YAML scalar, with
+	// its quoting) when it is a ${VAR} interpolation, and "" otherwise. The
+	// rewrite has no env (AD-22), so the engine resolves it for the step
+	// stream; the steppers get it verbatim and resolve it themselves.
+	StrictExpr string
+	// StrictLine is the file line of the StrictExpr scalar, or 0.
+	StrictLine int
 	// Delivery is where rpcn_debug_sink's Delivered Snapshots are
 	// positioned (AD-21): the user path output and the line of the
 	// top-level output key, or 0 when there is none.
@@ -98,7 +105,15 @@ func Rewrite(src []byte) (Plan, error) {
 	plan := Plan{positions: map[string]posMap{}, src: w.src}
 	plan.Strict, w.strict = strict(root)
 	if isInterpolated(w.strict) {
-		w.warn(w.strict.Line, "error_handling.strict", "strict is an interpolation, so it is applied per stepper only, not to the whole step stream")
+		// Encoded, so a quoted scalar stays quoted, as in the steppers;
+		// without comments, which would land in front of the value.
+		c := *w.strict
+		c.HeadComment, c.LineComment, c.FootComment = "", "", ""
+		enc, err := encode(&c)
+		if err != nil {
+			return Plan{}, err
+		}
+		plan.StrictExpr, plan.StrictLine = strings.TrimSuffix(enc, "\n"), w.strict.Line
 	}
 	capture := without(input, "processors")
 	w.procs[capture] = "input"
@@ -215,7 +230,8 @@ func Rewrite(src []byte) (Plan, error) {
 
 // strict returns error_handling.strict: its value, and the node to write
 // into each stepper's strict field. An interpolated value is written
-// verbatim, for the engine to resolve, and reported as false.
+// verbatim, for the engine to resolve, and reported as false (Rewrite puts
+// it in Plan.StrictExpr).
 func strict(root *yaml.Node) (bool, *yaml.Node) {
 	off := scalar("!!bool", "false")
 	eh := value(root, "error_handling")

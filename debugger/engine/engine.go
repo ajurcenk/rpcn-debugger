@@ -32,7 +32,15 @@ type Configs struct {
 	// Warnings are the launch warnings for the user.
 	Warnings []string
 	// Strict is error_handling.strict, applied to the step stream (AD-4(b)).
+	// StrictExpr overrides it when set.
 	Strict bool
+	// StrictExpr is error_handling.strict verbatim when it is a ${VAR}
+	// interpolation, or "". The engine resolves it through the run's lookup
+	// (AD-22), the way the stock stream builder does, and uses the result
+	// instead of Strict.
+	StrictExpr string
+	// StrictLine is the file line of StrictExpr, for its error.
+	StrictLine int
 	// Translator maps engine paths and Bloblang lines back to the user's
 	// file (AD-6). Check returns it in its CheckResult; it may be nil.
 	Translator core.Translate
@@ -77,7 +85,7 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	}
 	r, err := a.newRun(conf, opts.Lookup, nopArriver{})
 	if err != nil {
-		return core.CheckResult{}, err
+		return core.CheckResult{Translator: conf.Translator}, fmt.Errorf("%s: %w", pipeline, err)
 	}
 	// A failed Check still carries the translator, so the Session can name
 	// user paths in its error (AD-6).
@@ -101,7 +109,7 @@ func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Ar
 	}
 	r, err := a.newRun(conf, opts.Lookup, arr)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", opts.Pipeline, err)
 	}
 	batch, total, err := r.capture(ctx, opts.MaxMessages)
 	if err != nil {
@@ -121,19 +129,60 @@ type run struct {
 	log      *slog.Logger
 	conf     Configs
 	lookup   func(string) (string, bool) // nil: the process environment
+	strict   bool                        // the effective error_handling.strict
 	sink     *sink
 	consumed atomic.Int64
 }
 
 func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr core.Arriver) (*run, error) {
 	r := &run{env: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr}}
-	if err := registerStepper(r.env, arr); err != nil {
+	var err error
+	if r.strict, err = r.resolveStrict(); err != nil {
+		return nil, err
+	}
+	if err = registerStepper(r.env, arr); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
 	if err := registerSink(r.env, r.sink); err != nil {
 		return nil, fmt.Errorf("register %s: %w", SinkName, err)
 	}
 	return r, nil
+}
+
+// resolveStrict returns the effective error_handling.strict: conf.Strict,
+// or conf.StrictExpr resolved with benthos's own interpolation through the
+// run's lookup (AD-2, AD-22). It matches the stock stream builder, probed on
+// benthos v4.81: an unset variable without a default resolves to "", which
+// is false, and a value that isn't a bool fails the config.
+func (r *run) resolveStrict() (bool, error) {
+	if r.conf.StrictExpr == "" {
+		return r.conf.Strict, nil
+	}
+	q := r.env.FullConfigSchema("", "").NewConfigQuerier()
+	if r.lookup != nil {
+		q.SetEnvVarLookupFunc(func(_ context.Context, k string) (string, bool) { return r.lookup(k) })
+	}
+	// The padding puts the scalar on its file line, so a YAML error names
+	// the user's line.
+	pad := strings.Repeat("\n", max(r.conf.StrictLine-2, 0))
+	strictErr := func(err error) error {
+		e := core.NewError(core.CodePipelineInvalid, "error_handling.strict %s does not resolve to a bool: %v", r.conf.StrictExpr, err)
+		e.Line, e.UserPath = r.conf.StrictLine, "error_handling.strict"
+		return e
+	}
+	f, err := q.ParseYAML(pad + "error_handling:\n  strict: " + r.conf.StrictExpr + "\n")
+	if err != nil {
+		return false, strictErr(err)
+	}
+	pc, err := f.FieldAtPath("error_handling", "strict")
+	if err != nil {
+		return false, strictErr(err)
+	}
+	b, err := pc.FieldBool()
+	if err != nil {
+		return false, strictErr(err)
+	}
+	return b, nil
 }
 
 // builder returns a StreamBuilder that logs to the session's logger (the
@@ -166,7 +215,7 @@ func (r *run) stepperName(i int) string {
 // func, the steppers in order and the sink, plus the shared resources.
 func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandlerFunc, error) {
 	b := r.builder()
-	b.SetStrict(r.conf.Strict)
+	b.SetStrict(r.strict)
 	produce, err := b.AddBatchProducerFunc()
 	if err != nil {
 		return nil, nil, err
@@ -231,7 +280,7 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 		return ctx.Err()
 	}
 	if prodErr != nil {
-		if r.conf.Strict && strings.Contains(prodErr.Error(), strictRejection) {
+		if r.strict && strings.Contains(prodErr.Error(), strictRejection) {
 			// Expected strict behaviour, not a failure: the output nacks the
 			// messages that failed a processing step.
 			return core.NewError(core.CodeStrictRejected, "%v", prodErr)

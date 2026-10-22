@@ -33,7 +33,6 @@ rpcn_debug_stepper:
                 processors:
                     - mapping: 'root.a = 1'
 # warnings
-error_handling.strict (line 22): strict is an interpolation, so it is applied per stepper only, not to the whole step stream
 pipeline.processors[0].retry (line 9): retry with an interpolated parallel may run its processors concurrently (decided at runtime), so it runs as one step and nothing inside it is stepped
 processor_resources.r (line 17): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
 # delivery

@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,7 +37,7 @@ func load(path string) (engine.Configs, core.LineMap, error) {
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict, Delivery: p.Delivery}, p, nil
+	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict, StrictExpr: p.StrictExpr, StrictLine: p.StrictLine, Delivery: p.Delivery}, p, nil
 }
 
 func writePipeline(t *testing.T, src string) string {
@@ -782,5 +783,79 @@ output:
 		case !strict && err != nil:
 			t.Errorf("not strict: Start = %v, want nil", err)
 		}
+	}
+}
+
+// S2: an interpolated error_handling.strict resolves through the run's
+// lookup (AD-22) and drives the step stream and the STRICT_REJECTED gate,
+// as the literal does. An unset variable without a default is false and a
+// non-bool fails Check and Start with PIPELINE_INVALID at its line, as the
+// stock stream builder does.
+func TestStrictInterpolated(t *testing.T) {
+	src := `
+input:
+  generate: {count: 1, interval: "", mapping: 'root = {"n": 1}'}
+pipeline:
+  processors:
+    - mapping: 'root = throw("boom")'
+error_handling:
+  strict: %s
+output:
+  drop: {}
+`
+	const v = "RPCN_DEBUG_TEST_STRICT_S2"
+	for name, tc := range map[string]struct {
+		expr      string
+		file, env map[string]string
+		want      string // "rejected", "delivered" or "invalid"
+	}{
+		"true from env":       {"${" + v + "}", nil, map[string]string{v: "true"}, "rejected"},
+		"false from env":      {"${" + v + "}", nil, map[string]string{v: "false"}, "delivered"},
+		"true from envFile":   {"${" + v + "}", map[string]string{v: "true"}, nil, "rejected"},
+		"default true":        {"${" + v + ":true}", nil, nil, "rejected"},
+		"env beats default":   {"${" + v + ":true}", nil, map[string]string{v: "false"}, "delivered"},
+		"unset":               {"${" + v + "}", nil, nil, "delivered"},
+		"empty":               {"${" + v + "}", nil, map[string]string{v: ""}, "delivered"},
+		"not a bool":          {"${" + v + "}", nil, map[string]string{v: "maybe"}, "invalid"},
+		"quoted is a string":  {`"${` + v + `}"`, nil, map[string]string{v: "true"}, "invalid"},
+		"unknown decode func": {"${" + v + "|nope}", nil, map[string]string{v: "true"}, "invalid"},
+		"commented":           {"# c\n    ${" + v + "} # d", nil, map[string]string{v: "true"}, "rejected"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writePipeline(t, fmt.Sprintf(src, tc.expr))
+			opts := core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(tc.file, tc.env)}
+			a := engine.New(standard(), testLogger(), load)
+			_, checkErr := a.Check(opts)
+			arr := &arriver{}
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			err := a.Start(ctx, opts, arr)
+			switch tc.want {
+			case "invalid":
+				for what, e := range map[string]error{"Check": checkErr, "Start": err} {
+					var ce core.Error
+					if !errors.As(e, &ce) || ce.Code != core.CodePipelineInvalid || ce.UserPath != "error_handling.strict" || ce.Line != 8 {
+						t.Errorf("%s = %v, want PIPELINE_INVALID at error_handling.strict line 8", what, e)
+					}
+				}
+			case "rejected":
+				if checkErr != nil {
+					t.Fatalf("Check = %v", checkErr)
+				}
+				if !core.HasCode(err, core.CodeStrictRejected) || len(arr.delivered) != 0 {
+					t.Errorf("Start = %v with %d deliveries, want STRICT_REJECTED and none", err, len(arr.delivered))
+				}
+			case "delivered":
+				if checkErr != nil {
+					t.Fatalf("Check = %v", checkErr)
+				}
+				if err != nil {
+					t.Fatalf("Start = %v, want nil", err)
+				}
+				if len(arr.delivered) != 1 || len(arr.delivered[0].Messages) != 1 || arr.delivered[0].Messages[0].Error == "" {
+					t.Errorf("delivered = %+v, want the failed message with its error", arr.delivered)
+				}
+			}
+		})
 	}
 }

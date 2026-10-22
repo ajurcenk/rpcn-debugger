@@ -411,6 +411,50 @@ output:
 	sameAsReference(t, pipeline, res.Delivered)
 }
 
+// S2 (the retro repro): an interpolated error_handling.strict that resolves
+// to true through the launch env rejects the failed message as the literal
+// does: nothing is delivered and the Debug Console shows the strict note.
+func TestStrictInterpolatedRejects(t *testing.T) {
+	const src = `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root.n = 1'
+pipeline:
+  processors:
+    - mapping: 'root = throw("boom")'
+error_handling:
+  strict: %s
+output:
+  drop: {}
+`
+	for _, strict := range []string{"true", "${STRICT}"} {
+		t.Run(strict, func(t *testing.T) {
+			pipeline := writeYAML(t, fmt.Sprintf(src, strict))
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			res, err := dapdrive.Run(ctx, dapdrive.Options{
+				Pipeline: pipeline,
+				Launch:   map[string]any{"env": map[string]any{"STRICT": "true"}},
+				Script:   dapdrive.Always(dapdrive.Continue),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Delivered != nil {
+				t.Errorf("delivered = %+v, want nothing", res.Delivered)
+			}
+			if got := outputs(res, "error_handling.strict: the output rejected"); len(got) != 1 {
+				t.Errorf("outputs = %q, want one strict-rejection note", res.Output)
+			}
+			if got := outputs(res, "Warning: error_handling.strict"); len(got) != 0 {
+				t.Errorf("warnings = %q, want none for strict", got)
+			}
+		})
+	}
+}
+
 // Every message deleted: nothing delivered, a note, and a clean end.
 func TestNothingDelivered(t *testing.T) {
 	pipeline := writeYAML(t, `

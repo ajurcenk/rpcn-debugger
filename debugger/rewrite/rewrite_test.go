@@ -178,3 +178,32 @@ func TestNestedLineMap(t *testing.T) {
 		t.Errorf("warnings = %q, want none", p.Warnings)
 	}
 }
+
+// S2: an interpolated error_handling.strict reaches the Plan verbatim (with
+// its quoting) and its line, for the engine to resolve; a literal does not.
+func TestStrictExpr(t *testing.T) {
+	const src = "input:\n  generate: {mapping: 'root = {}'}\nerror_handling:\n  strict: %s\n"
+	for _, tc := range []struct {
+		strict, expr string
+		line         int
+		lit          bool
+	}{
+		{"${STRICT}", "${STRICT}", 4, false},
+		{"${STRICT:true}", "${STRICT:true}", 4, false},
+		{`"${STRICT}"`, `"${STRICT}"`, 4, false},
+		{"\n    # c\n    ${STRICT} # d", "${STRICT}", 6, false},
+		{"true", "", 0, true},
+		{"false", "", 0, false},
+	} {
+		p, err := Rewrite(fmt.Appendf(nil, src, tc.strict))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.strict, err)
+		}
+		if p.StrictExpr != tc.expr || p.StrictLine != tc.line || p.Strict != tc.lit {
+			t.Errorf("%s: StrictExpr %q line %d Strict %v, want %q line %d Strict %v", tc.strict, p.StrictExpr, p.StrictLine, p.Strict, tc.expr, tc.line, tc.lit)
+		}
+		if len(p.Warnings) != 0 {
+			t.Errorf("%s: warnings %q, want none", tc.strict, p.Warnings)
+		}
+	}
+}
