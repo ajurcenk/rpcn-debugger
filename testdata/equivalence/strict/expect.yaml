@@ -1,0 +1,16 @@
+# Expectations TestCases and TestEquivalence check beside the AD-8 comparison:
+# the reference run's batches and messages, the Step In stops (path and frame
+# count) that prove ctx reaches each nested child (AD-17), paths no run may
+# stop inside, and Debug Console output every run must show.
+# The batch [3, 4] skips the last processor (4 has no "after"), and the output
+# rejects message 3.
+batches: [2, 1]
+messages:
+  - content: '{"after":true,"n":1}'
+  - content: '{"after":true,"n":2}'
+  - content: '{"n":4}'
+stops:
+  - path: 'pipeline.processors[2]'
+    frames: 1
+output:
+  - 'error_handling.strict runs no later processor on the batch'

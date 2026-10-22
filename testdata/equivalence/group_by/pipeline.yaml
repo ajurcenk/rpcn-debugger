@@ -1,0 +1,23 @@
+# group_by: the batch splits into one batch per group, as in the engine.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 5
+    batch_size: 5
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - group_by:
+        - check: 'this.n % 2 == 0'
+          processors:
+            - mapping: 'root = this.merge({"group": "even"})'
+        - check: 'this.n == 5'
+          processors:
+            - mapping: 'root = this.merge({"group": "five"})'
+
+output:
+  drop: {}

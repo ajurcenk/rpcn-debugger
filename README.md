@@ -11,8 +11,8 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 | `debugger/` | The Go library: the public entry point, and the `core`, `engine`, `rewrite`, `blobl` and `dap` packages |
 | `cmd/rpcn-debug/` | The stock binary: every Connect component, built on the library |
 | `vscode/` | The VS Code extension |
-| `test/equivalence/` | The equivalence harness: discovers the corpus cases and runs each pipeline without the debugger |
-| `testdata/equivalence/` | The equivalence corpus: one directory per case, `<name>/pipeline.yaml` |
+| `test/equivalence/` | The equivalence harness: discovers the corpus cases, runs each pipeline without the debugger and through it, and compares the delivered batches |
+| `testdata/equivalence/` | The equivalence corpus: one directory per case, `<name>/pipeline.yaml`, one input batch of at most 10 messages each |
 | `testdata/tracer/` | The sample pipeline to try the debugger on |
 | `Taskfile.yml` | Build, test and package tasks |
 
@@ -35,7 +35,7 @@ task ci
 
 This builds `bin/rpcn-debug`, lints the Go code, runs the Go unit tests, the equivalence cases and the integration tests, compiles the extension, runs the extension's DAP test against the built binary, and packages the extension as `vscode/dist/pipeline-debugger-for-redpanda-connect-<version>.vsix`. The individual steps are `task build:go`, `task lint:go`, `task lint:gomod`, `task lint:schema`, `task test:go`, `task test:equivalence`, `task test:integration`, `task build:ext`, `task test:ext` and `task package:ext`.
 
-`task test:equivalence` runs every case in `testdata/equivalence/` through its own input and processors, with no debugger, and lists each case as a subtest. To add a case, create `testdata/equivalence/<name>/pipeline.yaml`; its `output` is replaced by a collector, so any output will do.
+`task test:equivalence` runs every case in `testdata/equivalence/` through its own input and processors, with no debugger, then through the debugger three times (Continue at the entry stop, Step Over at every stop, Step In at every stop), and fails when a run delivers different batches (content, metadata, errors, boundaries or order). It lists each case as a subtest. To add a case, create `testdata/equivalence/<name>/pipeline.yaml` (its `output` is replaced by a collector, so any output will do) and an `expect.yaml` beside it declaring the reference's batches and messages and the Step In stops, as the existing cases do. A case's input must yield exactly one batch of at most 10 messages (the `maxMessages` default), so the debugger captures the whole input; the harness fails a case that breaks this rule.
 
 `task test:ext` starts the binary named by `RPCN_DEBUG_BIN` (default `../bin/rpcn-debug`, relative to `vscode/`), so run `task build:go` and `task build:ext` first.
 

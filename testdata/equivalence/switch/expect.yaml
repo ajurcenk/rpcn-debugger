@@ -1,0 +1,16 @@
+# Expectations TestCases and TestEquivalence check beside the AD-8 comparison:
+# the reference run's batches and messages, the Step In stops (path and frame
+# count) that prove ctx reaches each nested child (AD-17), paths no run may
+# stop inside, and Debug Console output every run must show.
+batches: [3]
+messages:
+  - content: '{"case":"one","n":1}'
+  - content: '{"case":"two","case_other":true,"n":2}'
+  - content: '{"case_other":true,"n":3}'
+stops:
+  - path: 'pipeline.processors[0].switch[0].processors[0]'
+    frames: 2
+  - path: 'pipeline.processors[0].switch[1].processors[0]'
+    frames: 2
+  - path: 'pipeline.processors[0].switch[2].processors[0]'
+    frames: 2

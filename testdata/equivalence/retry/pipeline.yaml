@@ -1,0 +1,24 @@
+# retry (non-parallel): the child fails twice, then succeeds. Only the backoff is timing-dependent; its backoff_duration metadata is compared by key and type.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+
+pipeline:
+  processors:
+    - retry:
+        max_retries: 3
+        backoff:
+          initial_interval: 1ms
+          max_interval: 1ms
+        processors:
+          - mapping: |
+              let attempt = counter()
+              root = if $attempt <= 2 { throw("flaky, attempt %d".format($attempt)) } else { this.merge({"attempts": $attempt}) }
+
+output:
+  drop: {}

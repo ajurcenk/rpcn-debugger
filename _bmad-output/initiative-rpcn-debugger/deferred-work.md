@@ -37,3 +37,11 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-delivery-at-rpcn-debug-sink-dry-run-plan.md`
   summary: Reset the delivered-batch counters (core.Session.delivered and the DAP server's numbering) when Restart re-steps the batch, so numbering starts at 1 and "Nothing was delivered" is reported per run — for epic-edit-restart-replay (AD-20).
   evidence: debugger/core/session.go `delivered` and debugger/dap/server.go `delivered atomic.Int64` are never reset; latent while Restart is NOT_SUPPORTED.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-equivalence-corpus-and-scripted-step-over-driver-plan.md`
+  summary: Delivered — the strict-mode end-to-end equivalence item (from 2.7) is covered by the 2.9 corpus case `testdata/equivalence/strict/`, run three ways (Continue, Next, Step In) against the reference in TestEquivalence.
+  evidence: test/equivalence/equivalence_test.go TestEquivalence/strict; the case exercises both strict behaviours (skip of later processors, output rejection).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-equivalence-corpus-and-scripted-step-over-driver-plan.md`
+  summary: Under error_handling.strict, the output rejecting a failed message (normal strict behaviour) surfaces as "The debug run failed: deliver the batch: rejected due to failed processing: …" although the delivered batches match the reference; report it as an expected strict rejection (e.g. a console note naming the rejected messages) instead of a run failure — needs a user decision on wording, then a small entry.
+  evidence: seen in the 2.9 strict corpus case (testdata/equivalence/strict); core.Session run reports the producer's error as RUN_FAILED output.

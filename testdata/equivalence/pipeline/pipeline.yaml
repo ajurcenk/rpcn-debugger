@@ -1,0 +1,29 @@
+# Top-level pipeline.processors: content, metadata of several types, and an error.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+      meta source = "gen"
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.doubled = this.n * 2
+        meta n_int = this.n
+        meta odd = this.n % 2 == 1
+        meta ratio = this.n / 4
+        meta tags = ["a", "b"]
+        meta obj = {"k": this.n}
+    - mutation: |
+        meta source = deleted()
+        meta tag = "t%d".format(this.n)
+    - mapping: 'root = if this.n == 3 { throw("n is 3") } else { this }'
+
+output:
+  drop: {}

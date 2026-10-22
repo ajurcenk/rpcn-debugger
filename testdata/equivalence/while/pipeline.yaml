@@ -1,0 +1,22 @@
+# while: its list runs while the check holds.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 2
+    batch_size: 2
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - while:
+        check: 'this.loops.or(0) < 3'
+        processors:
+          - mapping: |
+              root = this
+              root.loops = this.loops.or(0) + 1
+
+output:
+  drop: {}

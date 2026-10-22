@@ -1,0 +1,23 @@
+# processor_resources: a resource holding a parent (for_each), called via resource:.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+processor_resources:
+  - label: enrich
+    for_each:
+      - mapping: 'root = this.merge({"enriched": this.n * 100})'
+
+input:
+  generate:
+    count: 2
+    batch_size: 2
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - resource: enrich
+    - mapping: 'root = this.merge({"after": true})'
+
+output:
+  drop: {}

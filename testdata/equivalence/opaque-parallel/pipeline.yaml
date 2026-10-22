@@ -1,0 +1,21 @@
+# parallel: a concurrent parent, run as one opaque step (nothing inside it is stepped).
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - parallel:
+        cap: 2
+        processors:
+          - mapping: 'root = this.merge({"parallel": this.n * 3})'
+    - mapping: 'root = this.merge({"after": true})'
+
+output:
+  drop: {}

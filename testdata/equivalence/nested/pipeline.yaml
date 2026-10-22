@@ -1,0 +1,27 @@
+# nested parents: a branch in a switch case in a for_each.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - for_each:
+        - switch:
+            - check: 'this.n % 2 == 1'
+              processors:
+                - branch:
+                    request_map: 'root = this.n'
+                    processors:
+                      - mapping: 'root = this * 10'
+                    result_map: 'root.branched = this'
+            - processors:
+                - mapping: 'root = this.merge({"even": true})'
+
+output:
+  drop: {}

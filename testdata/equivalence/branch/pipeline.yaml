@@ -1,0 +1,24 @@
+# branch: its list runs on the request_map result, merged back by result_map.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 2
+    batch_size: 2
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - branch:
+        request_map: 'root = this.n'
+        processors:
+          - mapping: 'root = this * 10'
+          - mutation: 'meta in_branch = "yes"'
+        result_map: |
+          root.branched = this
+          meta in_branch = metadata("in_branch")
+
+output:
+  drop: {}

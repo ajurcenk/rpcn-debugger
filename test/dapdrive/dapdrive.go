@@ -85,6 +85,12 @@ type Frame struct {
 type Message struct {
 	// Content is the content's text, or base64 when it isn't UTF-8.
 	Content string
+	// Base64 is true when Content is the base64 of the raw content. Only
+	// delivered messages set it.
+	Base64 bool
+	// Raw is the content's exact bytes, from the Snapshot's raw view. Only
+	// delivered messages carry it; it is nil for the Variables view.
+	Raw []byte
 	// Metadata maps each key, internal ones included, to its type and
 	// display value.
 	Metadata map[string]Meta
@@ -97,6 +103,10 @@ type Message struct {
 type Meta struct {
 	Type  string
 	Value string
+	// Lossless is the Snapshot's lossless value (AD-11: bytes as base64,
+	// ints as decimal, …). Only delivered messages carry it; it is "" for
+	// the Variables view.
+	Lossless string
 }
 
 // Batch is one batch of messages.
@@ -386,18 +396,18 @@ func deliveredBatches(body json.RawMessage, n int) ([]Batch, error) {
 	for _, sb := range b.Snapshot.Batches {
 		batch := Batch{}
 		for _, m := range sb.Messages {
-			msg := Message{Error: m.Error, Metadata: map[string]Meta{}}
+			msg := Message{Error: m.Error, Metadata: map[string]Meta{}, Raw: append([]byte{}, m.Content.Raw...)}
 			if m.Content.Text != nil {
 				msg.Content = *m.Content.Text
 			} else {
-				msg.Content = base64.StdEncoding.EncodeToString(m.Content.Raw)
+				msg.Content, msg.Base64 = base64.StdEncoding.EncodeToString(m.Content.Raw), true
 			}
 			for _, md := range m.Metadata {
 				v := md.Value
 				if md.Text != nil {
 					v = *md.Text
 				}
-				msg.Metadata[md.Key] = Meta{Type: string(md.Type), Value: v}
+				msg.Metadata[md.Key] = Meta{Type: string(md.Type), Value: v, Lossless: md.Value}
 			}
 			batch = append(batch, msg)
 		}

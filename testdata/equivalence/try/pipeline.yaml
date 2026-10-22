@@ -1,0 +1,20 @@
+# try: a failed message skips the rest of the list (try mode, AD-7).
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - try:
+        - mapping: 'root = if this.n == 2 { throw("n is 2") } else { this }'
+        - mapping: 'root = this.merge({"after": true})'
+        - mutation: 'meta tried = "yes"'
+
+output:
+  drop: {}

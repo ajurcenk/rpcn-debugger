@@ -1,0 +1,21 @@
+# for_each: its list runs once per message.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - for_each:
+        - mapping: |
+            root = this
+            root.seen = true
+        - mutation: 'meta each = this.n'
+
+output:
+  drop: {}

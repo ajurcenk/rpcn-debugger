@@ -1,0 +1,20 @@
+# catch: its list runs on failed messages only, and their errors are cleared.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - mapping: 'root = if this.n == 2 { throw("n is 2") } else { this }'
+    - catch:
+        - mapping: 'root = this.merge({"caught": error()})'
+    - mapping: 'root = this.merge({"done": true})'
+
+output:
+  drop: {}

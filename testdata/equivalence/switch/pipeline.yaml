@@ -1,0 +1,26 @@
+# switch: each case list runs on the messages that match it.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - switch:
+        - check: 'this.n == 1'
+          processors:
+            - mapping: 'root = this.merge({"case": "one"})'
+        - check: 'this.n == 2'
+          processors:
+            - mapping: 'root = this.merge({"case": "two"})'
+          fallthrough: true
+        - processors:
+            - mapping: 'root = this.merge({"case_other": true})'
+
+output:
+  drop: {}

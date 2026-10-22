@@ -1,0 +1,17 @@
+# Expectations TestCases and TestEquivalence check beside the AD-8 comparison:
+# the reference run's batches and messages, the Step In stops (path and frame
+# count) that prove ctx reaches each nested child (AD-17), paths no run may
+# stop inside, and Debug Console output every run must show.
+# group_by splits the batch in 3: the two groups, then the unmatched messages.
+batches: [2, 1, 2]
+messages:
+  - content: '{"group":"even","n":2}'
+  - content: '{"group":"even","n":4}'
+  - content: '{"group":"five","n":5}'
+  - content: '{"n":1}'
+  - content: '{"n":3}'
+stops:
+  - path: 'pipeline.processors[0].group_by[0].processors[0]'
+    frames: 2
+  - path: 'pipeline.processors[0].group_by[1].processors[0]'
+    frames: 2

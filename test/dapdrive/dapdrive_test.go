@@ -1,19 +1,15 @@
-package dapdrive
+package dapdrive_test
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
+	"github.com/ajurcenk/rpcn-debugger/test/dapdrive"
 	"github.com/ajurcenk/rpcn-debugger/test/equivalence"
 )
 
@@ -25,7 +21,7 @@ const (
 // trace renders each stop as "<line> <user path> <frames>", the frames
 // innermost first with their labels, e.g.
 // "15 pipeline.processors[0].for_each[0] pipeline.processors[0].for_each[msg 1/3] < pipeline.processors".
-func trace(res Result) []string {
+func trace(res dapdrive.Result) []string {
 	out := make([]string, len(res.Stops))
 	for i, s := range res.Stops {
 		frames := make([]string, len(s.Frames))
@@ -37,77 +33,20 @@ func trace(res Result) []string {
 	return out
 }
 
-func run(t *testing.T, pipeline string) Result {
+func run(t *testing.T, pipeline string) dapdrive.Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := Run(ctx, Options{Pipeline: pipeline})
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return res
 }
 
-// jittered names metadata whose value the engine makes differently on every
-// run, so only its key and type are compared: retry's backoff_duration sums
-// backoff sleeps that the engine randomizes (the exponential backoff's
-// default randomization factor of 0.5, which the retry config can't set).
-var jittered = map[string]bool{"backoff_duration": true}
-
-// refMeta renders a reference metadata value the way the Variables view
-// shows it (engine.metaEntry, AD-11): its type and display value.
-func refMeta(v any) Meta {
-	switch x := v.(type) {
-	case nil:
-		return Meta{"null", "null"}
-	case string:
-		return Meta{"string", x}
-	case []byte:
-		if utf8.Valid(x) {
-			return Meta{"bytes", string(x)}
-		}
-		return Meta{"bytes", base64.StdEncoding.EncodeToString(x)}
-	case bool:
-		return Meta{"bool", strconv.FormatBool(x)}
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return Meta{"int", fmt.Sprint(x)}
-	case float32:
-		return Meta{"float", strconv.FormatFloat(float64(x), 'g', -1, 32)}
-	case float64:
-		return Meta{"float", strconv.FormatFloat(x, 'g', -1, 64)}
-	case time.Time:
-		return Meta{"timestamp", x.Format(time.RFC3339Nano)}
-	case map[string]any:
-		raw, _ := json.Marshal(x)
-		return Meta{"object", string(raw)}
-	case []any:
-		raw, _ := json.Marshal(x)
-		return Meta{"array", string(raw)}
-	}
-	return Meta{"string", fmt.Sprint(v)}
-}
-
-func renderMessage(content, errText string, meta map[string]Meta) string {
-	keys := make([]string, 0, len(meta))
-	for k := range meta {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var parts []string
-	for _, k := range keys {
-		m := meta[k]
-		if jittered[k] {
-			m.Value = "*"
-		}
-		parts = append(parts, fmt.Sprintf("%s:%s=%s", k, m.Type, m.Value))
-	}
-	return content + " error=" + errText + " meta={" + strings.Join(parts, ",") + "}"
-}
-
 // sameAsReference checks the delivered batches against the pipeline run
-// without the debugger: content, metadata (keys, types and values; see
-// jittered), errors and batch boundaries (AD-8).
-func sameAsReference(t *testing.T, pipeline string, got []Batch) {
+// without the debugger, with the AD-8 harness's one definition of equal.
+func sameAsReference(t *testing.T, pipeline string, got []dapdrive.Batch) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -115,37 +54,12 @@ func sameAsReference(t *testing.T, pipeline string, got []Batch) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var want, have []string
-	for _, b := range ref {
-		var msgs []string
-		for _, m := range b {
-			raw, _ := m.AsBytes()
-			e := ""
-			if err := m.GetError(); err != nil {
-				e = err.Error()
-			}
-			meta := map[string]Meta{}
-			_ = m.MetaWalkMut(func(k string, v any) error {
-				meta[k] = refMeta(v)
-				return nil
-			})
-			msgs = append(msgs, renderMessage(string(raw), e, meta))
-		}
-		want = append(want, strings.Join(msgs, " | "))
-	}
-	for _, b := range got {
-		var msgs []string
-		for _, m := range b {
-			msgs = append(msgs, renderMessage(m.Content, m.Error, m.Metadata))
-		}
-		have = append(have, strings.Join(msgs, " | "))
-	}
-	if strings.Join(have, "\n") != strings.Join(want, "\n") {
-		t.Errorf("delivered:\n%s\nwant (reference run):\n%s", strings.Join(have, "\n"), strings.Join(want, "\n"))
+	if err := equivalence.Compare(ref, got); err != nil {
+		t.Error(err)
 	}
 }
 
-func check(t *testing.T, res Result, want []string) {
+func check(t *testing.T, res dapdrive.Result, want []string) {
 	t.Helper()
 	got := trace(res)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -156,7 +70,7 @@ func check(t *testing.T, res Result, want []string) {
 	}
 }
 
-func outputs(res Result, prefix string) []string {
+func outputs(res dapdrive.Result, prefix string) []string {
 	var out []string
 	for _, o := range res.Output {
 		if strings.HasPrefix(o, prefix) {
@@ -174,7 +88,7 @@ func TestParents(t *testing.T) {
 	cases := []struct {
 		name  string
 		stops []string
-		more  func(t *testing.T, res Result)
+		more  func(t *testing.T, res dapdrive.Result)
 	}{
 		{
 			name: "for_each",
@@ -201,7 +115,7 @@ func TestParents(t *testing.T) {
 				"20 pipeline.processors[0].retry.processors pipeline.processors[0].retry.processors[attempt 3/3] < " + top,
 				"14 pipeline.processors " + top,
 			},
-			more: func(t *testing.T, res Result) {
+			more: func(t *testing.T, res dapdrive.Result) {
 				attempts := outputs(res, "retry ")
 				if len(attempts) != 3 || attempts[2] != "retry pipeline.processors[0].retry.processors [attempt 3/3]\n" {
 					t.Errorf("attempt output = %q, want 3 attempts", attempts)
@@ -234,7 +148,7 @@ func TestParents(t *testing.T) {
 				"19 pipeline.processors[0].group_by[1].processors pipeline.processors[0].group_by[1].processors[group 2] < " + top,
 				"13 pipeline.processors " + top,
 			},
-			more: func(t *testing.T, res Result) {
+			more: func(t *testing.T, res dapdrive.Result) {
 				if len(res.Delivered) != 2 {
 					t.Errorf("delivered %d batches, want 2 (one per group)", len(res.Delivered))
 				}
@@ -255,7 +169,7 @@ func TestParents(t *testing.T) {
 				"14 pipeline.processors[0].try pipeline.processors[0].try[msg 3/3] < " + top,
 				"13 pipeline.processors " + top,
 			},
-			more: func(t *testing.T, res Result) {
+			more: func(t *testing.T, res dapdrive.Result) {
 				for _, s := range res.Stops {
 					if s.UserPath == "pipeline.processors[0].try[1]" && strings.Contains(s.Batches[0][0].Content, `"n":2`) {
 						t.Errorf("try[1] stopped on message 2: %+v", s)
@@ -276,7 +190,7 @@ func TestParents(t *testing.T) {
 				"15 pipeline.processors[1].catch pipeline.processors[1].catch < " + top,
 				"13 pipeline.processors " + top,
 			},
-			more: func(t *testing.T, res Result) {
+			more: func(t *testing.T, res dapdrive.Result) {
 				if c := res.Stops[2].Batches; len(c) != 1 || len(c[0]) != 1 || !strings.Contains(c[0][0].Content, `"n":2`) || c[0][0].Error == "" {
 					t.Errorf("catch entry batches = %+v, want the failed message 2 only", c)
 				}
@@ -353,7 +267,7 @@ func TestNested(t *testing.T) {
 func TestScriptNext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := Run(ctx, Options{Pipeline: filepath.Join(parents, "for_each.yaml"), Script: Always(Next)})
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: filepath.Join(parents, "for_each.yaml"), Script: dapdrive.Always(dapdrive.Next)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,11 +332,11 @@ output:
 }
 
 // runScript runs pipeline with script.
-func runScript(t *testing.T, pipeline string, script Script) Result {
+func runScript(t *testing.T, pipeline string, script dapdrive.Script) dapdrive.Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := Run(ctx, Options{Pipeline: pipeline, Script: script})
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline, Script: script})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +356,7 @@ func writeYAML(t *testing.T, src string) string {
 // with its content and metadata, and one rpcnDelivered event (AD-21).
 func TestDeliveredTracer(t *testing.T) {
 	pipeline := "../../testdata/tracer/pipeline.yaml"
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	got := outputs(res, "Delivered")
 	want := "Delivered batch 1 (1 messages) to dry-run output\n" +
 		`  message 0: {"doubled":2,"greeting":"hello","n":1}` + "\n" +
@@ -455,7 +369,7 @@ func TestDeliveredTracer(t *testing.T) {
 	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 1 {
 		t.Fatalf("delivered = %+v, want one batch of one message", res.Delivered)
 	}
-	if m := res.Delivered[0][0].Metadata["kafka_key"]; m != (Meta{"bytes", "k1"}) {
+	if m := res.Delivered[0][0].Metadata["kafka_key"]; m != (dapdrive.Meta{Type: "bytes", Value: "k1", Lossless: "azE="}) {
 		t.Errorf("kafka_key = %+v", m)
 	}
 	if n := len(outputs(res, "Nothing was delivered")); n != 0 {
@@ -467,7 +381,7 @@ func TestDeliveredTracer(t *testing.T) {
 // Continue on group_by: one Delivered entry per output batch.
 func TestDeliveredGroupBy(t *testing.T) {
 	pipeline := filepath.Join(parents, "group_by.yaml")
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	if got := outputs(res, "Delivered batch"); len(got) != 2 ||
 		!strings.HasPrefix(got[0], "Delivered batch 1 ") || !strings.HasPrefix(got[1], "Delivered batch 2 ") {
 		t.Errorf("delivered output = %q, want batches 1 and 2", got)
@@ -489,7 +403,7 @@ pipeline:
 output:
   drop: {}
 `)
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	got := outputs(res, "Delivered")
 	if len(got) != 1 || !strings.Contains(got[0], "\n    error: failed assignment (line 1): boom\n") {
 		t.Errorf("delivered output = %q, want the error line", got)
@@ -511,7 +425,7 @@ pipeline:
 output:
   drop: {}
 `)
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	if res.Delivered != nil {
 		t.Errorf("delivered = %+v, want nothing", res.Delivered)
 	}
@@ -533,7 +447,7 @@ output:
   drop: {}
   batching: {count: 5}
 `)
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	want := "Warning: output.batching (line 10): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ\n"
 	if got := outputs(res, "Warning: output.batching"); len(got) != 1 || got[0] != want {
 		t.Errorf("warnings = %q, want %q", got, want)
@@ -544,7 +458,7 @@ output:
 		t.Errorf("delivered = %+v, want the one batch of 3", res.Delivered)
 	}
 
-	plain := runScript(t, filepath.Join(parents, "for_each.yaml"), Always(Continue))
+	plain := runScript(t, filepath.Join(parents, "for_each.yaml"), dapdrive.Always(dapdrive.Continue))
 	if got := outputs(plain, "Warning: "); len(got) != 0 {
 		t.Errorf("warnings without batching = %q", got)
 	}
@@ -561,7 +475,7 @@ input:
 output:
   drop: {}
 `)
-	res := runScript(t, pipeline, Always(Continue))
+	res := runScript(t, pipeline, dapdrive.Always(dapdrive.Continue))
 	got := outputs(res, "Delivered")
 	want := "Delivered batch 1 (1 messages) to dry-run output\n  message 0: " + strings.Repeat("x", 4096) + "… 6144 more bytes\n"
 	if len(got) != 1 || got[0] != want {

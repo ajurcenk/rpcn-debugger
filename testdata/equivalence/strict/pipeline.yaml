@@ -1,0 +1,37 @@
+# strict mode: a failing processor under error_handling.strict. split makes the
+# failed message 3 the first of the batch [3, 4], so the later processor skips
+# that whole batch (message 4 is delivered without "after"), and the output
+# rejects message 3.
+#
+# The input is a file read with auto_replay_nacks off, so the reference drops
+# the rejected message, as the debugger (which never acks) does, instead of
+# replaying it (generate always replays nacks). Its path comes from
+# EQ_CASE_DIR, which the harness sets to this case's absolute directory for
+# the reference and debugger runs; to press F5 on this file, set EQ_CASE_DIR
+# in the launch's env (or the shell VS Code starts from).
+#
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input. The
+# file is one message; input.processors unarchive it into 4.
+error_handling:
+  strict: true
+
+input:
+  file:
+    paths: ["${EQ_CASE_DIR}/input.json"]
+    scanner:
+      to_the_end: {}
+    auto_replay_nacks: false
+  processors:
+    - unarchive:
+        format: json_array
+
+pipeline:
+  processors:
+    - mapping: 'root = if this.n == 3 { throw("n is 3") } else { this }'
+    - split:
+        size: 2
+    - mapping: 'root = this.merge({"after": true})'
+
+output:
+  drop: {}

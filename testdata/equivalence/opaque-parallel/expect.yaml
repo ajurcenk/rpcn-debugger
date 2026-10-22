@@ -1,0 +1,17 @@
+# Expectations TestCases and TestEquivalence check beside the AD-8 comparison:
+# the reference run's batches and messages, the Step In stops (path and frame
+# count) that prove ctx reaches each nested child (AD-17), paths no run may
+# stop inside, and Debug Console output every run must show.
+# parallel runs as one opaque step: a launch warning, and no stop inside it.
+batches: [3]
+messages:
+  - content: '{"after":true,"n":1,"parallel":3}'
+  - content: '{"after":true,"n":2,"parallel":6}'
+  - content: '{"after":true,"n":3,"parallel":9}'
+stops:
+  - path: 'pipeline.processors[1]'
+    frames: 1
+no_stops_under:
+  - pipeline.processors[0].parallel
+output:
+  - 'parallel runs its processors concurrently, so it runs as one step'

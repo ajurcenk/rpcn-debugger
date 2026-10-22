@@ -51,9 +51,9 @@ tasks:
       - go test ./...
 
   test:equivalence:
-    desc: Run the AD-8 equivalence cases in testdata/equivalence/ (reference runs), listing each case
+    desc: Run the AD-8 equivalence cases in testdata/equivalence/ (reference runs, then the debugger with Continue, Next and Step In), listing each case
     cmds:
-      - go test -count=1 -v -run '^TestCases$' ./test/equivalence/
+      - go test -count=1 -v -run '^(TestCases|TestEquivalence)$' ./test/equivalence/
 
   test:integration:
     desc: Run the integration tests against Docker containers (needs Docker)
