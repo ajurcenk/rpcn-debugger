@@ -88,17 +88,8 @@ func (c *refChecker) processor(p *yaml.Node, path string) {
 		}
 		switch kind, _ := classify(k.Value, v); kind {
 		case parent:
-			switch k.Value {
-			case "branch", "while", "retry":
-				c.list(value(v, "processors"), cp+".processors")
-			case "try", "catch", "for_each":
-				c.list(v, cp)
-			case "switch", "group_by":
-				if v.Kind == yaml.SequenceNode {
-					for n, cs := range v.Content {
-						c.list(value(cs, "processors"), child(cp, n)+".processors")
-					}
-				}
+			for cl := range childLists(p, i) {
+				c.list(cl.list, cp+cl.path)
 			}
 		case concurrent, unknown:
 			c.opaque(v, cp)

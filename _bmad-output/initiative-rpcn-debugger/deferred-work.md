@@ -49,3 +49,27 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-strict-mode-output-rejection-is-not-a-run-failure-plan.md`
   summary: Under strict, STRICT_REJECTED is chosen when the producer's error text contains "rejected due to failed processing"; in a mixed batch benthos folds a write failure of the passing messages into the same batch.Error, whose Error() is the first (rejection) message, so a real write failure would be reported as the expected strict note — for epic-safe-against-real-systems, when `output: real` lets the sink's write fail (distinguish via the rejected count vs the batch, or the sink's own error record).
   evidence: benthos v4.81 internal/component/output/async_writer.go ~251-283 (rejectErr.Failed(i, werr)) and internal/batch/error.go:115; latent today because rpcn_debug_sink.WriteBatch always returns nil.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — the CLAUDE.md update (from 1.1) was delivered by the 1.7 refactor sweep, which rewrote Project state, Layout and Commands to describe the code that exists; this 2.10 sweep refreshes them again for epic-tracer.
+  evidence: commit 259fcd5 "docs: refactor sweep: CLAUDE.md describes the code that exists (1.7)"; CLAUDE.md no longer says the repository has no code.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — the Serve log destination (from 1.4) was delivered by 2.4: the `debugger.WithLogOutput(w)` Option sends the stderr side of the one AD-15 handler (stderr plus DAP Output) to w.
+  evidence: debugger/serve.go WithLogOutput; debugger/logging.go; commit 01c223a (2.4).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — YAML aliases (from 2.1) were delivered by 2.5: the rewrite deep-copies each alias target (`resolve`) before re-encoding a subtree, so `*name` to an anchor elsewhere in the file no longer becomes an unknown anchor.
+  evidence: debugger/rewrite/rewrite.go resolve; golden case debugger/rewrite/testdata/alias.yaml; commit b965994 (2.5).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — `core.Error` Line/UserPath (from 2.2) were delivered by 2.12: launch errors carry the user's file line and user path, both for rewrite errors (`invalid`, since 2.5) and for engine lint and parse errors mapped back through the rewrite's position maps.
+  evidence: debugger/rewrite/rewrite.go invalid; debugger/rewrite/positions.go; debugger/engine/positions.go; golden files print `line:`/`path:`; commit eb66937 (2.12).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — the strict reject message (from 2.9) was delivered by 2.14: under error_handling.strict the output's rejection of failed messages is `STRICT_REJECTED`, reported as a Debug Console note instead of "The debug run failed".
+  evidence: debugger/core/errors.go CodeStrictRejected; debugger/engine/engine.go; debugger/core/session.go; testdata/equivalence/strict/expect.yaml output; commit ba03f8e (2.14).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/story-refactor-sweep-plan.md`
+  summary: Delivered — the AD-7 child-list table (from 2.13) is now one `parents` table in debugger/rewrite/walk.go with a shared `childLists` iterator used by the walker, refChecker and the taint scan.
+  evidence: entry 2.10 (refactor sweep); every rewrite golden byte-identical before and after.

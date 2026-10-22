@@ -2,6 +2,7 @@ package rewrite
 
 import (
 	"fmt"
+	"iter"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
@@ -39,29 +40,131 @@ type kind struct {
 // all is the kind of a plain ExecuteAll list.
 var all = kind{mode: modeAll}
 
+// shape is where a parent's child processor lists sit in its config.
+type shape int
+
+const (
+	ownList shape = iota // the config is the list
+	inner                // the config's processors field
+	cases                // the processors field of each element of the config
+)
+
+// parentRow is one row of the AD-7 table: where a parent's child lists are
+// and the kind of their steppers.
+type parentRow struct {
+	shape shape
+	kind  kind
+}
+
+// parents is the AD-7 table, keyed by parent component name. Every walk of
+// the processor tree (the wrap, the resource check and the taint scan)
+// reads it. A parent with concurrent entries (workflow, parallel, retry
+// with parallel: true) is opaque instead (classify).
+var parents = map[string]parentRow{
+	"branch":   {inner, kind{mode: modeAll}},
+	"while":    {inner, kind{mode: modeAll, repeat: repeatLoop}},
+	"retry":    {inner, kind{mode: modeAll, repeat: repeatAttempt}},
+	"try":      {ownList, kind{mode: modeTry, repeat: repeatMsg}},
+	"catch":    {ownList, kind{mode: modeAll, noStrict: true}},
+	"for_each": {ownList, kind{mode: modeAll, repeat: repeatMsg}},
+	"switch":   {cases, kind{mode: modeAll}},
+	"group_by": {cases, kind{mode: modeAll, repeat: repeatGroup}},
+}
+
 // parentKind returns the kind of the child lists of parent component name
 // with config v (AD-7, AD-10).
 func parentKind(name string, v *yaml.Node) kind {
-	switch name {
-	case "try":
-		return kind{mode: modeTry, repeat: repeatMsg}
-	case "catch":
-		return kind{mode: modeAll, noStrict: true}
-	case "for_each":
-		return kind{mode: modeAll, repeat: repeatMsg}
-	case "while":
-		return kind{mode: modeAll, repeat: repeatLoop}
-	case "group_by":
-		return kind{mode: modeAll, repeat: repeatGroup}
-	case "retry":
-		k := kind{mode: modeAll, repeat: repeatAttempt}
+	row, ok := parents[name]
+	if !ok {
+		return all
+	}
+	k := row.kind
+	if k.repeat == repeatAttempt {
 		if m := value(v, "max_retries"); m != nil && m.Kind == yaml.ScalarNode && !isNull(m) {
 			c := *m
 			k.maxAttempts = &c
 		}
-		return k
 	}
-	return all
+	return k
+}
+
+// childList is one child processor list of an AD-7 parent.
+type childList struct {
+	// list is the list node (nil when absent), and slot where it sits in
+	// the parent's config.
+	list *yaml.Node
+	slot **yaml.Node
+	// path and eng are the suffixes of the list's user path and engine
+	// path after the parent's: "", ".processors" or "[i].processors"
+	// (engine ".i.processors").
+	path, eng string
+	// keyLine is the line of the key the list is under: the end-of-entry
+	// stop (AD-10).
+	keyLine int
+	// bad, when set, is the node at path that should hold the list but is
+	// not want ("a list" or "a mapping"); list is then nil. The walker turns
+	// it into PIPELINE_INVALID; the resource check and taint scan rely on
+	// their list functions ignoring a nil list, so every caller must either
+	// check bad or tolerate a nil list.
+	bad  *yaml.Node
+	want string
+}
+
+// childLists yields, per the AD-7 table, the child lists of the parent
+// component at key index i of processor mapping p, in config order. It
+// yields nothing for a component that isn't in the table.
+func childLists(p *yaml.Node, i int) iter.Seq[childList] {
+	return func(yield func(childList) bool) {
+		k, v := p.Content[i], p.Content[i+1]
+		row, ok := parents[k.Value]
+		if !ok {
+			return
+		}
+		switch row.shape {
+		case ownList:
+			yield(childList{list: v, slot: &p.Content[i+1], keyLine: k.Line})
+		case inner:
+			innerLists(v, "", "", yield)
+		case cases:
+			if isNull(v) {
+				return
+			}
+			if v.Kind != yaml.SequenceNode {
+				yield(childList{bad: v, want: "a list"})
+				return
+			}
+			for c, cs := range v.Content {
+				if !innerLists(cs, "["+strconv.Itoa(c)+"]", "."+strconv.Itoa(c), yield) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// innerLists yields the processors fields of mapping m, whose suffixes are
+// path and eng. It returns false when yield asked to stop.
+func innerLists(m *yaml.Node, path, eng string, yield func(childList) bool) bool {
+	if isNull(m) {
+		return true
+	}
+	if m.Kind != yaml.MappingNode {
+		return yield(childList{path: path, eng: eng, bad: m, want: "a mapping"})
+	}
+	for j := 0; j+1 < len(m.Content); j += 2 {
+		if m.Content[j].Value != "processors" {
+			continue
+		}
+		cl := childList{
+			list: m.Content[j+1], slot: &m.Content[j+1],
+			path: path + ".processors", eng: eng + ".processors",
+			keyLine: m.Content[j].Line,
+		}
+		if !yield(cl) {
+			return false
+		}
+	}
+	return true
 }
 
 // walker wraps child processor lists in steppers (AD-6), giving each a
@@ -171,29 +274,6 @@ func (w *walker) list(v *yaml.Node, path, eng string, keyLine, parent int, k kin
 	return seq, nil
 }
 
-// inner wraps the processors field of mapping m (a branch, while, retry,
-// switch case or group_by group) at path, engine path eng.
-func (w *walker) inner(m *yaml.Node, path, eng string, parent int, k kind) error {
-	if isNull(m) {
-		return nil
-	}
-	if m.Kind != yaml.MappingNode {
-		return invalid(m.Line, path, "%s is not a mapping", path)
-	}
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == "processors" {
-			st, err := w.list(m.Content[i+1], path+".processors", eng+".processors", m.Content[i].Line, parent, k)
-			if err != nil {
-				return err
-			}
-			if st != nil {
-				m.Content[i+1] = st
-			}
-		}
-	}
-	return nil
-}
-
 // What classify finds a processor component to be.
 const (
 	leaf       = iota // no child list
@@ -207,8 +287,6 @@ const (
 func classify(name string, v *yaml.Node) (int, string) {
 	const opaque = ", so it runs as one step and nothing inside it is stepped"
 	switch name {
-	case "branch", "while", "try", "catch", "for_each", "switch", "group_by":
-		return parent, ""
 	case "retry":
 		p := value(v, "parallel")
 		if isInterpolated(p) {
@@ -221,6 +299,9 @@ func classify(name string, v *yaml.Node) (int, string) {
 		return parent, ""
 	case "workflow", "parallel":
 		return concurrent, name + " runs its processors concurrently" + opaque
+	}
+	if _, ok := parents[name]; ok {
+		return parent, ""
 	}
 	if (name == "processors" && v.Kind == yaml.SequenceNode) || holdsProcessors(v) {
 		return unknown, name + " is not a parent processor the debugger knows" + opaque
@@ -252,52 +333,19 @@ func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 			continue
 		}
 		pk := parentKind(k.Value, v)
-		switch k.Value {
-		case "branch", "while", "retry":
-			if err := w.inner(v, cp, ce, parent, pk); err != nil {
-				return err
+		for cl := range childLists(p, i) {
+			lp := cp + cl.path
+			if cl.bad != nil {
+				return invalid(cl.bad.Line, lp, "%s is not %s", lp, cl.want)
 			}
-		case "try", "catch", "for_each":
-			st, err := w.list(v, cp, ce, k.Line, parent, pk)
+			st, err := w.list(cl.list, lp, ce+cl.eng, cl.keyLine, parent, pk)
 			if err != nil {
 				return err
 			}
 			if st != nil {
-				p.Content[i+1] = st
-			}
-		case "switch", "group_by":
-			if isNull(v) {
-				continue
-			}
-			if v.Kind != yaml.SequenceNode {
-				return invalid(v.Line, cp, "%s is not a list", cp)
-			}
-			for c, cs := range v.Content {
-				if err := w.inner(cs, child(cp, c), ce+"."+strconv.Itoa(c), parent, pk); err != nil {
-					return err
-				}
+				*cl.slot = st
 			}
 		}
-	}
-	return nil
-}
-
-// childLists returns the child processor lists of parent component name
-// with config v.
-func childLists(name string, v *yaml.Node) []*yaml.Node {
-	switch name {
-	case "branch", "while", "retry":
-		return []*yaml.Node{value(v, "processors")}
-	case "try", "catch", "for_each":
-		return []*yaml.Node{v}
-	case "switch", "group_by":
-		var out []*yaml.Node
-		if v.Kind == yaml.SequenceNode {
-			for _, c := range v.Content {
-				out = append(out, value(c, "processors"))
-			}
-		}
-		return out
 	}
 	return nil
 }
@@ -414,8 +462,8 @@ func scanProcessor(p *yaml.Node, out map[string]bool) {
 		case concurrent, unknown:
 			refs(v, out)
 		case parent:
-			for _, l := range childLists(name, v) {
-				scanList(l, out)
+			for cl := range childLists(p, i) {
+				scanList(cl.list, out)
 			}
 		}
 	}
