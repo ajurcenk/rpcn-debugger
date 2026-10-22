@@ -3,7 +3,7 @@ title: 'Strict-mode output rejection is not a run failure'
 type: 'bugfix'
 ticket: '14'
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: 'f2e77f9a4c2043c06de0e467ec9046db56bf462b'
 route: 'oneshot'
 route_source: 'auto'
