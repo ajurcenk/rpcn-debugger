@@ -3,7 +3,7 @@ title: 'Bump to Connect v4.115.0, benthos v4.84.0 and Go 1.27.3'
 type: 'chore'
 ticket: ''
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: '305cb7a3582312a5bc4e736f65368fb290c6c102'
 route: 'oneshot'
 route_source: 'auto'
