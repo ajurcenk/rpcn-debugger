@@ -57,3 +57,4 @@ Not replay itself (epic-edit-restart-replay). The rejected-input hint names the 
 - Decision: one lane in build order. The set check chained the entries because nearly all of them change the rewrite or the launch config (inception, 2026-10-23).
 - Decision: D9's corpus case is a warning golden for the shared cache, plus a corpus case with a cache used only in the step tree, which must stay equal (user, 2026-10-23).
 - Decision: the breakdown was approved with 11 entries; the spine is updated for D1-D9 right after the inception (user, 2026-10-23).
+- Decision: keep D5. The capture joins a real consumer group `rpcn-debug-<os-user>-<k>` over the real Kafka connection; reading with no group was considered and declined (user, 2026-10-23, after the 3.2 VS Code check).

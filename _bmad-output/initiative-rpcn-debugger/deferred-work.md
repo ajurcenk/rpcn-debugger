@@ -121,3 +121,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-tracer-bullet-a-kafka-capture-under-the-debug-group-commits-plan.md`
   summary: CLAUDE.md's Layout should list `testdata/tracer/kafka.yaml` (the Kafka F5 sample for E3's acceptance run) and `test/integration/neverack_test.go` (the never-ack test). For E3's refactor sweep, with the entry-1 item above.
   evidence: quick review of E3 entry 2 (2026-10-23); fixes to agent-context files are deferred to a sweep.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-tracer-bullet-a-kafka-capture-under-the-debug-group-commits-plan.md`
+  summary: Tell users what the debug group leaves on the cluster: an empty group `rpcn-debug-<os-user>-<k>` (no members, no offsets) that stays until the broker expires it or `rpk group delete` removes it, and that joining it needs Group READ on that name, so credentials limited to the production group can't capture. Belongs in the group-override launch warning or note (E3 entry 5) and in the user docs (epic-local-release).
+  evidence: 3.2 VS Code check (2026-10-23): `rpk group list` shows `rpcn-debug-aleksejjurcenko-0` in state Empty after the session. The user kept the group-based capture (D5).
