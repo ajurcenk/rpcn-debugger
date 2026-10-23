@@ -7,7 +7,7 @@ paradigm: 'hexagonal (ports & adapters) around an in-process Redpanda Connect en
 scope: 'Redpanda Connect VSCode visual debugger: capture one batch from a pipeline input, step it through the processors (and Bloblang statements), and show the message state in VSCode over DAP'
 status: final
 created: '2026-10-08'
-updated: '2026-10-22'
+updated: '2026-10-23'
 binds: [U-CORE, U-REWRITE, U-STEP, U-BLOBL, U-DAP, U-EXT, U-REL]
 sources:
   - 'analyst handoff + spikes 2026-10-08 (scratchpad/spike: main.go, nested/, blobl/)'
@@ -73,7 +73,7 @@ Unit IDs:
   - All behaviour lives in the Go package `debugger`, behind one entry point: `debugger.Serve(env *service.Environment, in io.Reader, out io.Writer, opts ...Option) error`.
   - `cmd/rpcn-debug` only builds `env` from `schema.Standard(version, date).Environment()` with `components/all` imported, then calls `Serve`. Users with compiled-in plugins call `Serve` from their own `main`.
   - Each stream a session builds works on its own `env.Clone()`: one for capture, one for stepping (AD-4). Every registration goes on each clone (`rpcn_debug_stepper`, the launch's RPC plugins via `public/plugin/go/rpcnloader.DiscoverAndRegisterPlugins`), except `rpcn_debug_sink`, which only the step clone has. All clones are discarded on terminate and on restart. The caller's `env` is never modified.
-  - Each stream builds its own `*_resources`. A stateful resource (a `memory` cache, a local `rate_limit`) used both in the input tree and in the pipeline therefore holds separate state in capture and in stepping, unlike production, where it is shared.
+  - Each stream builds its own `*_resources`. A stateful resource (a `memory` cache, a local `rate_limit`) used both in the input tree and in the pipeline therefore holds separate state in capture and in stepping, unlike production, where it is shared. A `cache_resources` or `rate_limit_resources` entry reachable from both the input tree and the step tree gets a launch warning saying so.
   - The exported API of `debugger` follows semver from v1.
 
 ### AD-2: Public engine API only, linked in-process [ADOPTED]
@@ -92,9 +92,9 @@ Unit IDs:
     - **Commands:** `Launch, ConfigurationDone, SetBreakpoints, SetExceptionBreakpoints, Next, StepIn, StepOut, Continue, Pause, Evaluate, SetMessage, SaveCapture, Restart, Terminate`.
     - **Events:** `ThreadStarted, ThreadExited, StepStarted, StepFinished, Paused, Continued, MessagesSkipped, AttemptStarted, StatementStepped, BreakpointResolved, Delivered, Output, Terminated`.
   - Adding a **field** to an existing command or event is not a spine change; adding a member is.
-  - Errors are `core.Error{Code, Message, UserPath?, Line?, Inline}`. `Inline` means `Message` already names every location, and `UserPath`/`Line` hold the first one. `Code` is an `UPPER_SNAKE` string constant from the registry in `debugger/core/errors.go`, which also assigns each code a stable number for DAP. A new code takes the next number, which isn't a spine change; numbers are never reused: `LAUNCH_INVALID` 1001, `PIPELINE_INVALID` 1002, `NOTHING_CAPTURED` 1003, `SESSION_ENDED` 1004, `NOT_SUPPORTED` 1005, `NOT_STOPPED` 1006, `RUN_FAILED` 1007, `CTX_LOST` 1008, `LICENSE_REQUIRED` 1009, `STRICT_REJECTED` 1010.
-  - `STRICT_REJECTED` is a run outcome, not a failure: the Session reports it as a Debug Console note.
-  - The Session owns the delivered-batch number; frontends display it and don't count. `core.Delivered` carries it (1-based, reset on Restart). Target: today `debugger/dap` also counts (deferred-work, epic-safe-against-real-systems' refactor sweep).
+  - Errors are `core.Error{Code, Message, UserPath?, Line?, Inline}`. `Inline` means `Message` already names every location, and `UserPath`/`Line` hold the first one. `Code` is an `UPPER_SNAKE` string constant from the registry in `debugger/core/errors.go`, which also assigns each code a stable number for DAP. A new code takes the next number, which isn't a spine change; numbers are never reused: `LAUNCH_INVALID` 1001, `PIPELINE_INVALID` 1002, `NOTHING_CAPTURED` 1003, `SESSION_ENDED` 1004, `NOT_SUPPORTED` 1005, `NOT_STOPPED` 1006, `RUN_FAILED` 1007, `CTX_LOST` 1008, `LICENSE_REQUIRED` 1009, `STRICT_REJECTED` 1010, and, from epic-safe-against-real-systems, `INPUT_REJECTED` 1011 (with a replay hint), `SIDE_EFFECTS_NOT_ALLOWED` 1012 (`UserPath`/`Line` at the input, the effect in `Message`) and `OUTPUT_FAILED` 1013.
+  - `STRICT_REJECTED` is a run outcome, not a failure: the Session reports it as a Debug Console note. It is decided from which messages reaching the sink carry an error, never from error text.
+  - The Session owns the delivered-batch number; frontends display it and don't count. `core.Delivered` carries it (1-based, reset on Restart). Target: today `debugger/dap` also counts (epic-safe-against-real-systems entry 8).
   - No go-dap type appears outside `debugger/dap`.
 
 ### AD-4: Capture-then-step, with two configs from one rewrite [ADOPTED]
@@ -106,7 +106,7 @@ Unit IDs:
   - **(b) Step config:** the steppers in order `input.processors` → `pipeline.processors` → `output.processors`, ending in `rpcn_debug_sink` (AD-21). Shared top-level `*_resources` sections carry over; `error_handling.strict` is applied with `StreamBuilder.SetStrict` (AD-6).
 
   U-STEP then:
-  1. Runs (a) with `AddBatchConsumerFunc`, takes the first batch, and **never acks it**: the consumer returns an error, and the input is stopped before stepping starts. An input that closes first is `NOTHING_CAPTURED`.
+  1. Runs (a) with `AddBatchConsumerFunc`, takes the first batch, and **never acks it**: the consumer returns an error, and the input is stopped before stepping starts. An input that closes first is `NOTHING_CAPTURED`. Capture ends only with a batch, an input close, `Pause` or `Terminate`; after 5 s with nothing captured, the Session emits one console note ("waiting for the input …").
   2. Truncates the batch to `maxMessages` (default 10, at most 1024).
   3. Feeds it into (b) through `AddBatchProducerFunc`.
 
@@ -121,18 +121,20 @@ Unit IDs:
 - **Binds:** U-REWRITE, U-STEP, U-EXT, U-DAP
 - **Prevents:** a debug session stealing, deleting or rebalancing production data; writing to production outputs; sending telemetry to production systems.
 - **Rule:**
-  - **Input classes**, from a table in `debugger/rewrite`:
+  - **Input table and walker:** `debugger/rewrite` owns one input table (component, a class predicate over its fields, consumer-group fields, start-offset fields, effect text) and one input-tree walker (`broker.inputs`, `sequence.inputs`, `read_until.input`, `resource:` into `input_resources`). The class, the group override and the stdin rule all use them. Classes look at fields, not only the component: `aws_s3` with `sqs` is side-effecting.
 
     | Class | Inputs | Behaviour |
     | --- | --- | --- |
-    | replay-safe | Kafka family with a group override, `file`, `generate`, `aws_s3` | allowed |
-    | side-effecting | queues and durable consumers: SQS, AMQP, NATS JetStream, `redis_list`, … | allowed only with `"allowSideEffects": true`, with a warning naming the effect |
-    | rejected | `stdin`, `http_server`, sockets | rejected; replay only |
+    | replay-safe | Kafka family with an overridden group, `file`, `generate`, `aws_s3` without `sqs` | allowed |
+    | side-effecting | queues and durable consumers (SQS, AMQP, NATS JetStream, `redis_list`, …), and any group-consuming input whose group is kept | allowed only with `"allowSideEffects": true`, with a warning naming the effect |
+    | rejected | `stdin`, `http_server`, sockets | `INPUT_REJECTED`, with a replay hint |
     | unknown | anything else | treated as side-effecting |
 
-  - **Consumer groups:** every known consumer-group field is set to `rpcn-debug-<os-user>` unless `"keepConsumerGroup": true`. The table of fields lives in `debugger/rewrite` and recurses into `broker` and `sequence`.
-  - **Output:** `output` is `dry-run` (the default; results go to VSCode only), `real`, or `none`. `real` is required to write to the user's output, and it logs a warning.
-  - **Dropped sections:** the rewrite drops `metrics`, `tracer`, `http` and `logger`. The engine gets a no-op metrics and tracer and the AD-15 logger.
+  - **Who decides:** a composite input takes its worst child's class. The rewrite never refuses on class: it reports input findings (user path, line, component, class, effect) in the Plan, and the Session alone refuses, against `allowSideEffects` (`SIDE_EFFECTS_NOT_ALLOWED`) and, from epic-edit-restart-replay, `replay`, which skips the check.
+  - **Consumer groups:** the Session supplies the debug-group base `rpcn-debug-<os-user>`, from the process user, as a rewrite option; the rewrite stays pure. Each overridden field gets `<base>-<k>` (k is the input's index in walker order), so distinct groups stay distinct; there is no per-session suffix. `"keepConsumerGroup": true` keeps the groups. The class is computed after the override: a kept group, or a group field the table can't override (an interpolated one), makes the input side-effecting ("joins consumer group G; its members rebalance"). Start-offset fields stay as configured, with a launch warning when one resolves to latest.
+  - **Output:** `output` is `dry-run` (the default; results go to VSCode only), `real`, or `none`. `real` is required to write to the user's output, and it logs a warning (AD-21).
+  - **Side-effecting processors:** a processor effect table (component plus a field predicate: `sql_insert`, `sql_raw`, `redis` writes, a remote `cache` set or delete, `http` with a write method, `aws_lambda`, `command`, …) gives each match a launch warning naming the system it writes to, marked "runs during capture, not stepped" in the input tree. It is a warning only; no opt-in is required.
+  - **Top-level sections:** an explicit allowlist reaches the engine: `input`, the processor lists, `output` (AD-21), `*_resources`, `error_handling`, and `redpanda` with only its connection fields (`logs_topic`, `status_topic` and `pipeline_id` are removed, so no debug logs or status reach production). Everything else is dropped; `metrics` and `tracer` become no-ops and the logger is the AD-15 one. If `StreamBuilder` doesn't wire the shared `redpanda` client, `redpanda_common` is a rejected row with that reason.
   - **`buffer`:** the top-level buffer is dropped with a launch warning that production batch boundaries may differ, like output `batching` (AD-21), and a corpus case pins it.
   - The captured batch is never acked, whatever the options.
 
@@ -276,7 +278,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
   - When `Serve` runs over stdio, only the DAP encoder writes to `out`.
   - All logs go through one `log/slog` handler (after AD-6 translation). It writes Info and above to stderr, and sends engine records at Warn and above to DAP `Output` (console for warnings, stderr for errors). `Serve`'s `WithLogOutput` sets the stderr side.
   - The Session's own `Output` events (notes and warnings) go to the frontend directly, not through slog.
-  - In stdio mode the rewrite rejects `stdin` inputs and redirects `stdout`/`stderr` outputs to the dry-run sink, with a warning, even under `output: real`.
+  - In stdio mode `stdin` is a rejected input class (AD-5), and `stdout`/`stderr` outputs never write: under `dry-run` and `none` the sink takes their place, and under `real` they are replaced by `drop: {}` (AD-21). Each gets a warning whose text follows the mode.
   - `golangci-lint` enforces this together with AD-2: `forbidigo` bans `fmt.Print*` and `os.Stdout` in `debugger/...`, and `depguard` bans `internal/` imports.
 
 ### AD-16: Stepper identity comes from the rewrite [ADOPTED]
@@ -334,6 +336,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 - **Rule:**
   - `Restart` re-reads and re-rewrites the pipeline YAML (a new LineMap, with breakpoints resolved again), discards all threads and frames and the cloned env, and re-steps the **already captured batch** through an in-memory replay Source.
   - It never re-captures. A fresh capture is a new launch.
+  - A Restart or `replay` session with `output: real` writes to the user's output only when the launch also sets `allowRepeatWrites: true`; otherwise it runs as `dry-run` with a console note.
   - U-DAP advertises `supportsRestartRequest: true`.
   - If the rewrite fails, the session stays alive and reports a `core.Error` with `UserPath`/`Line`.
 
@@ -345,7 +348,8 @@ Steppers accept and return several batches, because `group_by` splits and reorde
   - The step config's output is always `rpcn_debug_sink`. It receives batches **after** `output.processors` and emits `Delivered{Snapshot}`.
   - In `dry-run` it records the batches exactly as received (`MaxInFlight = 1`). It doesn't apply output-level `batching`, and warns that production boundaries may differ.
   - Dry-run delivers what reaches `output`, before per-output processing: a composite output's per-output processors don't run, with a warning (AD-6). Their routing (`round_robin`, `greedy`, `fallback`) can't be reproduced without the real output; `real` runs them.
-  - In `real` it also forwards each batch to the user's output, built from the original block. In `none` it discards them.
+  - In `real` the rewrite emits the user's `output` block **without** its top-level `processors` (they already ran in the stepper), with `stdout`/`stderr` replaced by `drop: {}`. The sink has a `mode` and an output field built from that block (the engine never parses an output string), and writes each batch to it synchronously (`MaxInFlight = 1` in every mode). In `none` it discards them.
+  - The sink calls `Deliver` exactly once per batch, after the write under `real`, and `Delivered` is emitted in all three modes with an outcome (`recorded`, `written`, `discarded` or `failed`) and the write error. A failed write is `OUTPUT_FAILED`. The Session's console texts follow the mode.
   - AD-8 compares what the sink received.
 
 ### AD-22: Secrets and captured data [ADOPTED]
@@ -481,4 +485,4 @@ sequenceDiagram
 | **Resolved (spike 1.6):** binary size and CGO. Stripped `rpcn-debug` is 310–346 MB on linux/darwin amd64/arm64 and windows/amd64 (linux/amd64 is 92 MB gzipped). All targets build with `CGO_ENABLED=0`, and only the `tigerbeetle_cdc` input is lost without CGO | U-REL | Closed |
 | Upstream goal (the user mix is confirmed: mostly stock `rpk connect` on laptops) | AD-1 emphasis | If upstream `rpk connect debug` becomes the main channel |
 | Hexagonal ports were taken without stated roadmap priorities | AD-3 port surface | If no second frontend or replay use appears within 3 releases |
-| **E3 design (adversary review 2026-10-22, H1–H6, H8, H9):** one input table and one input-tree walker for classes, group fields and stdin, with the Session alone refusing; the `output: real` config shape and a `Delivered` outcome (recorded, written, discarded, failed), plus a `STRICT_REJECTED` decision that isn't based on error text; the consumer-group base owner and per-field names, a kept group being side-effecting, and a "waiting for the input" note; Restart/replay under `real`; side-effecting processors in dry-run; the top-level `redpanda` block | epic-safe-against-real-systems | Before slicing E3 (its inception), per `reviews/review-adversary-2026-10-22.md` |
+| **Resolved (E3 inception, 2026-10-23):** the E3 design holes H1–H6, H8 and H9 (`reviews/review-adversary-2026-10-22.md`), decided as D1–D9 in AD-3, AD-4, AD-5, AD-15, AD-20 and AD-21 | epic-safe-against-real-systems | Closed |
