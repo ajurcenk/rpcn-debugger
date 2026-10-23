@@ -1,0 +1,124 @@
+# epic-safe-against-real-systems: entries in build order. The table order is the build order; ids are permanent.
+
+[[entry]]
+id = 1
+type = "story"
+title = "One rewrite per launch, with Session-supplied rewrite options"
+description = "Opening enabler (retro A5): `Check` rewrites the pipeline once and `Start` runs those same configs, LineMap and Translator without reading the file again. `Rewrite` gains an options argument that the Session fills; the first option is the debug-group base `rpcn-debug-<os-user>`, from the process user (D5)."
+verify = "A test edits the pipeline file between launch and configurationDone and the run still uses the launch's configs; a rewrite unit test sees the option it was given."
+covers = ["CAP-2"]
+after = ["2.5"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Tracer bullet: a Kafka capture under the debug group commits nothing"
+description = "The thinnest path through launch, Session, rewrite, capture and the Redpanda test: the rewrite overrides `kafka_franz.consumer_group` to `<base>-0` (D5), the capture reads one batch, and the never-ack integration test shows no committed offsets for the production or the debug group, and a rerun captures the same messages. It adds the F5 sample `testdata/tracer/kafka.yaml`."
+verify = "`task test:integration` runs a session against a Redpanda container with a `kafka_franz` input and asserts both groups have no committed offsets and a second session captures the same messages."
+covers = ["CAP-2"]
+after = [1, "1.3", "2.1"]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Input table and input-tree walker"
+description = "The D1 input table (component, class predicate over its fields, group fields, start-offset fields, effect text) and one input-tree walker in `debugger/rewrite` (`broker`, `sequence`, `read_until`, `resource:` into `input_resources`), returning input findings in the Plan; a composite takes its worst child's class, and entry 2's one-off `kafka_franz` override moves into the table. Until entry 5 lands, group-consuming rows other than `kafka_franz` are classed side-effecting."
+verify = "Rewrite goldens classify each table row, nested and resource-referenced inputs, an input with no row (unknown), and `aws_s3` with and without `sqs`; the user reviews the table draft."
+covers = ["CAP-2"]
+after = [2]
+hitl = false
+risk = "high"
+unknown = "The class of each Connect v4.115 input: the table draft is reviewed with the user before the entry closes."
+
+[[entry]]
+id = 4
+type = "story"
+title = "The Session refuses inputs, and the capture wait note"
+description = "The Session refuses a rejected input with `INPUT_REJECTED` 1011 (replay hint) and a side-effecting or unknown one without `allowSideEffects` with `SIDE_EFFECTS_NOT_ALLOWED` 1012, naming the effect at the input's path and line (D1); `allowSideEffects` joins LaunchConfig and the generated schema, and `stdin` moves from `PIPELINE_INVALID` to 1011. After 5 s with nothing captured the console shows one 'waiting for the input' note (D5)."
+verify = "DAP tests get 1011 for `stdin` and `http_server`, 1012 for an SQS input and for an input with no table row, a run with `allowSideEffects: true` that warns with the effect, and the wait note on a silent input."
+covers = ["CAP-2"]
+after = [3]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 5
+type = "story"
+title = "Consumer-group override for every group field"
+description = "Every group field in the input table gets `<base>-<k>` (k per input in walker order, D5), unless `keepConsumerGroup` (a new launch key) is set; a kept or unoverridable group re-classes the input side-effecting (D4), replacing entry 3's interim class. A start offset that resolves to latest gets a launch warning."
+verify = "Goldens for each group field, a `broker` and a `sequence` with two distinct groups (`-0`, `-1`), and an interpolated group; the integration test asserts the production group's membership generation is unchanged, and `keepConsumerGroup` without `allowSideEffects` is refused with 1012."
+covers = ["CAP-2"]
+after = [4]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 6
+type = "story"
+title = "Explicit top-level allowlist and the redpanda block"
+description = "The rewrite's implicit allowlist (`rewrite.go`: only the input, the steppers and `*_resources` reach the engine) becomes an explicit list (D8), and the top-level `redpanda` block is carried with only its connection fields (`logs_topic`, `status_topic`, `pipeline_id` removed), with a warning for a dropped section that changes behaviour."
+verify = "Goldens for a pipeline with every top-level section; an integration test where `redpanda_common` captures through the carried block and nothing reaches the logs or status topic, or, if the client isn't wired, `redpanda_common` is refused with the reason."
+covers = ["CAP-2"]
+after = [5]
+hitl = false
+risk = "medium"
+unknown = "Whether `StreamBuilder` wires the shared `redpanda` client for `redpanda_common`; settle it by probe at the start of the entry."
+
+[[entry]]
+id = 7
+type = "story"
+title = "output: real and none"
+description = "The `output` launch key (`dry-run` default, `real`, `none`). Under `real` the rewrite emits the user's output block without its top-level `processors` and with `stdout`/`stderr` replaced by `drop: {}` (D2), and `rpcn_debug_sink` gains a `mode` and an output field and writes each batch to it synchronously; `none` discards. The sink still calls `Deliver` under every mode, `real` logs a warning, and the stdout/stderr warning text follows the mode."
+verify = "An integration test with `output: real` to a Redpanda topic receives exactly the batches the Debug Console shows, once, with `output.processors` applied once; `none` writes nothing and still shows each batch; goldens for the emitted output block."
+covers = ["CAP-11"]
+after = [6, "2.8"]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 8
+type = "story"
+title = "Delivered outcomes, Session-owned batch numbers, and strict from errored messages"
+description = "`Delivered` gains an outcome (recorded, written, discarded, failed) and the write error, emitted once per batch after the write (D3); a failed write is `OUTPUT_FAILED` 1013. The Session numbers batches, replacing the DAP counter (`debugger/dap/server.go` `delivered`), and its console texts follow the mode. `STRICT_REJECTED` is decided from which messages carry an error, replacing the `strictRejection` text match in `debugger/engine/engine.go`."
+verify = "Engine tests with a failing and a reconnecting output see one `Delivered` per batch with the right outcome; the strict corpus case still passes; a mixed strict batch under `real` with a failing write reports `OUTPUT_FAILED`, not the strict note."
+covers = ["CAP-11"]
+after = [7]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 9
+type = "story"
+title = "Launch warnings: side-effecting processors and state split between capture and stepping"
+description = "A processor effect table (D7) warns about each side-effecting processor, naming the system it writes to and marking 'runs during capture, not stepped' in the input tree; a cache or rate-limit resource reachable from both the input tree and the step tree is warned as not sharing state (D9)."
+verify = "Goldens for each effect-table row inside and outside the input tree and for a shared `memory` cache; a corpus case with a cache used only in the step tree stays green."
+covers = ["CAP-11"]
+after = [8]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 10
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup across the epic, scoped when it starts from the plans and the review findings deferred during the epic."
+verify = "`task ci` is green with no behaviour change: every golden byte-identical and the equivalence corpus green."
+covers = []
+after = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 11
+type = "story"
+title = "VS Code acceptance run against Redpanda"
+description = "A person runs the epic's checklist, kept in this entry's plan file, from the installed `.vsix` against a local Redpanda: F5 on `testdata/tracer/kafka.yaml` under the debug group, refusals with their codes, `allowSideEffects`, `keepConsumerGroup`, `output: real` and `none`, and the new warnings."
+verify = "The user ticks every checklist item in the plan file in VS Code, and `task ci` is green."
+covers = ["CAP-2", "CAP-11"]
+after = [10]
+hitl = true
+risk = "medium"

@@ -40,3 +40,4 @@ Not a fresh capture on Restart (that's a new launch).
 - Waits on epic-safe-against-real-systems because: replay has to bypass its input-class rejection.
 - Waits on epic-breakpoints-and-evaluation because: Restart re-resolves breakpoints with its resolver.
 - Waits on epic-bloblang-statement-stepping because: Restart re-resolves statement lines.
+- Handoff from epic-safe-against-real-systems (decision D6, 2026-10-23): a Restart or `replay` session with `output: real` writes only when the launch also sets `allowRepeatWrites: true`; otherwise it runs as dry-run with a console note. Name it in this epic's Done when at its inception.
