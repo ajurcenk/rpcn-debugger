@@ -3,7 +3,7 @@ title: 'Tracer bullet: a Kafka capture under the debug group commits nothing'
 type: 'feature'
 ticket: '2'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: '98c3c479d36f7094c2a9ea050c55fef5b61dfd75'
 route: 'full'
 route_source: 'auto'
