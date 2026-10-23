@@ -81,3 +81,23 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/epic-tracer-retrospective.md`
   summary: Spec reconciliation for A6 — narrow AD-8's time-budget clause to `retry` (backoff, max_elapsed_time), the only time-budgeted parent the debugger can pause inside. Branch and workflow have no timeout field, workflow runs as one opaque step, and pausing near a rate limit changes only throttling, not output. User decision 2026-10-22; no code change.
   evidence: benthos v4.81 internal/impl/pure/processor_branch.go and processor_workflow.go (time used only for latency metrics); processor_rate_limit.go (a leaf, with only a `resource` field); the warning lives in debugger/core/session.go (InRetry).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md`
+  summary: The Session owns the delivered-batch number (AD-3): add `Batch` to `core.Delivered` (1-based, reset on Restart), and have debugger/dap display it instead of counting in its own `delivered` counter. For epic-safe-against-real-systems' refactor sweep.
+  evidence: debugger/dap/server.go `delivered atomic.Int64` numbers batches for the Debug Console line and rpcnDelivered; debugger/core/session.go `delivered` counts them for "Nothing was delivered". Two owners; Restart would have to reset both. Spine update 2026-10-22 (A6).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-tracer/epic-tracer-retrospective.md`
+  summary: Candidate, no owner: step `fan_out` broker and `switch` output cases in dry-run, delivering one sink batch per case. Their routing is deterministic, unlike round_robin, greedy and fallback, which keep the not-run warning.
+  evidence: user decision A7(a), 2026-10-22; spine AD-21 and Deferred table.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md`
+  summary: Entry before epic-safe-against-real-systems: a launch warning when a `try` or `catch` list holds a stateful child (cache, dedupe, rate_limit, …), because the engine runs them processor-major while the debugger steps message-major (AD-7). Add a corpus case pinning the stateless case.
+  evidence: benthos v4.81 internal/component/processor/execute.go ExecuteTryAll/ExecuteCatchAll (for each processor, for each message) against debugger/engine/stepper.go (all children per message). User decision 2026-10-22 (A6 gate).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md`
+  summary: Entry before epic-safe-against-real-systems: warn when the top-level `buffer` section is dropped (production batch boundaries may differ, like output batching; AD-5), and add a corpus case.
+  evidence: the rewrite keeps only input, the steppers and *_resources, so `buffer` is dropped silently today. User decision 2026-10-22 (A6 gate).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md`
+  summary: Entry before epic-safe-against-real-systems: bump to Connect v4.115.0 / benthos v4.84.0 / Go 1.27.3, with the AD-8 job (`task ci`) passing (AD-14); update the spine Stack and CLAUDE.md's Go version.
+  evidence: review-verification-2026-10-22.md (live registries 2026-10-22; v4.112 to v4.115 changed only component packages in connect/public, and the AD-7 parents only in doc strings). User decision 2026-10-22.
