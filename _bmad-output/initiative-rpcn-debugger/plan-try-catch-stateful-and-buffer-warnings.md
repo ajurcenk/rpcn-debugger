@@ -3,7 +3,7 @@ title: 'Launch warnings for stateful try/catch children and a dropped buffer'
 type: 'feature'
 ticket: ''
 created: '2026-10-22'
-status: 'built'
+status: done
 baseline_revision: '9215d935e5104bacb32d3173386d4f964bc2389a'
 route: 'full'
 route_source: 'auto'
