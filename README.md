@@ -18,7 +18,7 @@ A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-conn
 
 ## Prerequisites
 
-- Go 1.26 (the `go 1.26.6` toolchain is fetched automatically if needed)
+- Go 1.27 (the `go 1.27.3` toolchain is fetched automatically if needed)
 - Node.js 22 or later (required by `@vscode/vsce` 4)
 - [Task](https://taskfile.dev)
 - [jq](https://jqlang.org), used by `task lint:gomod`
@@ -50,7 +50,7 @@ The first build compiles every Connect component and takes a few minutes.
 
 ```sh
 bin/rpcn-debug --version
-# rpcn-debug <version> (connect v4.112.0, benthos v4.81.0)
+# rpcn-debug <version> (connect v4.115.0, benthos v4.84.0)
 ```
 
 ## Install the extension

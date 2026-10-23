@@ -1,11 +1,11 @@
 module github.com/ajurcenk/rpcn-debugger
 
-go 1.26.6
+go 1.27.3
 
 require (
 	github.com/google/go-dap v0.12.1-0.20260926015354-7505f696918e
-	github.com/redpanda-data/benthos/v4 v4.81.0
-	github.com/redpanda-data/connect/v4 v4.112.0
+	github.com/redpanda-data/benthos/v4 v4.84.0
+	github.com/redpanda-data/connect/v4 v4.115.0
 	github.com/testcontainers/testcontainers-go v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.42.0
 	github.com/twmb/franz-go v1.21.6
@@ -79,6 +79,7 @@ require (
 	github.com/PaesslerAG/jsonpath v0.1.1 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.24.0 // indirect
+	github.com/SAP/go-hdb v1.16.8 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apache/arrow-go/v18 v18.7.0 // indirect
@@ -87,7 +88,7 @@ require (
 	github.com/apache/arrow/go/v15 v15.0.2 // indirect
 	github.com/apache/iceberg-go v0.6.1-0.20260817231015-4390d2af2bb0 // indirect
 	github.com/apache/pulsar-client-go v0.18.0 // indirect
-	github.com/apache/thrift v0.24.0 // indirect
+	github.com/apache/thrift v0.25.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/ardielle/ardielle-go v1.5.2 // indirect
 	github.com/auth0/go-jwt-middleware/v2 v2.3.1 // indirect
@@ -478,16 +479,16 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	gocloud.dev v0.46.0 // indirect
-	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b // indirect
-	golang.org/x/mod v0.40.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
-	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

@@ -23,14 +23,14 @@ Pipeline developers find the processor or Bloblang statement that causes a wrong
 
 1. The spec's success signal is demonstrated end to end on a real Redpanda topic: F5 → stop at the first processor → Step In through a branch and a mapping statement → fix → Restart on the same batch → production group offsets unchanged.
 2. Every CAP-1 to CAP-13 passes its spec success criterion in the locally installed `.vsix`.
-3. `task ci` is green on the pinned Connect version (v4.112.0), including the AD-8 equivalence corpus and the never-ack integration test.
+3. `task ci` is green on the pinned Connect version (v4.115.0 since 2026-10-22; v4.112.0 before), including the AD-8 equivalence corpus and the never-ack integration test.
 4. A fresh machine can install the `.vsix` and debug a pipeline following the README alone.
 
 ## Boundaries
 
 Split by outcome, one owner per epic (solo developer with agent lanes); units are not epic boundaries. Out of scope: the spec's Non-goals, plus Marketplace publication for the MVP. Tracer path: epic-tracer's first story, F5 on a `generate` input with one `mapping`, stopping before the mapping and showing the message.
 
-- Touch point: Redpanda Connect engine v4.112.0 / benthos v4.81.0, consumed through the public API only; owner: epic-tracer
+- Touch point: Redpanda Connect engine v4.115.0 / benthos v4.84.0 (pinned in go.mod), consumed through the public API only; owner: epic-tracer
 - Touch point: Redpanda broker container for tests, consumed; owner: epic-platform-baseline (the job), epic-safe-against-real-systems (the never-ack test)
 - Touch point: VS Code extension host API, consumed; owner: epic-tracer
 

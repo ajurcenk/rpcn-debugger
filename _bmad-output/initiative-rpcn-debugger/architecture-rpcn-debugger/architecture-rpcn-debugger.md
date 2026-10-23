@@ -390,9 +390,9 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 
 | Name | Version |
 | --- | --- |
-| Go | 1.26.x (`go 1.26.6`, matching Connect v4.112.0). Bump entry before epic-safe-against-real-systems: Connect v4.115.0 / benthos v4.84.0 / Go 1.27.3, with the AD-8 job passing (AD-14) |
-| github.com/redpanda-data/connect/v4 | v4.112.0 |
-| github.com/redpanda-data/benthos/v4 | v4.81.0 |
+| Go | 1.27.x (`go 1.27.3`, which Connect v4.115.0 requires) |
+| github.com/redpanda-data/connect/v4 | v4.115.0 |
+| github.com/redpanda-data/benthos/v4 | v4.84.0 |
 | github.com/google/go-dap | v0.12.1-0.20260926015354-7505f696918e |
 | gopkg.in/yaml.v3 | v3.0.1 (archived upstream; kept because benthos uses it directly) |
 | TypeScript | 6.0.3 |

@@ -101,3 +101,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/architecture-rpcn-debugger/architecture-rpcn-debugger.md`
   summary: Entry before epic-safe-against-real-systems: bump to Connect v4.115.0 / benthos v4.84.0 / Go 1.27.3, with the AD-8 job (`task ci`) passing (AD-14); update the spine Stack and CLAUDE.md's Go version.
   evidence: review-verification-2026-10-22.md (live registries 2026-10-22; v4.112 to v4.115 changed only component packages in connect/public, and the AD-7 parents only in doc strings). User decision 2026-10-22.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/plan-bump-connect-4-115.md`
+  summary: Delivered — the pre-E3 bump (from the 2026-10-22 spine update, the entry "bump to Connect v4.115.0 / benthos v4.84.0 / Go 1.27.3" above) was delivered by plan-bump-connect-4-115, with `task ci` (AD-8 corpus and integration) green.
+  evidence: go.mod and tools/go.mod at go 1.27.3; cmd/rpcn-debug/version_test.go TestDepVersions/TestRunVersion pin v4.115.0/v4.84.0; `task ci` exit 0 on 2026-10-22; no rewrite golden changed.

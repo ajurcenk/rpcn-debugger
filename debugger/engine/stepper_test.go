@@ -20,7 +20,7 @@ import (
 
 // The stepper must give the same output as the engine on the same input
 // (AD-7, AD-8). The references: service.ExecuteProcessors (ExecuteAll) for
-// mode all, a port of benthos v4.81.0's ExecuteTryAll for mode try and for
+// mode all, a port of benthos v4.84.0's ExecuteTryAll for mode try and for
 // strict (whose ExecuteAll skip is the same test), and a real try processor
 // for single-message batches, which is how try feeds its list.
 
@@ -153,7 +153,7 @@ func procs(t *testing.T, children string) []*service.OwnedProcessor {
 	return ps
 }
 
-// executeTryAll is benthos v4.81.0 processor.ExecuteTryAll on the public
+// executeTryAll is benthos v4.84.0 processor.ExecuteTryAll on the public
 // types (internal/component/processor/execute.go).
 func executeTryAll(ctx context.Context, procs []*service.OwnedProcessor, msgs ...service.MessageBatch) ([]service.MessageBatch, error) {
 	resultMsgs := make([]service.MessageBatch, len(msgs))

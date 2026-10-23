@@ -32,7 +32,7 @@ Commands (Task):
 
 - `task ci`: runs build, lint (including the launch-schema check), unit, equivalence and integration tests, then the extension build, its test and the `.vsix` package. CI is local only, with no hosted CI.
 - Single steps: `task build:go`, `lint:go`, `lint:gomod`, `gen:schema`, `lint:schema`, `test:go`, `test:equivalence`, `test:integration` (needs Docker), `build:ext`, `test:ext` (needs `build:go` and `build:ext` first), `package:ext`.
-- Builds are pure Go (`CGO_ENABLED=0`). Never set the `x_benthos_extra` tag. Go is 1.26.6, and Node must be 22 or later.
+- Builds are pure Go (`CGO_ENABLED=0`). Never set the `x_benthos_extra` tag. Go is 1.27.3, and Node must be 22 or later.
 
 Rules the gates enforce:
 

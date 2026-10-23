@@ -158,7 +158,7 @@ func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr c
 // resolveStrict returns the effective error_handling.strict: conf.Strict,
 // or conf.StrictExpr resolved with benthos's own interpolation through the
 // run's lookup (AD-2, AD-22). It matches the stock stream builder, probed on
-// benthos v4.81: an unset variable without a default resolves to "", which
+// benthos v4.84: an unset variable without a default resolves to "", which
 // is false, and a value that isn't a bool fails the config.
 func (r *run) resolveStrict() (bool, error) {
 	if r.conf.StrictExpr == "" {
@@ -296,7 +296,7 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 	return stopErr
 }
 
-// strictRejection is how benthos v4.81 (internal/component/output/
+// strictRejection is how benthos v4.84 (internal/component/output/
 // async_writer.go) wraps each message a strict output rejects. Its
 // batch.Error type is internal (AD-2), so the text is what can be matched.
 const strictRejection = "rejected due to failed processing"

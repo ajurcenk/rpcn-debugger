@@ -2,7 +2,7 @@
 version: '3'
 
 env:
-  # The stock binary is pure Go: the only CGO components in Connect v4.112.0
+  # The stock binary is pure Go: the only CGO components in Connect v4.115.0
   # sit behind the x_benthos_extra build tag, which is never set.
   CGO_ENABLED: '0'
 
