@@ -3,7 +3,7 @@ title: 'Input table and input-tree walker'
 type: 'feature'
 ticket: '3'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: 'f4900e68232a14e4c6a13962889a7a95b65c4f8d'
 route: 'full'
 route_source: 'auto'
