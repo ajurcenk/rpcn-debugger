@@ -3,7 +3,7 @@ title: 'One rewrite per launch, with Session-supplied rewrite options'
 type: 'refactor'
 ticket: '1'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: 'f31c2e732a865251914e8f122b986c920850ce9d'
 route: 'full'
 route_source: 'auto'
