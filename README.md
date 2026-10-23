@@ -79,7 +79,45 @@ Repeated entries carry a label in the call stack: `[msg i/n]` under `for_each` a
 
 At the end of the run the Debug Console shows each batch delivered to the dry-run output (after `output.processors`): `Delivered batch i (n messages) to dry-run output`, then each message's content (cut at 4 KiB), its metadata as `key = value` lines (internal `__` keys marked) and its error, or `Nothing was delivered` when every message was deleted. Nothing is written to your real output, and output `batching` isn't applied (a launch warning says so), so production batch boundaries may differ.
 
-A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `env` and `envFile` (the pipeline's `${VAR}` resolve from the debugger's environment, then the dotenv `envFile`, then `env`, the later one winning; use `${env:NAME}` rather than literal secrets). Any other key fails the launch. Engine warnings and processor errors show in the Debug Console, naming your processor path (`pipeline.processors[1]`) and, for a Bloblang error in a `|` block or a one-line plain mapping, its file line; every log line, Info included, also goes to the debugger's stderr. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
+A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `env` and `envFile` (the pipeline's `${VAR}` resolve from the debugger's environment, then the dotenv `envFile`, then `env`, the later one winning; use `${env:NAME}` rather than literal secrets), and `allowSideEffects` and `inputClasses` (see [What a debug session does to your input](#what-a-debug-session-does-to-your-input)). Any other key fails the launch. Engine warnings and processor errors show in the Debug Console, naming your processor path (`pipeline.processors[1]`) and, for a Bloblang error in a `|` block or a one-line plain mapping, its file line; every log line, Info included, also goes to the debugger's stderr. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
+
+## What a debug session does to your input
+
+A session reads **one batch** from the pipeline's input, keeps at most `maxMessages` of it, steps it, and stops the input. It **never acknowledges** anything, whatever the launch options:
+
+- The capture returns an error (a nack) for every batch it receives, and the input is stopped right after the first one.
+- `auto_replay_nacks` is forced to `true` on every input in the capture, with a launch warning when the pipeline sets anything else. With it off, many inputs treat a nack as an ack (committing Kafka offsets, confirming a Postgres slot's LSN, advancing CDC checkpoints).
+- A Kafka-family input (`redpanda`, `kafka_franz`) reads under the debug consumer group `rpcn-debug-<os-user>-<k>`, never under the pipeline's own group, and commits nothing. The records stay in the topic, production's offsets and membership don't change, and the next session captures the same messages. The debug group stays on the cluster as an empty group (no members, no offsets) until the broker expires it or `rpk group delete` removes it, and joining it needs Group READ permission on that name.
+
+Before anything connects, the launch checks every input in the input tree (`broker`, `sequence`, `read_until`, `batched`, `resource:` and the rest), using a built-in table of the stock binary's inputs:
+
+| Class | Examples | What the launch does |
+| --- | --- | --- |
+| Replay-safe: reading changes nothing at the source | `redpanda`/`kafka_franz` with an overridden group, `file`, `aws_s3` without `sqs`, `generate`, `http_client` with GET | Launches |
+| Side-effecting: receiving alone changes the source, or it isn't proven safe | `aws_sqs`, `gcp_pubsub`, `amqp_0_9`, `amqp_1`, `redis_streams`, `postgres_cdc`, `azure_queue_storage`, `mysql_cdc` | Fails with `SIDE_EFFECTS_NOT_ALLOWED` (1012) at the input's line, naming each effect, unless `allowSideEffects` is `true` |
+| Unknown: no row in the table | a plugin input | Same as side-effecting |
+| Rejected: can't be debugged | `stdin` (it carries the DAP stream), `http_server`, `socket_server`, `dynamic` | Always fails with `INPUT_REJECTED` (1011), with a hint to replay a saved capture instead (coming with replay) |
+
+The class can depend on fields: `aws_s3` with `sqs`, `csv` with `delete_on_finish` or `http_client` with a write method is side-effecting.
+
+**`allowSideEffects: true`** lets a side-effecting or unknown input launch, with one warning per input naming its effect. It doesn't change the capture: nothing is acked, and it can't unlock a rejected input. What receiving does to such a source, even without an ack:
+
+| Input | What happens to the received messages |
+| --- | --- |
+| `aws_sqs` | Hidden from other consumers until the visibility timeout ends, then back in the queue; the receive count goes up, and at the redrive policy's `maxReceiveCount` SQS moves the message to the DLQ |
+| `gcp_pubsub` | Redelivered after the ack deadline |
+| `amqp_0_9`, `amqp_1` | Requeued when the debugger's channel closes, marked redelivered |
+| `nats_jetstream` (durable) | Pending on that consumer until `ack_wait`, then redelivered; the delivery count goes up |
+| `redis_streams` | The group's cursor moves past the entries, so the next session doesn't read them again |
+| CDC inputs (`postgres_cdc`, …) | The replication slot or stream is held open while capturing; no position is confirmed |
+| `azure_queue_storage` | **Deleted**: the input deletes messages even on a nack |
+| `spicedb_watch` | Writes its position token to the cache even on a nack |
+
+Use a dev copy of the source when you can't afford those effects.
+
+**`inputClasses`** overrides the table for the session, by component name: `"inputClasses": {"mysql_cdc": "replay-safe"}` marks one you know is safe (the launch warns that the debugger can't prove it), and `{"generate": "rejected"}` makes one stricter. A composite follows its overridden children. `stdin`, `dynamic` and `redpanda_migrator` can't be loosened; an unknown name or class fails the launch.
+
+When the input has sent nothing after 5 seconds (for example a Kafka input reading from `latest`), the Debug Console shows one "Waiting for the input" note.
 
 ## License
 
