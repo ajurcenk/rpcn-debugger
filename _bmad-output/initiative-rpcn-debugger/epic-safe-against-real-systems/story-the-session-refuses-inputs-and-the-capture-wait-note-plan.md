@@ -3,7 +3,7 @@ title: 'The Session refuses inputs, and the capture wait note'
 type: 'feature'
 ticket: '4'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: '54142f42e33aeb4badb4cebaa032218a4474da0b'
 route: 'full'
 route_source: 'auto'
