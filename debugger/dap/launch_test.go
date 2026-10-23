@@ -28,9 +28,11 @@ func TestDecodeLaunch(t *testing.T) {
 			want: LaunchConfig{Pipeline: "p.yaml", MaxMessages: 10},
 		},
 		"every key": {
-			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env"}`,
+			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env",
+				"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"}}`,
 			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3,
-				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env"},
+				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", AllowSideEffects: true,
+				InputClasses: map[string]string{"aws_sqs": "replay-safe", "generate": "rejected", "nats": "side-effecting"}},
 		},
 		"no arguments": {args: ``, want: LaunchConfig{MaxMessages: 10}},
 		"null":         {args: `null`, want: LaunchConfig{MaxMessages: 10}},
@@ -68,6 +70,12 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		"cwd number":      {`{"pipeline":"p.yaml","cwd":1}`, []string{`"cwd"`, "a string"}},
 		"envFile bool":    {`{"pipeline":"p.yaml","envFile":true}`, []string{`"envFile"`, "a string"}},
 		"not an object":   {`"not an object"`, []string{"launch arguments"}},
+		"class maybe":     {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"maybe"}}`, []string{`"inputClasses.aws_sqs"`, "one of replay-safe, side-effecting, rejected"}},
+		"class unknown":   {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"unknown"}}`, []string{`"inputClasses.aws_sqs"`, "one of"}},
+		"class number":    {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":1}}`, []string{`"inputClasses.aws_sqs"`, "a string"}},
+		"classes array":   {`{"pipeline":"p.yaml","inputClasses":["aws_sqs"]}`, []string{`"inputClasses"`, "an array"}},
+		"allow string":    {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
+		"allow null":      {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -111,7 +119,7 @@ func TestSchema(t *testing.T) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile"} {
+	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "allowSideEffects", "inputClasses"} {
 		p, ok := props[k].(map[string]any)
 		if !ok {
 			t.Errorf("schema has no %q (has %v)", k, keys)
@@ -121,8 +129,16 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%q has no description", k)
 		}
 	}
-	if len(props) != 5 {
-		t.Errorf("schema keys = %v, want exactly the five launch keys", keys)
+	if len(props) != 7 {
+		t.Errorf("schema keys = %v, want exactly the seven launch keys", keys)
+	}
+	if p := props["allowSideEffects"].(map[string]any); p["type"] != "boolean" || p["default"] != false {
+		t.Errorf("allowSideEffects = %v, want a boolean, default false", p)
+	}
+	ic := props["inputClasses"].(map[string]any)
+	want := map[string]any{"type": "string", "enum": []string{"replay-safe", "side-effecting", "rejected"}}
+	if ic["type"] != "object" || !reflect.DeepEqual(ic["additionalProperties"], want) {
+		t.Errorf("inputClasses = %v, want an object of %v", ic, want)
 	}
 	mm := props["maxMessages"].(map[string]any)
 	if mm["type"] != "integer" || mm["minimum"] != 1 || mm["maximum"] != maxRefMessages || mm["default"] != 10 {
@@ -191,6 +207,44 @@ func TestLaunchDefaultsReachTheEngine(t *testing.T) {
 	got := <-eng.opts
 	if got.MaxMessages != 10 || got.Pipeline != "/p/pipeline.yaml" {
 		t.Errorf("Start options = %+v, want maxMessages 10 for /p/pipeline.yaml", got)
+	}
+	c.threadEvent("started")
+	c.event("stopped")
+	c.send("disconnect", map[string]any{})
+	c.response("disconnect", true)
+	if err := c.serveResult(); err != nil {
+		t.Errorf("Serve = %v", err)
+	}
+}
+
+// The inputClasses enum is the set core accepts.
+func TestInputClassesEnum(t *testing.T) {
+	var enum []string
+	for _, f := range launchFields() {
+		if f.key == "inputClasses" {
+			enum = f.enum
+		}
+	}
+	var want []string
+	for _, c := range core.OverrideClasses {
+		want = append(want, string(c))
+	}
+	if !reflect.DeepEqual(enum, want) {
+		t.Errorf("inputClasses enum = %v, want core.OverrideClasses %v", enum, want)
+	}
+}
+
+func TestLaunchInputKeysReachTheSession(t *testing.T) {
+	eng := newFakeEngine()
+	eng.opts = make(chan core.StartOptions, 1)
+	c := startServer(t, eng)
+	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml", "allowSideEffects": true,
+		"inputClasses": map[string]any{"aws_sqs": "replay-safe"}})
+	c.send("configurationDone", map[string]any{})
+	c.response("configurationDone", true)
+	got := <-eng.opts
+	if !reflect.DeepEqual(got.InputClasses, map[string]core.InputClass{"aws_sqs": core.ClassReplaySafe}) {
+		t.Errorf("Start options InputClasses = %v, want aws_sqs replay-safe", got.InputClasses)
 	}
 	c.threadEvent("started")
 	c.event("stopped")

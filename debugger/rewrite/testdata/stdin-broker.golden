@@ -1,4 +1,27 @@
-error: the stdin input can't be debugged: stdin carries the debugger's DAP stream
-code: PIPELINE_INVALID
-line: 6
-path: input.broker.inputs[1].stdin
+# input
+broker:
+    inputs:
+        - generate:
+            mapping: 'root = 1'
+        - stdin: {}
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [10]
+    processors:
+        - mapping: 'root = this'
+# warnings
+# inputs
+input (line 2) broker: rejected: through input.broker.inputs[1]: stdin carries the debugger's DAP stream
+input.broker.inputs[0] (line 4) generate: replay-safe
+input.broker.inputs[1] (line 6) stdin: rejected: stdin carries the debugger's DAP stream
+# delivery
+output line 0
+# lines
+(0, 0) pipeline.processors[0] line 10
+(0, 1) pipeline.processors line 9

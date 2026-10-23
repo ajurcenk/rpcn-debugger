@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"time"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
@@ -18,6 +19,15 @@ type Option func(*config)
 
 type config struct {
 	logOutput io.Writer
+	// captureWait, when set, replaces the Session's 5 s wait before its
+	// waiting note (withCaptureWait, for tests).
+	captureWait time.Duration
+}
+
+// withCaptureWait shortens the Session's wait before its "Waiting for the
+// input" note. It is a test hook.
+func withCaptureWait(d time.Duration) Option {
+	return func(c *config) { c.captureWait = d }
 }
 
 // WithLogOutput sends Serve's log output (the stderr side of the AD-15
@@ -54,7 +64,14 @@ func Serve(env *service.Environment, in io.Reader, out io.Writer, opts ...Option
 	// responses.
 	dapLog := newLogger(sink, false)
 	engineLog := newLogger(sink, true)
-	return dap.Serve(in, out, dapLog, engine.New(env, engineLog, loadPipeline), dap.OnSession(sink.attach))
+	attach := sink.attach
+	if d := cfg.captureWait; d > 0 {
+		attach = func(sess *core.Session) {
+			sess.SetCaptureWait(d)
+			sink.attach(sess)
+		}
+	}
+	return dap.Serve(in, out, dapLog, engine.New(env, engineLog, loadPipeline), dap.OnSession(attach))
 }
 
 // loadPipeline reads the pipeline file and rewrites it with opts (AD-6). The
@@ -65,7 +82,7 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 		// The launch's "pipeline" names no readable file.
 		return engine.Configs{}, nil, core.NewError(core.CodeLaunchInvalid, "read the pipeline: %v", err)
 	}
-	plan, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup})
+	plan, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses})
 	if err != nil {
 		// Keep the rewrite's Line and UserPath.
 		var ce core.Error
@@ -86,5 +103,6 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 		Translator: plan,
 		Delivery:   plan.Delivery,
 		Positions:  plan.FilePosition,
+		Inputs:     plan.Inputs,
 	}, plan, nil
 }

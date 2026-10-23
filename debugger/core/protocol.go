@@ -29,6 +29,16 @@ type Launch struct {
 	// resolves against Cwd, and it must exist. It overrides the process
 	// environment (AD-22).
 	EnvFile string
+	// AllowSideEffects allows a capture from inputs whose capture has side
+	// effects on the system they read from (AD-5: the side-effecting and
+	// unknown classes), with one warning each. A rejected input is refused
+	// whatever it says.
+	AllowSideEffects bool
+	// InputClasses maps an input component name to the class the launch
+	// gives it instead of the input table's: one of OverrideClasses. It is
+	// a rewrite option, applied before a composite takes its worst child's
+	// class. A loosened class gets a warning.
+	InputClasses map[string]InputClass
 }
 
 // ConfigurationDone starts the debuggee.

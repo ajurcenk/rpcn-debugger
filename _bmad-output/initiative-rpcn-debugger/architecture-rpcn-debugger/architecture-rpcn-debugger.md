@@ -130,6 +130,7 @@ Unit IDs:
     | rejected | `stdin`, `http_server`, sockets | `INPUT_REJECTED`, with a replay hint |
     | unknown | anything else | treated as side-effecting |
 
+  - **Per-session overrides:** the `inputClasses` launch key maps a component name to a class for the session and is applied before the rollup; loosening warns. `stdin`, `dynamic` and `redpanda_migrator` can't be loosened (they can't run in a debug session at all).
   - **Who decides:** a composite input takes its worst child's class. The rewrite never refuses on class: it reports input findings (user path, line, component, class, effect) in the Plan, and the Session alone refuses, against `allowSideEffects` (`SIDE_EFFECTS_NOT_ALLOWED`) and, from epic-edit-restart-replay, `replay`, which skips the check.
   - **Consumer groups:** the Session supplies the debug-group base `rpcn-debug-<os-user>`, from the process user, as a rewrite option; the rewrite stays pure. Each overridden field gets `<base>-<k>` (k is the input's index in walker order), so distinct groups stay distinct; there is no per-session suffix. `"keepConsumerGroup": true` keeps the groups. The class is computed after the override: a kept group, or a group field the table can't override (an interpolated one), makes the input side-effecting ("joins consumer group G; its members rebalance"). Start-offset fields stay as configured, with a launch warning when one resolves to latest.
   - **Output:** `output` is `dry-run` (the default; results go to VSCode only), `real`, or `none`. `real` is required to write to the user's output, and it logs a warning (AD-21).
@@ -386,7 +387,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 | DAP handles | `threadId` stable per thread; `frameId` and `variablesReference` become invalid on every resume (AD-17). Limits: 32 frames, 64 batches and 1024 messages per stop; stop ids wrap modulo 64 |
 | Errors | Processor errors on messages are data (`Snapshot.error`). Session failures are `core.Error` (AD-3) |
 | Logging | `log/slog`, one handler, stderr plus DAP `Output` (AD-15) |
-| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `env`, `envFile`, `license`. Built so far (E2): `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` |
+| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `env`, `envFile`, `license`, `inputClasses` (component name to class, AD-5). Built so far: `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` (E2); `allowSideEffects`, `inputClasses` (E3) |
 | Equivalence tests | `testdata/equivalence/<name>/{pipeline.yaml, expect.yaml, input files}`. `expect.yaml` declares the reference `batches` and `messages`, Step In `stops` (path, frame count), `no_stops_under` paths and required `output` lines (AD-8) |
 | CI lint | `golangci-lint` with `forbidigo` and `depguard` (AD-2, AD-15); a launch-schema check (AD-12) |
 

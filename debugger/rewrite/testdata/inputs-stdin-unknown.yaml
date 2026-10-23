@@ -1,0 +1,10 @@
+input:
+  some_plugin_broker:
+    children:
+      - generate:
+          mapping: 'root = 1'
+      - stdin: {}
+
+pipeline:
+  processors:
+    - mapping: 'root = this'

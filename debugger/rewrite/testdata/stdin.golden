@@ -1,4 +1,22 @@
-error: the stdin input can't be debugged: stdin carries the debugger's DAP stream
-code: PIPELINE_INVALID
-line: 3
-path: input.stdin
+# input
+label: in
+stdin: {}
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [7]
+    processors:
+        - mapping: root = this
+# warnings
+# inputs
+input (line 3) stdin: rejected: stdin carries the debugger's DAP stream
+# delivery
+output line 0
+# lines
+(0, 0) pipeline.processors[0] line 7
+(0, 1) pipeline.processors line 6

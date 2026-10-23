@@ -82,11 +82,20 @@ type fakeEngine struct {
 	// own size, untruncated.
 	captured [2]int
 	opts     chan StartOptions
-	tr       Translate // returned by Check
-	delivery Position  // returned by Check
+	tr       Translate      // returned by Check
+	delivery Position       // returned by Check
+	inputs   []InputFinding // returned by Check
+	// checked receives the options of each Check, when set.
+	checked chan StartOptions
+	// hold, when set, makes Start wait for it (or ctx's end) before it
+	// calls Captured: a quiet input.
+	hold chan struct{}
 }
 
-func (e *fakeEngine) Check(StartOptions) (CheckResult, error) {
+func (e *fakeEngine) Check(opts StartOptions) (CheckResult, error) {
+	if e.checked != nil {
+		e.checked <- opts
+	}
 	if e.checkErr != nil {
 		return CheckResult{Translator: e.tr}, e.checkErr
 	}
@@ -97,7 +106,7 @@ func (e *fakeEngine) Check(StartOptions) (CheckResult, error) {
 			{0, e.children}: {UserPath: "pipeline.processors", Line: 11},
 		}
 	}
-	return CheckResult{Lines: l, Translator: e.tr, Warnings: e.warnings, Delivery: e.delivery}, nil
+	return CheckResult{Lines: l, Translator: e.tr, Warnings: e.warnings, Delivery: e.delivery, Inputs: e.inputs}, nil
 }
 
 func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) error {
@@ -106,6 +115,13 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 	}
 	if e.startErr != nil {
 		return e.startErr
+	}
+	if e.hold != nil {
+		select {
+		case <-e.hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	kept, total := e.captured[0], e.captured[1]
 	if kept == 0 && total == 0 && len(e.batch) > 0 {

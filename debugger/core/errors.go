@@ -45,20 +45,32 @@ const (
 	// the messages that failed a processing step. It ends a run normally:
 	// the debuggee behaved as it would in production.
 	CodeStrictRejected Code = "STRICT_REJECTED"
+	// CodeInputRejected: an input in the capture tree can't be debugged
+	// (AD-5: stdin, a server, a socket, …), whatever allowSideEffects says.
+	// UserPath and Line are the input's, and Message ends in a replay hint.
+	CodeInputRejected Code = "INPUT_REJECTED"
+	// CodeSideEffectsNotAllowed: capturing from an input in the capture
+	// tree has side effects on the system it reads from (AD-5), and the
+	// launch doesn't set allowSideEffects. UserPath and Line are the first
+	// such input's, and Message names every one with its effect.
+	CodeSideEffectsNotAllowed Code = "SIDE_EFFECTS_NOT_ALLOWED"
 )
 
 // numbers is the registry: code → stable DAP error id.
 var numbers = map[Code]int{
-	CodeLaunchInvalid:   1001,
-	CodePipelineInvalid: 1002,
-	CodeNothingCaptured: 1003,
-	CodeSessionEnded:    1004,
-	CodeNotSupported:    1005,
-	CodeNotStopped:      1006,
-	CodeRunFailed:       1007,
-	CodeCtxLost:         1008,
-	CodeLicenseRequired: 1009,
-	CodeStrictRejected:  1010,
+	CodeLaunchInvalid:         1001,
+	CodePipelineInvalid:       1002,
+	CodeNothingCaptured:       1003,
+	CodeSessionEnded:          1004,
+	CodeNotSupported:          1005,
+	CodeNotStopped:            1006,
+	CodeRunFailed:             1007,
+	CodeCtxLost:               1008,
+	CodeLicenseRequired:       1009,
+	CodeStrictRejected:        1010,
+	CodeInputRejected:         1011,
+	CodeSideEffectsNotAllowed: 1012,
+	// 1013 is reserved for OUTPUT_FAILED (AD-3).
 }
 
 // Codes returns every registry code, in number order.

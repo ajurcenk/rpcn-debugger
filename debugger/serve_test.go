@@ -42,11 +42,17 @@ type wire struct {
 
 func serve(t *testing.T, opts ...Option) *wire {
 	t.Helper()
+	return serveEnv(t, service.NewEnvironment(), opts...)
+}
+
+// serveEnv is serve against env.
+func serveEnv(t *testing.T, env *service.Environment, opts ...Option) *wire {
+	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	c := &wire{t: t, w: inW, msgs: make(chan msg, 64), done: make(chan error, 1)}
 	go func() {
-		err := Serve(service.NewEnvironment(), inR, outW, opts...)
+		err := Serve(env, inR, outW, opts...)
 		_ = outW.Close()
 		c.done <- err
 	}()
@@ -523,7 +529,8 @@ func TestServeParallelWarns(t *testing.T) {
 	continueToEnd(t, c)
 }
 
-// A rewrite error keeps its line through to the DAP error.
+// A stdin input is the input table's rejected row (AD-5, AD-15): the
+// Session refuses it with INPUT_REJECTED, at its line.
 func TestServeStdinInBroker(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stdin.yaml")
 	src := "input:\n  broker:\n    inputs:\n      - stdin: {}\n"
@@ -535,9 +542,10 @@ func TestServeStdinInBroker(t *testing.T) {
 	c.next("response", "initialize")
 	c.send("launch", map[string]any{"pipeline": path})
 	m := c.next("response", "launch")
-	if m.Success || errorID(m) != core.Number(core.CodePipelineInvalid) || !strings.Contains(m.Message, path) ||
-		!strings.Contains(m.Message, "input.broker.inputs[0].stdin, line 4") {
-		t.Errorf("launch = %+v, want PIPELINE_INVALID at input.broker.inputs[0].stdin, line 4", m)
+	if m.Success || errorID(m) != core.Number(core.CodeInputRejected) || !strings.Contains(m.Message, path) ||
+		!strings.Contains(m.Message, "input.broker.inputs[0], line 4") ||
+		!strings.Contains(m.Message, "stdin carries the debugger's DAP stream") {
+		t.Errorf("launch = %+v, want INPUT_REJECTED at input.broker.inputs[0], line 4", m)
 	}
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")

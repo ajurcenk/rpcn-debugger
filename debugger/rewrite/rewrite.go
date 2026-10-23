@@ -80,6 +80,13 @@ type Options struct {
 	// DebugGroup is the debug-group base rpcn-debug-<os-user> that
 	// overridden consumer-group fields derive from (AD-5).
 	DebugGroup string
+	// InputClasses maps an input component name to the class it gets
+	// instead of the input table's (the launch's inputClasses, AD-5). It
+	// replaces the component's own class before a composite takes its
+	// worst child's, and a finding records when it loosened the class. The
+	// Session validates the values and the engine the names; a
+	// core.FixedInputs component keeps its class whatever it says.
+	InputClasses map[string]InputClass
 }
 
 // Rewrite turns pipeline YAML into a Plan (AD-4, AD-6), with opts. It never
@@ -105,14 +112,6 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	if input.Kind != yaml.MappingNode {
 		return Plan{}, invalid(input.Line, "input", "input is not a mapping")
 	}
-	if err := rejectStdin(input, "input"); err != nil {
-		return Plan{}, err
-	}
-	if res := value(root, "input_resources"); res != nil {
-		if err := rejectStdin(res, "input_resources"); err != nil {
-			return Plan{}, err
-		}
-	}
 
 	w := &walker{
 		stops: map[stop]core.Position{}, paths: map[string]string{}, bases: map[string]int{},
@@ -132,7 +131,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		plan.StrictExpr, plan.StrictLine = strings.TrimSuffix(enc, "\n"), w.strict.Line
 	}
 	capture := without(input, "processors")
-	iw := newInputWalker(w, value(root, "input_resources"), w.overrideGroup(capture, opts.DebugGroup))
+	iw := newInputWalker(w, value(root, "input_resources"), w.overrideGroup(capture, opts.DebugGroup), opts.InputClasses)
 	iw.block(capture, "input")
 	plan.Inputs = iw.findings
 	w.procs[capture] = "input"

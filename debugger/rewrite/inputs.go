@@ -4,22 +4,24 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 )
 
 // InputClass is the AD-5 class of an input in the capture tree.
-type InputClass string
+type InputClass = core.InputClass
 
 // The input classes (AD-5), from best to worst. Unknown is treated as
 // side-effecting.
 const (
-	ReplaySafe    InputClass = "replay-safe"
-	SideEffecting InputClass = "side-effecting"
-	Unknown       InputClass = "unknown"
-	Rejected      InputClass = "rejected"
+	ReplaySafe    = core.ClassReplaySafe
+	SideEffecting = core.ClassSideEffecting
+	Unknown       = core.ClassUnknown
+	Rejected      = core.ClassRejected
 )
 
 // rank orders the classes: a composite takes its worst child's class.
-func (c InputClass) rank() int {
+func rank(c InputClass) int {
 	switch c {
 	case ReplaySafe:
 		return 0
@@ -34,20 +36,7 @@ func (c InputClass) rank() int {
 
 // InputFinding is the class of one input in the capture tree (AD-5): the
 // rewrite reports it, and the Session decides what to refuse.
-type InputFinding struct {
-	// UserPath is the input block's user path: input,
-	// input.broker.inputs[1], input_resources.<label>, …
-	UserPath string
-	// Line is the file line of the component key.
-	Line int
-	// Component is the input component name.
-	Component string
-	Class     InputClass
-	// Effect says what capturing from the input does to the system it
-	// reads from, or why it is rejected or unknown. It is empty for a
-	// replay-safe input.
-	Effect string
-}
+type InputFinding = core.InputFinding
 
 // classFunc returns the class of an input from its component config conf
 // (which may be nil or not a mapping), with the effect text.

@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/redpanda-data/connect/v4/public/schema"
 
 	_ "github.com/redpanda-data/connect/v4/public/components/all"
+
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 )
 
 // cgoOnly are the inputs that register only under cgo, so the stock binary
@@ -256,17 +259,6 @@ func TestInputTableRows(t *testing.T) {
 			src := "input:\n  " + name + ": " + c.conf + "\n" +
 				"input_resources:\n  - label: q\n    aws_sqs: {url: http://q}\n"
 			p, err := Rewrite([]byte(src), Options{DebugGroup: c.group})
-			if name == "stdin" {
-				// rejectStdin refuses it before the walk; classify the
-				// row directly.
-				if err == nil {
-					t.Errorf("stdin: no error")
-				}
-				if got, _ := inputTable[name].class(nil); got != c.want {
-					t.Errorf("stdin: class %s, want %s", got, c.want)
-				}
-				continue
-			}
 			if err != nil {
 				t.Errorf("%s %s: %v", name, c.conf, err)
 				continue
@@ -307,5 +299,134 @@ func TestNestedGroupKept(t *testing.T) {
 	if len(p.Inputs) != 2 || p.Inputs[0].Class != SideEffecting || p.Inputs[1].Class != SideEffecting ||
 		!strings.Contains(p.Inputs[1].Effect, `"prod"`) {
 		t.Errorf("findings %+v, want both side-effecting with the kept group", p.Inputs)
+	}
+}
+
+// inputClasses replaces a component's own class before the rollup, and a
+// finding records when it loosened the class (E3 entry 4).
+func TestInputClassesOverride(t *testing.T) {
+	type want struct {
+		path     string
+		class    InputClass
+		override InputClass
+		loosened bool
+		effect   string // a substring; "" means empty
+	}
+	cases := map[string]struct {
+		src       string
+		overrides map[string]InputClass
+		want      []want
+	}{
+		"loosen": {
+			src:       "input:\n  aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"aws_sqs": ReplaySafe},
+			want:      []want{{"input", ReplaySafe, ReplaySafe, true, ""}},
+		},
+		"tighten": {
+			src:       "input:\n  generate: {mapping: 'root = 1'}\n",
+			overrides: map[string]InputClass{"generate": Rejected},
+			want:      []want{{"input", Rejected, Rejected, false, "inputClasses marks generate rejected"}},
+		},
+		"same class keeps the effect": {
+			src:       "input:\n  aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"aws_sqs": SideEffecting},
+			want:      []want{{"input", SideEffecting, SideEffecting, false, "receive count"}},
+		},
+		"rejected loosened to side-effecting": {
+			src:       "input:\n  http_server: {}\n",
+			overrides: map[string]InputClass{"http_server": SideEffecting},
+			want:      []want{{"input", SideEffecting, SideEffecting, true, "waits for clients (inputClasses marks http_server side-effecting)"}},
+		},
+		"tightened keeps the effect": {
+			src:       "input:\n  aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"aws_sqs": Rejected},
+			want:      []want{{"input", Rejected, Rejected, false, "receive count rises"}},
+		},
+		"stdin stays rejected": {
+			src:       "input:\n  stdin: {}\n",
+			overrides: map[string]InputClass{"stdin": ReplaySafe},
+			want:      []want{{"input", Rejected, "", false, "stdin carries the debugger's DAP stream"}},
+		},
+		"unknown loosened": {
+			src:       "input:\n  no_such_input: {}\n",
+			overrides: map[string]InputClass{"no_such_input": ReplaySafe},
+			want:      []want{{"input", ReplaySafe, ReplaySafe, true, ""}},
+		},
+		"composite follows": {
+			src:       "input:\n  broker:\n    inputs:\n      - generate: {mapping: 'root = 1'}\n      - aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"aws_sqs": ReplaySafe},
+			want: []want{
+				{"input", ReplaySafe, "", false, ""},
+				{"input.broker.inputs[0]", ReplaySafe, "", false, ""},
+				{"input.broker.inputs[1]", ReplaySafe, ReplaySafe, true, ""},
+			},
+		},
+		"composite override keeps its children": {
+			src:       "input:\n  broker:\n    inputs:\n      - aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"broker": ReplaySafe},
+			want: []want{
+				{"input", SideEffecting, ReplaySafe, false, "through input.broker.inputs[0]"},
+				{"input.broker.inputs[0]", SideEffecting, "", false, "receive count"},
+			},
+		},
+		"resource follows": {
+			src:       "input:\n  resource: q\ninput_resources:\n  - label: q\n    aws_sqs: {url: http://q}\n",
+			overrides: map[string]InputClass{"aws_sqs": ReplaySafe},
+			want: []want{
+				{"input", ReplaySafe, "", false, ""},
+				{"input_resources.q", ReplaySafe, ReplaySafe, true, ""},
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, err := Rewrite([]byte(tc.src), Options{InputClasses: tc.overrides})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(p.Inputs) != len(tc.want) {
+				t.Fatalf("findings %+v, want %d", p.Inputs, len(tc.want))
+			}
+			for i, w := range tc.want {
+				f := p.Inputs[i]
+				if f.UserPath != w.path || f.Class != w.class || f.Override != w.override || f.Loosened != w.loosened ||
+					(w.effect == "") != (f.Effect == "") || !strings.Contains(f.Effect, w.effect) {
+					t.Errorf("finding %d = %+v, want %+v", i, f, w)
+				}
+			}
+		})
+	}
+}
+
+// A composite's finding records that its class is a child's, so the
+// Session names the child.
+func TestInheritedFindings(t *testing.T) {
+	src := "input:\n  broker:\n    inputs:\n      - aws_sqs: {url: http://q}\n      - resource: q\n" +
+		"input_resources:\n  - label: q\n    redis_list: {url: redis://r, key: k}\n"
+	p, err := Rewrite([]byte(src), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range p.Inputs {
+		got[f.UserPath] = f.Inherited
+	}
+	want := map[string]bool{"input": true, "input.broker.inputs[0]": false, "input.broker.inputs[1]": true, "input_resources.q": false}
+	if !maps.Equal(got, want) {
+		t.Errorf("inherited = %v, want %v", got, want)
+	}
+}
+
+// The rewrite's fixed rows are core.FixedInputs, with the same effect.
+func TestFixedInputs(t *testing.T) {
+	for name, why := range core.FixedInputs {
+		row, ok := inputTable[name]
+		if !ok || row.class == nil {
+			t.Errorf("%s: no fixed row", name)
+			continue
+		}
+		if c, e := row.class(nil); c != Rejected || e != why {
+			t.Errorf("%s: row %s %q, want rejected %q", name, c, e, why)
+		}
 	}
 }

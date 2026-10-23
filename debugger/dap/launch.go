@@ -24,7 +24,8 @@ import (
 //   - desc: the schema description;
 //   - default: the default value, applied when the key is absent;
 //   - min: the minimum of an integer, or the minimum length of a string;
-//   - max: the maximum of an integer.
+//   - max: the maximum of an integer;
+//   - enum: the comma-separated values a string map's values must be one of.
 type LaunchConfig struct {
 	Pipeline string `json:"pipeline" min:"1" desc:"The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged."`
 
@@ -35,6 +36,10 @@ type LaunchConfig struct {
 	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Applied last: env overrides envFile, which overrides the debugger's own environment."`
 
 	EnvFile string `json:"envFile" min:"1" desc:"A dotenv file of NAME=value environment variables for the pipeline's ${VAR} interpolations: # comments, blank lines, an optional export prefix and quoted values are allowed. A relative path resolves against cwd, and the file must exist. Keep secrets in this file, not in launch.json. Applied after the debugger's own environment and before env, so env overrides it."`
+
+	AllowSideEffects bool `json:"allowSideEffects" default:"false" desc:"Allow capturing from inputs whose capture has side effects on the system they read from, such as a queue (aws_sqs, amqp_0_9, redis_list, …), a consumer group that is kept, or an input the debugger doesn't know. Each such input gets a warning naming its effect. Without it, the launch fails with SIDE_EFFECTS_NOT_ALLOWED. A rejected input (stdin, http_server, sockets) can't be debugged either way."`
+
+	InputClasses map[string]string `json:"inputClasses" enum:"replay-safe,side-effecting,rejected" desc:"Overrides the debugger's class of an input component, by component name, e.g. {\"aws_sqs\": \"replay-safe\"}: replay-safe (captured freely), side-effecting (needs allowSideEffects) or rejected (never captured). A composite input such as broker takes its worst child's class after the override. Marking an input safer than the debugger thinks it is gets a warning, because the debugger can't prove it."`
 }
 
 // vsCodeKeys are the keys VS Code itself adds to launch configs. They are
@@ -65,7 +70,8 @@ type launchField struct {
 	desc  string
 	def   any // nil: no default
 	min   *int
-	max   *int // integers only
+	max   *int     // integers only
+	enum  []string // string maps only: the allowed values
 }
 
 // launchFields returns the LaunchConfig keys in struct order. The tags are
@@ -102,6 +108,12 @@ func launchFields() []launchField {
 			}
 			f.max = &n
 		}
+		if e, ok := sf.Tag.Lookup("enum"); ok {
+			if sf.Type.Kind() != reflect.Map || e == "" {
+				panic(fmt.Sprintf("LaunchConfig.%s: bad enum tag %q (string maps only)", sf.Name, e))
+			}
+			f.enum = strings.Split(e, ",")
+		}
 		out = append(out, f)
 	}
 	return out
@@ -114,6 +126,8 @@ func (f launchField) kind() string {
 		return "a string"
 	case reflect.Int:
 		return "an integer"
+	case reflect.Bool:
+		return "a boolean"
 	case reflect.Map:
 		return "an object of string values"
 	default:
@@ -179,7 +193,7 @@ func decodeLaunch(raw json.RawMessage) (LaunchConfig, error) {
 		// Errors never echo a value: env values may be secrets VS Code
 		// substituted from ${env:NAME} (AD-22).
 		if f.typ.Kind() == reflect.Map {
-			if err := checkStringMap(f.key, val); err != nil {
+			if err := checkStringMap(f.key, val, f.enum); err != nil {
 				return LaunchConfig{}, err
 			}
 		}
@@ -216,9 +230,10 @@ func decodeLaunch(raw json.RawMessage) (LaunchConfig, error) {
 	return cfg, nil
 }
 
-// checkStringMap checks that val is an object of string values, naming the
-// first offending entry (in key order) by its key only.
-func checkStringMap(key string, val json.RawMessage) error {
+// checkStringMap checks that val is an object of string values, each one of
+// enum when it is set, naming the first offending entry (in key order) by
+// its key only.
+func checkStringMap(key string, val json.RawMessage, enum []string) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(val, &entries); err != nil {
 		return invalidLaunch("%q must be an object of string values, not %s", key, jsonKind(val))
@@ -231,6 +246,13 @@ func checkStringMap(key string, val json.RawMessage) error {
 	for _, k := range names {
 		if got := jsonKind(entries[k]); got != "a string" {
 			return invalidLaunch("%q must be a string, not %s", key+"."+k, got)
+		}
+		var v string
+		if err := json.Unmarshal(entries[k], &v); err != nil {
+			return invalidLaunch("%q must be a string: %v", key+"."+k, err)
+		}
+		if enum != nil && !slices.Contains(enum, v) {
+			return invalidLaunch("%q must be one of %s", key+"."+k, strings.Join(enum, ", "))
 		}
 	}
 	return nil
@@ -279,9 +301,15 @@ func Schema() map[string]any {
 			if f.max != nil {
 				p["maximum"] = *f.max
 			}
+		case reflect.Bool:
+			p["type"] = "boolean"
 		case reflect.Map:
 			p["type"] = "object"
-			p["additionalProperties"] = map[string]any{"type": "string"}
+			values := map[string]any{"type": "string"}
+			if f.enum != nil {
+				values["enum"] = f.enum
+			}
+			p["additionalProperties"] = values
 		default:
 			panic(fmt.Sprintf("LaunchConfig key %q: unsupported type %s", f.key, f.typ))
 		}

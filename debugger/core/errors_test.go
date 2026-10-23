@@ -10,16 +10,18 @@ import (
 // The numbers are the DAP error ids: they are fixed and never reused.
 func TestRegistryNumbersArePinned(t *testing.T) {
 	want := map[Code]int{
-		"LAUNCH_INVALID":   1001,
-		"PIPELINE_INVALID": 1002,
-		"NOTHING_CAPTURED": 1003,
-		"SESSION_ENDED":    1004,
-		"NOT_SUPPORTED":    1005,
-		"NOT_STOPPED":      1006,
-		"RUN_FAILED":       1007,
-		"CTX_LOST":         1008,
-		"LICENSE_REQUIRED": 1009,
-		"STRICT_REJECTED":  1010,
+		"LAUNCH_INVALID":           1001,
+		"PIPELINE_INVALID":         1002,
+		"NOTHING_CAPTURED":         1003,
+		"SESSION_ENDED":            1004,
+		"NOT_SUPPORTED":            1005,
+		"NOT_STOPPED":              1006,
+		"RUN_FAILED":               1007,
+		"CTX_LOST":                 1008,
+		"LICENSE_REQUIRED":         1009,
+		"STRICT_REJECTED":          1010,
+		"INPUT_REJECTED":           1011,
+		"SIDE_EFFECTS_NOT_ALLOWED": 1012,
 	}
 	if len(numbers) != len(want) {
 		t.Errorf("registry has %d codes, want %d: a new code needs a pinned number here", len(numbers), len(want))

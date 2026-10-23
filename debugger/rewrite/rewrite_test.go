@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -114,7 +115,7 @@ func TestPlanOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Options != opts {
+	if !reflect.DeepEqual(p.Options, opts) {
 		t.Errorf("Plan.Options = %+v, want %+v", p.Options, opts)
 	}
 	if got, want := render(p, nil), render(Rewrite(src, Options{})); got != want {

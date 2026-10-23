@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
+	"time"
 )
 
 // ThreadID is the root thread: every stepper entry whose ctx has no frame
@@ -19,6 +20,10 @@ const ThreadID = 1
 
 // rootThreadName is the root thread's name in frontends.
 const rootThreadName = "batch"
+
+// captureWait is how long a capture may deliver nothing before the Session
+// says it is waiting for the input (AD-4).
+const captureWait = 5 * time.Second
 
 // unverifiedMessage is the reason every breakpoint is unverified for now.
 const unverifiedMessage = "Breakpoints are not resolved yet: this version of rpcn-debug doesn't stop at them"
@@ -133,25 +138,30 @@ type Session struct {
 	engine Engine
 	fe     Frontend
 	gate   gate
+	// captureWait is how long the run may go without Captured before the
+	// Session emits its one waiting note. Tests shorten it.
+	captureWait time.Duration
 
-	mu          sync.Mutex
-	pipeline    string
-	cwd         string
-	maxMessages int
-	env         map[string]string
-	envFile     string
-	lookup      func(string) (string, bool) // env, then envFile, then the process (AD-22)
-	lines       LineMap
-	translate   Translate
-	debugGroup  string   // the debug-group base rewrite option (AD-5)
-	prepared    any      // Check's configs, run by Start (AD-6: one rewrite per launch)
-	delivery    Position // where Delivered Snapshots are positioned (AD-21)
-	delivered   int      // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
-	runDone     bool     // the run emitted Terminated: Log sends nothing more
-	launched    bool
-	configured  bool
-	breakpoints map[string][]int
-	exceptions  []string
+	mu           sync.Mutex
+	pipeline     string
+	cwd          string
+	maxMessages  int
+	env          map[string]string
+	envFile      string
+	lookup       func(string) (string, bool) // env, then envFile, then the process (AD-22)
+	lines        LineMap
+	translate    Translate
+	debugGroup   string                // the debug-group base rewrite option (AD-5)
+	inputClasses map[string]InputClass // the inputClasses rewrite option (AD-5)
+	prepared     any                   // Check's configs, run by Start (AD-6: one rewrite per launch)
+	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
+	delivered    int                   // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
+	runDone      bool                  // the run emitted Terminated: Log sends nothing more
+	captured     bool                  // Captured was called: the waiting note is not sent
+	launched     bool
+	configured   bool
+	breakpoints  map[string][]int
+	exceptions   []string
 
 	// Stepping (AD-9, AD-10, AD-17). The stop predicate reads it in Arrive
 	// while the gate is held.
@@ -177,6 +187,7 @@ func NewSession(engine Engine, fe Frontend) *Session {
 	return &Session{
 		engine:       engine,
 		fe:           fe,
+		captureWait:  captureWait,
 		endedCh:      make(chan struct{}),
 		breakpoints:  map[string][]int{},
 		frames:       map[int]*liveFrame{},
@@ -242,6 +253,9 @@ func (s *Session) launch(c Launch) error {
 	if c.MaxMessages < 0 {
 		return NewError(CodeLaunchInvalid, `"maxMessages" must be at least 1, not %d`, c.MaxMessages)
 	}
+	if err := checkInputClasses(c.InputClasses); err != nil {
+		return err
+	}
 	// Every path ends up absolute: frontends open and highlight the frame's
 	// file by it.
 	cwd, err := filepath.Abs(c.Cwd)
@@ -293,20 +307,29 @@ func (s *Session) launch(c Launch) error {
 	// parse see the values the run gets (AD-22).
 	lookup := EnvLookup(fileEnv, env)
 	group := debugGroup()
-	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group})
+	var classes map[string]InputClass
+	if c.InputClasses != nil {
+		classes = maps.Clone(c.InputClasses)
+	}
+	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group, InputClasses: classes})
 	if err != nil {
 		ce, _ := AsError(err, CodePipelineInvalid).(Error)
 		ce.Message = TranslateText(res.Translator, ce.Message)
 		return ce
 	}
+	// The Session alone refuses on the input findings (AD-5, D1).
+	inputWarnings, err := inputDecision(pipeline, res.Inputs, c.AllowSideEffects)
+	if err != nil {
+		return err
+	}
 
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
-	s.delivery, s.debugGroup, s.prepared = res.Delivery, group, res.Prepared
+	s.delivery, s.debugGroup, s.prepared, s.inputClasses = res.Delivery, group, res.Prepared, classes
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
-	for _, w := range res.Warnings {
+	for _, w := range slices.Concat(res.Warnings, inputWarnings) {
 		s.fe.Emit(Output{Category: "console", Text: "Warning: " + w + "\n"})
 	}
 	return nil
@@ -335,7 +358,7 @@ func (s *Session) configurationDone() error {
 	// launch never desyncs them from s.lines (AD-6).
 	opts := StartOptions{
 		Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup,
-		DebugGroup: s.debugGroup, Prepared: s.prepared,
+		DebugGroup: s.debugGroup, InputClasses: s.inputClasses, Prepared: s.prepared,
 	}
 	go s.run(ctx, opts, s.done)
 	return nil
@@ -363,7 +386,19 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	if !ended {
 		s.fe.Emit(ThreadStarted{ThreadID: ThreadID, Name: rootThreadName})
 	}
+	// A quiet input would leave the user waiting without a word (AD-4).
+	noted := make(chan struct{})
+	s.mu.Lock()
+	delay := s.captureWait
+	s.mu.Unlock()
+	wait := time.AfterFunc(delay, func() {
+		defer close(noted)
+		s.waitingNote()
+	})
 	err := s.engine.Start(ctx, opts, s)
+	if !wait.Stop() {
+		<-noted // the note goes out before the run's last events
+	}
 
 	s.mu.Lock()
 	ended = s.ended
@@ -421,16 +456,35 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 // Captured implements Arriver. When the capture dropped messages for
 // maxMessages, it tells the user how many it kept.
 func (s *Session) Captured(kept, total int) {
-	if kept >= total {
-		return
-	}
 	s.mu.Lock()
+	s.captured = true
 	ended := s.ended
 	s.mu.Unlock()
-	if ended {
+	if ended || kept >= total {
 		return
 	}
 	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", kept, total)})
+}
+
+// SetCaptureWait sets how long the run may capture nothing before the
+// Session's waiting note (AD-4: 5 s). It is for tests, and must be called
+// before ConfigurationDone.
+func (s *Session) SetCaptureWait(d time.Duration) {
+	s.mu.Lock()
+	s.captureWait = d
+	s.mu.Unlock()
+}
+
+// waitingNote tells the user, once, that the run has captured nothing yet.
+// It sends nothing once Captured was called or the session or run ended.
+func (s *Session) waitingNote() {
+	s.mu.Lock()
+	quiet := !s.captured && !s.ended && !s.runDone
+	delay := s.captureWait
+	s.mu.Unlock()
+	if quiet {
+		s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("Waiting for the input: nothing captured yet after %g s.\n", delay.Seconds())})
+	}
 }
 
 // Deliver implements Arriver: it emits batch as one Delivered event, in the

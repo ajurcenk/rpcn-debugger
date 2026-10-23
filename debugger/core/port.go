@@ -74,6 +74,9 @@ type CheckResult struct {
 	// the pipeline has none). Only UserPath and Line are read; an empty
 	// UserPath means output.
 	Delivery Position
+	// Inputs are the AD-5 findings of the capture tree, one per input in
+	// walker order. The Session refuses the launch on them, or warns.
+	Inputs []InputFinding
 	// Prepared is the engine's own result of the rewrite: the configs Check
 	// linted. It is opaque to the Session, which keeps it and passes it back
 	// in StartOptions.Prepared, so Start runs exactly what Check saw (AD-6:
@@ -85,11 +88,12 @@ type CheckResult struct {
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
 	// Check reads and rewrites the pipeline file opts.Pipeline, with the
-	// rewrite options in opts (DebugGroup), and parses and lints it without
-	// running anything, resolving ${VAR} through opts.Lookup as Start does
-	// (AD-22). It ignores opts.MaxMessages and opts.Prepared. It returns
-	// the rewritten configs in CheckResult.Prepared. Its error fails the
-	// launch; a non-Error one is PIPELINE_INVALID.
+	// rewrite options in opts (DebugGroup, InputClasses), and parses and
+	// lints it without running anything, resolving ${VAR} through
+	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages and
+	// opts.Prepared. It returns the rewritten configs in
+	// CheckResult.Prepared and the input findings in CheckResult.Inputs.
+	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
 	Check(opts StartOptions) (CheckResult, error)
 	// Start captures one batch from the pipeline's input, keeps at most
 	// opts.MaxMessages of it, and steps it through the processors, calling
@@ -120,6 +124,10 @@ type StartOptions struct {
 	// DebugGroup is the debug-group base rpcn-debug-<os-user> (AD-5), a
 	// rewrite option. The Session fills it from the process user.
 	DebugGroup string
+	// InputClasses are the launch's inputClasses (AD-5), a rewrite option:
+	// the class each named input component gets instead of the input
+	// table's. A name that isn't an input component is LAUNCH_INVALID.
+	InputClasses map[string]InputClass
 	// Prepared is CheckResult.Prepared from this launch's Check, passed
 	// back to Start unchanged. nil makes Start load the pipeline itself.
 	Prepared any

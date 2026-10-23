@@ -5,6 +5,8 @@ import (
 	"slices"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ajurcenk/rpcn-debugger/debugger/core"
 )
 
 // inputWalker walks the capture tree (AD-5): the top-level input, the
@@ -27,7 +29,10 @@ type inputWalker struct {
 	// overridden holds the group nodes the capture replaced with the
 	// debug group: they don't make the input side-effecting.
 	overridden map[*yaml.Node]bool
-	findings   []InputFinding
+	// overrides is the launch's inputClasses (Options.InputClasses): the
+	// class of each named component, applied before the rollup.
+	overrides map[string]InputClass
+	findings  []InputFinding
 }
 
 type inputResource struct {
@@ -38,11 +43,13 @@ type inputResource struct {
 type resClass struct {
 	class  InputClass
 	effect string
+	// inherited: the class comes from a child or a named resource.
+	inherited bool
 }
 
-func newInputWalker(w *walker, inputResources *yaml.Node, overridden map[*yaml.Node]bool) *inputWalker {
+func newInputWalker(w *walker, inputResources *yaml.Node, overridden map[*yaml.Node]bool, overrides map[string]InputClass) *inputWalker {
 	iw := &inputWalker{
-		w: w, resources: map[string]inputResource{}, emitted: map[string]bool{}, overridden: overridden,
+		w: w, resources: map[string]inputResource{}, emitted: map[string]bool{}, overridden: overridden, overrides: overrides,
 	}
 	if inputResources != nil && inputResources.Kind == yaml.SequenceNode {
 		for i, e := range inputResources.Content {
@@ -68,13 +75,13 @@ func (iw *inputWalker) resourceClasses() map[string]resClass {
 	classes := map[string]resClass{}
 	referrers := map[string][]string{}
 	for _, l := range labels {
-		local := &inputWalker{w: iw.w, resources: iw.resources, overridden: iw.overridden, refs: func(ref string) {
+		local := &inputWalker{w: iw.w, resources: iw.resources, overridden: iw.overridden, overrides: iw.overrides, refs: func(ref string) {
 			if !slices.Contains(referrers[ref], l) {
 				referrers[ref] = append(referrers[ref], l)
 			}
 		}}
-		c, e := local.block(iw.resources[l].body, iw.resources[l].path)
-		classes[l] = resClass{c, e}
+		c, e, inh := local.block(iw.resources[l].body, iw.resources[l].path)
+		classes[l] = resClass{c, e, inh}
 	}
 	queue := slices.Clone(labels)
 	for len(queue) > 0 {
@@ -82,8 +89,8 @@ func (iw *inputWalker) resourceClasses() map[string]resClass {
 		queue = queue[1:]
 		from := classes[l]
 		for _, r := range referrers[l] {
-			if from.class.rank() > classes[r].class.rank() {
-				classes[r] = resClass{from.class, "through " + iw.resources[l].path + ": " + from.effect}
+			if rank(from.class) > rank(classes[r].class) {
+				classes[r] = resClass{from.class, "through " + iw.resources[l].path + ": " + from.effect, true}
 				queue = append(queue, r)
 			}
 		}
@@ -107,12 +114,15 @@ func component(b *yaml.Node) (k, v *yaml.Node) {
 
 // block classifies the input block b at path, its children first in
 // pre-order (the block's finding comes before theirs), and returns its
-// class and effect. A block without a component has no finding and is
-// replay-safe here; the engine reports it.
-func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string) {
+// class and effect, and whether the class is a child's or a named
+// resource's. A block without a component has no finding and is
+// replay-safe here; the engine reports it. An inputClasses override of the
+// component replaces its own class before its children's are rolled up, so
+// a composite follows its overridden children.
+func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, bool) {
 	k, conf := component(b)
 	if k == nil {
-		return ReplaySafe, ""
+		return ReplaySafe, "", false
 	}
 	name := k.Value
 	if iw.refs == nil {
@@ -129,14 +139,33 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string) {
 	case row.class != nil:
 		class, effect = row.class(conf)
 	}
-	if class.rank() < SideEffecting.rank() {
+	if rank(class) < rank(SideEffecting) {
 		if g, ok := iw.keptGroup(conf, row.groups); ok {
 			class, effect = SideEffecting, g
 		}
 	}
+	override, loosened := InputClass(""), false
+	// A FixedInputs component stays rejected (the Session refuses an
+	// override that loosens it; this keeps the rewrite safe on its own).
+	if _, fixed := core.FixedInputs[name]; !fixed {
+		if o, ok := iw.overrides[name]; ok {
+			override, loosened = o, rank(o) < rank(class)
+			note := fmt.Sprintf("inputClasses marks %s %s", name, o)
+			switch {
+			case o == ReplaySafe:
+				effect = ""
+			case effect == "":
+				effect = note
+			case o != class:
+				effect += " (" + note + ")"
+			}
+			class = o
+		}
+	}
+	inherited := false
 	worst := func(c InputClass, e, via string) {
-		if c.rank() > class.rank() {
-			class, effect = c, "through "+via+": "+e
+		if rank(c) > rank(class) {
+			class, effect, inherited = c, "through "+via+": "+e, true
 		}
 	}
 	for _, cf := range row.children {
@@ -145,17 +174,17 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string) {
 		switch {
 		case c == nil:
 		case cf.shape == childOne:
-			ce, ee := iw.block(c, cp)
+			ce, ee, _ := iw.block(c, cp)
 			worst(ce, ee, cp)
 		case cf.shape == childInputs && c.Kind == yaml.SequenceNode:
 			for i, e := range c.Content {
-				ce, ee := iw.block(e, child(cp, i))
+				ce, ee, _ := iw.block(e, child(cp, i))
 				worst(ce, ee, child(cp, i))
 			}
 		case cf.shape == childMap && c.Kind == yaml.MappingNode:
 			for i := 0; i+1 < len(c.Content); i += 2 {
 				p := cp + "." + c.Content[i].Value
-				ce, ee := iw.block(c.Content[i+1], p)
+				ce, ee, _ := iw.block(c.Content[i+1], p)
 				worst(ce, ee, p)
 			}
 		}
@@ -163,9 +192,29 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string) {
 	if name == "resource" {
 		rc, re, via := iw.resource(conf)
 		worst(rc, re, via)
+	} else if len(row.children) == 0 {
+		// The walker doesn't descend here (a leaf, or an unknown
+		// composite): a stdin anywhere below would read the DAP stream
+		// (AD-15), so it is a rejected finding of its own.
+		iw.nestedStdin(conf, path+"."+name, worst)
 	}
-	iw.findings[idx].Class, iw.findings[idx].Effect = class, effect
-	return class, effect
+	f := &iw.findings[idx]
+	f.Class, f.Effect, f.Inherited, f.Override, f.Loosened = class, effect, inherited, override, loosened
+	return class, effect, inherited
+}
+
+// nestedStdin records a rejected finding for every stdin key in conf, the
+// config at path of an input the walker doesn't descend into, and rolls
+// each up into its input through worst.
+func (iw *inputWalker) nestedStdin(conf *yaml.Node, path string, worst func(c InputClass, e, via string)) {
+	walkKeys(conf, path, func(k *yaml.Node, p string) bool {
+		if k.Value == "stdin" {
+			c, e := inputTable["stdin"].class(nil)
+			iw.findings = append(iw.findings, InputFinding{UserPath: p, Line: k.Line, Component: "stdin", Class: c, Effect: e})
+			worst(c, e, p)
+		}
+		return false
+	})
 }
 
 // resource returns the class, effect and path of the input resource named
@@ -191,7 +240,8 @@ func (iw *inputWalker) resource(ref *yaml.Node) (InputClass, string, string) {
 		idx := len(iw.findings)
 		iw.block(r.body, r.path)
 		if idx < len(iw.findings) {
-			iw.findings[idx].Class, iw.findings[idx].Effect = rc.class, rc.effect
+			f := &iw.findings[idx]
+			f.Class, f.Effect, f.Inherited = rc.class, rc.effect, rc.inherited
 		}
 	}
 	return rc.class, rc.effect, r.path

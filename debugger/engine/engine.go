@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,9 @@ type Configs struct {
 	// user path of the innermost processor there (AD-6). It may be nil;
 	// config errors then keep the rewritten config's positions.
 	Positions func(part string, line, col int) (fileLine, fileCol int, userPath string, ok bool)
+	// Inputs are the AD-5 findings of the capture tree, in walker order.
+	// Check returns them in its CheckResult, for the Session to decide on.
+	Inputs []core.InputFinding
 }
 
 // LoadOptions are the rewrite options a Loader passes on, from the
@@ -59,6 +63,10 @@ type Configs struct {
 type LoadOptions struct {
 	// DebugGroup is the debug-group base rpcn-debug-<os-user>.
 	DebugGroup string
+	// InputClasses is the launch's inputClasses: the class each named
+	// input component gets instead of the input table's. Every name is an
+	// input component of the Adapter's environment.
+	InputClasses map[string]core.InputClass
 }
 
 // Loader reads and rewrites a pipeline file with opts.
@@ -86,7 +94,11 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 // back as the result's Prepared, for Start (AD-6: one rewrite per launch).
 func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	pipeline := opts.Pipeline
-	conf, lines, err := a.load(pipeline, loadOptions(opts))
+	lo, err := a.loadOptions(opts)
+	if err != nil {
+		return core.CheckResult{}, err
+	}
+	conf, lines, err := a.load(pipeline, lo)
 	if err != nil {
 		return core.CheckResult{}, err
 	}
@@ -105,13 +117,24 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	}
 	return core.CheckResult{
 		Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings, Delivery: conf.Delivery,
-		Prepared: conf,
+		Inputs: conf.Inputs, Prepared: conf,
 	}, nil
 }
 
-// loadOptions picks the rewrite options out of opts.
-func loadOptions(opts core.StartOptions) LoadOptions {
-	return LoadOptions{DebugGroup: opts.DebugGroup}
+// loadOptions picks the rewrite options out of opts. An inputClasses name
+// that isn't an input component of the environment is LAUNCH_INVALID.
+func (a *Adapter) loadOptions(opts core.StartOptions) (LoadOptions, error) {
+	names := make([]string, 0, len(opts.InputClasses))
+	for name := range opts.InputClasses {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if _, ok := a.env.GetInputConfig(name); !ok {
+			return LoadOptions{}, core.NewError(core.CodeLaunchInvalid, `"inputClasses.%s": %s is not an input component`, name, name)
+		}
+	}
+	return LoadOptions{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream,
@@ -125,8 +148,11 @@ func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Ar
 	case Configs:
 		conf = p
 	case nil:
-		var err error
-		if conf, _, err = a.load(opts.Pipeline, loadOptions(opts)); err != nil {
+		lo, err := a.loadOptions(opts)
+		if err != nil {
+			return err
+		}
+		if conf, _, err = a.load(opts.Pipeline, lo); err != nil {
 			return err
 		}
 	default:

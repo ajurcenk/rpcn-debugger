@@ -4,18 +4,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// In stdio mode stdin and stdout carry the DAP stream (AD-15).
-
-// rejectStdin returns a PIPELINE_INVALID error at the first stdin input in
-// the input tree n at path, broker and sequence children included. stdin is
-// a rejected input (AD-5).
-func rejectStdin(n *yaml.Node, path string) error {
-	k, p := find(n, path, "stdin")
-	if k == nil {
-		return nil
-	}
-	return invalid(k.Line, p, "the stdin input can't be debugged: stdin carries the debugger's DAP stream")
-}
+// In stdio mode stdin and stdout carry the DAP stream (AD-15). A stdin
+// input is the input table's rejected row; the Session refuses it.
 
 // warnStdout warns about every stdout or stderr output in the output tree n
 // at path: the step config always ends in rpcn_debug_sink (AD-21), so they
@@ -89,21 +79,6 @@ func (w *walker) batchingField(k, v *yaml.Node, path string) {
 	if !isNull(v) {
 		w.warn(k.Line, path, "output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ")
 	}
-}
-
-// find returns the first key named name in n (outside processor lists) and
-// its user path.
-func find(n *yaml.Node, path, name string) (*yaml.Node, string) {
-	var key *yaml.Node
-	var at string
-	walkKeys(n, path, func(k *yaml.Node, p string) bool {
-		if k.Value == name {
-			key, at = k, p
-			return true
-		}
-		return false
-	})
-	return key, at
 }
 
 // walkKeys calls fn on every mapping key in n, with its user path, in file
