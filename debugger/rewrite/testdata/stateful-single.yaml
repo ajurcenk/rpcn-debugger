@@ -1,0 +1,19 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - try:
+        - dedupe:
+            cache: mem
+            key: '${! this }'
+
+output:
+  drop: {}
+
+cache_resources:
+  - label: mem
+    memory: {}

@@ -1,0 +1,15 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+buffer:
+  none: {}
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  drop: {}

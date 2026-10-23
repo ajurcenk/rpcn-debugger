@@ -1,0 +1,21 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - try:
+        - rate_limit:
+            resource: rl
+        - mapping: 'root = this'
+
+output:
+  drop: {}
+
+rate_limit_resources:
+  - label: rl
+    local:
+      count: 10
+      interval: 1s

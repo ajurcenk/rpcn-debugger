@@ -1,0 +1,33 @@
+# try with stateful children: a cache set keyed per message, then a cache get
+# of the same key. The engine runs try processor-major and the debugger steps
+# it message-major (AD-7), so the launch warns; this pair is order-insensitive
+# (each message reads only its own key), so the output is still the same.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+pipeline:
+  processors:
+    - try:
+        - cache:
+            resource: mem
+            operator: set
+            key: 'k${! this.n }'
+            value: '{"cached":true,"n":${! this.n }}'
+        - cache:
+            resource: mem
+            operator: get
+            key: 'k${! this.n }'
+
+output:
+  drop: {}
+
+cache_resources:
+  - label: mem
+    memory: {}

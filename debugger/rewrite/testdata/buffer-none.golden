@@ -1,0 +1,22 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [12]
+    processors:
+        - mapping: 'root = this'
+# warnings
+# delivery
+output line 14
+# lines
+(0, 0) pipeline.processors[0] line 12
+(0, 1) pipeline.processors line 11

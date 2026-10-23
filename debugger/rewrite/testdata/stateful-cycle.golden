@@ -1,0 +1,74 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+processor_resources:
+    - label: a
+      branch:
+        processors:
+            - rpcn_debug_stepper:
+                id: 2
+                parent: -1
+                mode: all
+                strict: false
+                concurrent: false
+                lines: [20, 21]
+                processors:
+                    - resource: b
+                    - cache:
+                        resource: mem
+                        operator: get
+                        key: '${! this }'
+    - label: b
+      branch:
+        processors:
+            - rpcn_debug_stepper:
+                id: 3
+                parent: -1
+                mode: all
+                strict: false
+                concurrent: false
+                lines: [28]
+                processors:
+                    - resource: a
+cache_resources:
+    - label: mem
+      memory: {}
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9]
+    processors:
+        - try:
+            - rpcn_debug_stepper:
+                id: 1
+                parent: 0
+                mode: try
+                strict: false
+                concurrent: false
+                repeat: msg
+                lines: [10, 11]
+                processors:
+                    - resource: b
+                    - mapping: 'root = this'
+# warnings
+pipeline.processors[0].try (line 9): the engine runs the try children over every message one child at a time, while the debugger steps one message through all of them, so children that share state across messages (such as a cache) may give different output
+# delivery
+output line 13
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors line 8
+(1, 0) pipeline.processors[0].try[0] line 10
+(1, 1) pipeline.processors[0].try[1] line 11
+(1, 2) pipeline.processors[0].try line 9
+(2, 0) processor_resources.a.branch.processors[0] line 20
+(2, 1) processor_resources.a.branch.processors[1] line 21
+(2, 2) processor_resources.a.branch.processors line 19
+(3, 0) processor_resources.b.branch.processors[0] line 28
+(3, 1) processor_resources.b.branch.processors line 27

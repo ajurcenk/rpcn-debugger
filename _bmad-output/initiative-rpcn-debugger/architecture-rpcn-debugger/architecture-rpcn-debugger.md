@@ -133,7 +133,7 @@ Unit IDs:
   - **Consumer groups:** every known consumer-group field is set to `rpcn-debug-<os-user>` unless `"keepConsumerGroup": true`. The table of fields lives in `debugger/rewrite` and recurses into `broker` and `sequence`.
   - **Output:** `output` is `dry-run` (the default; results go to VSCode only), `real`, or `none`. `real` is required to write to the user's output, and it logs a warning.
   - **Dropped sections:** the rewrite drops `metrics`, `tracer`, `http` and `logger`. The engine gets a no-op metrics and tracer and the AD-15 logger.
-  - **`buffer`:** the top-level buffer is dropped with a launch warning that production batch boundaries may differ, like output `batching` (AD-21), and a corpus case pins it (target: an entry before epic-safe-against-real-systems; today it is dropped silently).
+  - **`buffer`:** the top-level buffer is dropped with a launch warning that production batch boundaries may differ, like output `batching` (AD-21), and a corpus case pins it.
   - The captured batch is never acked, whatever the options.
 
 ### AD-6: The config rewrite is owned by one unit and never touches disk [ADOPTED]
@@ -169,7 +169,7 @@ Unit IDs:
 
 Steppers accept and return several batches, because `group_by` splits and reorders them.
 
-**Order inside `try` and `catch`:** the engine runs them processor-major (each child over every message, then the next child), and the debugger steps them message-major (one message through every child) for the `[msg i/n]` view. The output is the same unless children share state across messages. So the launch warns when a `try` or `catch` list holds a stateful child (`cache`, `dedupe`, `rate_limit`, …), and the AD-8 guarantee excludes that case (target: a rewrite entry before epic-safe-against-real-systems). `retry`'s `[attempt i/max]` takes max from `max_retries`. Until epic-concurrency, the concurrent rows (`workflow` branches, `parallel`, `retry` with `parallel`) run as one opaque step, with a warning.
+**Order inside `try` and `catch`:** the engine runs them processor-major (each child over every message, then the next child), and the debugger steps them message-major (one message through every child) for the `[msg i/n]` view. The output is the same unless children share state across messages. So the launch warns when a `try` or `catch` list of two or more children holds a stateful child (`cache`, `dedupe`, …), and the AD-8 guarantee excludes that case. `retry`'s `[attempt i/max]` takes max from `max_retries`. Until epic-concurrency, the concurrent rows (`workflow` branches, `parallel`, `retry` with `parallel`) run as one opaque step, with a warning.
 
 ### AD-8: The debugger must not change the output [ADOPTED]
 

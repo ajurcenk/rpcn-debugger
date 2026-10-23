@@ -184,6 +184,9 @@ type walker struct {
 	// tainted holds the processor_resources labels used inside a
 	// concurrent parent; they stay unwrapped.
 	tainted map[string]bool
+	// statefulRes holds the processor_resources labels that are stateful
+	// (statefulResources).
+	statefulRes map[string]bool
 	// src holds the lines of the user's file, procs the user path of each
 	// processor, child list and component node, and anchors the source
 	// node each synthesized stepper node stands for: the position map of
@@ -332,6 +335,9 @@ func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 		if class == leaf {
 			continue
 		}
+		if k.Value == "try" || k.Value == "catch" {
+			w.warnStatefulOrder(k, v, cp)
+		}
 		pk := parentKind(k.Value, v)
 		for cl := range childLists(p, i) {
 			lp := cp + cl.path
@@ -405,18 +411,15 @@ func holdsProcessors(v *yaml.Node) bool {
 // taintedResources returns the processor_resources labels used, directly or
 // through other resources, inside an opaque parent (concurrent or unknown)
 // in lists or in any processor resource.
-func taintedResources(lists []*yaml.Node, resources *yaml.Node) map[string]bool {
+// bodies is resourceBodies(resources).
+func taintedResources(lists []*yaml.Node, resources *yaml.Node, bodies map[string]*yaml.Node) map[string]bool {
 	tainted := map[string]bool{}
 	for _, l := range lists {
 		scanList(l, tainted)
 	}
-	bodies := map[string]*yaml.Node{}
 	if resources != nil && resources.Kind == yaml.SequenceNode {
 		for _, e := range resources.Content {
 			scanProcessor(e, tainted)
-			if l := value(e, "label"); l != nil && l.Kind == yaml.ScalarNode {
-				bodies[l.Value] = e
-			}
 		}
 	}
 	queue := make([]string, 0, len(tainted))

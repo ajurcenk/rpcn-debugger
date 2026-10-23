@@ -1,0 +1,15 @@
+# Expectations TestCases and TestEquivalence check beside the AD-8 comparison:
+# the reference run's batches and messages, the Step In stops (path and frame
+# count) that prove ctx reaches each nested child (AD-17), paths no run may
+# stop inside, and Debug Console output every run must show.
+# Each message is replaced by the value cached under its own key.
+batches: [3]
+messages:
+  - content: '{"cached":true,"n":1}'
+  - content: '{"cached":true,"n":2}'
+  - content: '{"cached":true,"n":3}'
+stops:
+  - path: 'pipeline.processors[0].try[1]'
+    frames: 2
+output:
+  - 'pipeline.processors[0].try (line 17): the engine runs the try children over every message one child at a time'

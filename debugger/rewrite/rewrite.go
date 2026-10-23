@@ -161,7 +161,9 @@ func Rewrite(src []byte) (Plan, error) {
 
 	// Resources used inside a concurrent parent stay unwrapped (epic
 	// decision 2026-10-16): their steppers would run on several goroutines.
-	w.tainted = taintedResources(lists, resources)
+	bodies := resourceBodies(resources)
+	w.tainted = taintedResources(lists, resources, bodies)
+	w.statefulRes = statefulResources(bodies)
 
 	for i, s := range sections {
 		if lists[i] == nil || len(lists[i].Content) == 0 {
@@ -203,6 +205,7 @@ func Rewrite(src []byte) (Plan, error) {
 			}
 		}
 	}
+	w.warnBuffer(field(root, "buffer"))
 
 	// metrics, tracer, http and logger are dropped (AD-5): only the input,
 	// the steppers and the *_resources sections reach the engine.

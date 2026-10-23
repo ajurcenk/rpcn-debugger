@@ -105,3 +105,11 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/plan-bump-connect-4-115.md`
   summary: Delivered — the pre-E3 bump (from the 2026-10-22 spine update, the entry "bump to Connect v4.115.0 / benthos v4.84.0 / Go 1.27.3" above) was delivered by plan-bump-connect-4-115, with `task ci` (AD-8 corpus and integration) green.
   evidence: go.mod and tools/go.mod at go 1.27.3; cmd/rpcn-debug/version_test.go TestDepVersions/TestRunVersion pin v4.115.0/v4.84.0; `task ci` exit 0 on 2026-10-22; no rewrite golden changed.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/plan-try-catch-stateful-and-buffer-warnings.md`
+  summary: Delivered — the stateful `try`/`catch` launch warning (the entry "a launch warning when a `try` or `catch` list holds a stateful child" above): a `try` or `catch` list with two or more children, one of which holds a stateful processor (`cache`, `cached`, `dedupe`, `redis`, `redis_script`, `sql_raw`, `sql_insert`, `sql_select`, directly, through a `resource:`, or nested in a parent), gets one warning at the list's key line. `rate_limit` is left out (timing only, AD-8), and AD-7's example list no longer names it.
+  evidence: debugger/rewrite/state.go (stateful, holdsStateful, warnStatefulOrder); goldens debugger/rewrite/testdata/stateful-*.yaml; corpus case testdata/equivalence/try-stateful (the stateless case is testdata/equivalence/try).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/plan-try-catch-stateful-and-buffer-warnings.md`
+  summary: Delivered — the dropped `buffer` launch warning (the entry "warn when the top-level `buffer` section is dropped" above): a top-level `buffer` that is set (not null, empty or `none`) gets one warning at its key line, and a corpus case pins it.
+  evidence: debugger/rewrite/state.go warnBuffer, called from Rewrite in debugger/rewrite/rewrite.go; goldens debugger/rewrite/testdata/buffer.yaml and buffer-none.yaml; corpus case testdata/equivalence/buffer (`memory: {}` keeps the batch as captured).

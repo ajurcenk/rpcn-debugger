@@ -1,0 +1,22 @@
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+
+pipeline:
+  processors:
+    - try:
+        - cache:
+            resource: mem
+            operator: set
+            key: '${! this }'
+            value: 'x'
+        - mapping: 'root = this'
+
+output:
+  drop: {}
+
+cache_resources:
+  - label: mem
+    memory: {}

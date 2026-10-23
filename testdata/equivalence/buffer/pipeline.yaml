@@ -1,0 +1,22 @@
+# A top-level buffer: the rewrite drops it with a launch warning (AD-5). A
+# memory buffer without a batch_policy keeps the batch as the input yields it,
+# so the output is still the same.
+# Same-batch rule: the input yields exactly one batch of at most 10 messages
+# (the maxMessages default), so the debugger captures the whole input.
+input:
+  generate:
+    count: 3
+    batch_size: 3
+    interval: ""
+    mapping: |
+      root.n = counter()
+
+buffer:
+  memory: {}
+
+pipeline:
+  processors:
+    - mapping: 'root = this.merge({"done": true})'
+
+output:
+  drop: {}

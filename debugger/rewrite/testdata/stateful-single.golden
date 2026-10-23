@@ -1,0 +1,39 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = 1'
+# resources
+cache_resources:
+    - label: mem
+      memory: {}
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [9]
+    processors:
+        - try:
+            - rpcn_debug_stepper:
+                id: 1
+                parent: 0
+                mode: try
+                strict: false
+                concurrent: false
+                repeat: msg
+                lines: [10]
+                processors:
+                    - dedupe:
+                        cache: mem
+                        key: '${! this }'
+# warnings
+# delivery
+output line 14
+# lines
+(0, 0) pipeline.processors[0] line 9
+(0, 1) pipeline.processors line 8
+(1, 0) pipeline.processors[0].try[0] line 10
+(1, 1) pipeline.processors[0].try line 9
