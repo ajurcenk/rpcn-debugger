@@ -50,7 +50,7 @@ cache_resources:
 `
 
 func TestFilePosition(t *testing.T) {
-	p, err := Rewrite([]byte(positionsSrc))
+	p, err := Rewrite([]byte(positionsSrc), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestFilePosition(t *testing.T) {
 // node's position, in every part. Where several nodes start at one encoded
 // position (a mapping and its first key), the innermost one wins.
 func TestFilePositionExact(t *testing.T) {
-	p, err := Rewrite([]byte(positionsSrc))
+	p, err := Rewrite([]byte(positionsSrc), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestFilePositionRequoted(t *testing.T) {
 	src := "input:\n  generate: {count: 1, mapping: 'root = ${X}'}\npipeline:\n  processors:\n" +
 		"    - mapping: |\n        root = this \n        root.x = 1\n        root.y = 2\n" +
 		"    - mapping: 'root = a'\n    - mapping: 'root = b'\n    - mapping: 'root = c'\n    - mapping: 'root = d'\n"
-	p, err := Rewrite([]byte(src))
+	p, err := Rewrite([]byte(src), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

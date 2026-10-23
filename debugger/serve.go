@@ -57,15 +57,15 @@ func Serve(env *service.Environment, in io.Reader, out io.Writer, opts ...Option
 	return dap.Serve(in, out, dapLog, engine.New(env, engineLog, loadPipeline), dap.OnSession(sink.attach))
 }
 
-// loadPipeline reads the pipeline file and rewrites it (AD-6). The user's
-// file is only read, never written.
-func loadPipeline(path string) (engine.Configs, core.LineMap, error) {
+// loadPipeline reads the pipeline file and rewrites it with opts (AD-6). The
+// user's file is only read, never written.
+func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		// The launch's "pipeline" names no readable file.
 		return engine.Configs{}, nil, core.NewError(core.CodeLaunchInvalid, "read the pipeline: %v", err)
 	}
-	plan, err := rewrite.Rewrite(raw)
+	plan, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup})
 	if err != nil {
 		// Keep the rewrite's Line and UserPath.
 		var ce core.Error

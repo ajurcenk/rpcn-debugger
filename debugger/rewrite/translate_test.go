@@ -115,7 +115,7 @@ var lineRef = regexp.MustCompile(`\(line (\d+)\)`)
 // Real engine errors, translated: every path names the user's processor,
 // never a stepper, and every Bloblang line is the file line.
 func TestTranslateEngineErrors(t *testing.T) {
-	plan, err := rewrite.Rewrite([]byte(throwing))
+	plan, err := rewrite.Rewrite([]byte(throwing), rewrite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestTranslateEngineErrors(t *testing.T) {
 	if err := os.WriteFile(path, []byte(throwing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	load := func(string) (engine.Configs, core.LineMap, error) {
+	load := func(string, engine.LoadOptions) (engine.Configs, core.LineMap, error) {
 		return engine.Configs{Input: plan.Input, Resources: plan.Resources, Steppers: plan.Steppers}, plan, nil
 	}
 	var got [][2]string
@@ -169,7 +169,7 @@ func TestTranslateEngineErrors(t *testing.T) {
 }
 
 func TestTranslateTable(t *testing.T) {
-	plan, err := rewrite.Rewrite([]byte(throwing))
+	plan, err := rewrite.Rewrite([]byte(throwing), rewrite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

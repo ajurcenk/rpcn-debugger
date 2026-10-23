@@ -68,6 +68,10 @@ type Options struct {
 	// MaxStops bounds the run: Run fails after this many stops. 0 means
 	// 10000.
 	MaxStops int
+	// AfterLaunch, when set, runs after the launch response and before
+	// configurationDone, e.g. to edit or remove the pipeline file. Its
+	// error ends the run.
+	AfterLaunch func() error
 }
 
 // Frame is one stack frame of a stop, innermost first.
@@ -190,7 +194,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		<-served
 	}()
 
-	res, err := c.run(pipeline, opts.Launch, script, paths, maxStops)
+	res, err := c.run(pipeline, opts.Launch, script, paths, maxStops, opts.AfterLaunch)
 	if err != nil {
 		return res, err
 	}
@@ -314,7 +318,7 @@ func (c *client) event() (message, error) {
 	}
 }
 
-func (c *client) run(pipeline string, launch map[string]any, script Script, paths map[pathKey]string, maxStops int) (Result, error) {
+func (c *client) run(pipeline string, launch map[string]any, script Script, paths map[pathKey]string, maxStops int, afterLaunch func() error) (Result, error) {
 	var res Result
 	if _, err := c.request("initialize", map[string]any{"adapterID": "redpanda-connect", "linesStartAt1": true}); err != nil {
 		return res, err
@@ -326,6 +330,11 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 	args["pipeline"], args["cwd"] = pipeline, filepath.Dir(pipeline)
 	if _, err := c.request("launch", args); err != nil {
 		return res, err
+	}
+	if afterLaunch != nil {
+		if err := afterLaunch(); err != nil {
+			return res, fmt.Errorf("after launch: %w", err)
+		}
 	}
 	if _, err := c.request("configurationDone", map[string]any{}); err != nil {
 		return res, err
@@ -577,7 +586,7 @@ func userPaths(pipeline string) (map[pathKey]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	plan, err := rewrite.Rewrite(raw)
+	plan, err := rewrite.Rewrite(raw, rewrite.Options{})
 	if err != nil {
 		return nil, err
 	}

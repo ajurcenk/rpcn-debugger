@@ -74,22 +74,32 @@ type CheckResult struct {
 	// the pipeline has none). Only UserPath and Line are read; an empty
 	// UserPath means output.
 	Delivery Position
+	// Prepared is the engine's own result of the rewrite: the configs Check
+	// linted. It is opaque to the Session, which keeps it and passes it back
+	// in StartOptions.Prepared, so Start runs exactly what Check saw (AD-6:
+	// one rewrite per launch). It may be nil.
+	Prepared any
 }
 
 // Engine is the port the Session reaches the engine through. The adapter
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
-	// Check reads and rewrites the pipeline file opts.Pipeline and parses
-	// and lints it without running anything, resolving ${VAR} through
-	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages. Its
-	// error fails the launch; a non-Error one is PIPELINE_INVALID.
+	// Check reads and rewrites the pipeline file opts.Pipeline, with the
+	// rewrite options in opts (DebugGroup), and parses and lints it without
+	// running anything, resolving ${VAR} through opts.Lookup as Start does
+	// (AD-22). It ignores opts.MaxMessages and opts.Prepared. It returns
+	// the rewritten configs in CheckResult.Prepared. Its error fails the
+	// launch; a non-Error one is PIPELINE_INVALID.
 	Check(opts StartOptions) (CheckResult, error)
 	// Start captures one batch from the pipeline's input, keeps at most
 	// opts.MaxMessages of it, and steps it through the processors, calling
 	// a.Captured once, a.Arrive at every stop position and a.Deliver for
-	// every batch rpcn_debug_sink receives. It returns nil
-	// once the batch is delivered, an Error with code NOTHING_CAPTURED when
-	// the input yields nothing, or an error when ctx ends or the run fails.
+	// every batch rpcn_debug_sink receives. It runs opts.Prepared, the
+	// configs a Check returned, without reading the file again (AD-6); with
+	// a nil Prepared it reads and rewrites opts.Pipeline itself. It returns
+	// nil once the batch is delivered, an Error with code NOTHING_CAPTURED
+	// when the input yields nothing, or an error when ctx ends or the run
+	// fails.
 	Start(ctx context.Context, opts StartOptions, a Arriver) error
 }
 
@@ -107,6 +117,12 @@ type StartOptions struct {
 	// launch's env, then its envFile, then the process environment. nil
 	// means the process environment only.
 	Lookup func(name string) (string, bool)
+	// DebugGroup is the debug-group base rpcn-debug-<os-user> (AD-5), a
+	// rewrite option. The Session fills it from the process user.
+	DebugGroup string
+	// Prepared is CheckResult.Prepared from this launch's Check, passed
+	// back to Start unchanged. nil makes Start load the pipeline itself.
+	Prepared any
 }
 
 // Frontend receives the Session's events. Emit may be called from any

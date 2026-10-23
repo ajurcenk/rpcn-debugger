@@ -54,8 +54,15 @@ type Configs struct {
 	Positions func(part string, line, col int) (fileLine, fileCol int, userPath string, ok bool)
 }
 
-// Loader reads and rewrites a pipeline file.
-type Loader func(pipeline string) (Configs, core.LineMap, error)
+// LoadOptions are the rewrite options a Loader passes on, from the
+// Session's StartOptions (AD-5).
+type LoadOptions struct {
+	// DebugGroup is the debug-group base rpcn-debug-<os-user>.
+	DebugGroup string
+}
+
+// Loader reads and rewrites a pipeline file with opts.
+type Loader func(pipeline string, opts LoadOptions) (Configs, core.LineMap, error)
 
 // Adapter implements core.Engine on clones of one Connect environment.
 type Adapter struct {
@@ -75,10 +82,11 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 // Check loads the pipeline and parses and lints both stream configs, so
 // config errors fail the launch. ${VAR} resolves through opts.Lookup, as in
 // Start (AD-22). It never calls Build: Build opens every *_resources entry
-// (caches, connection pools), which would leak.
+// (caches, connection pools), which would leak. The loaded Configs come
+// back as the result's Prepared, for Start (AD-6: one rewrite per launch).
 func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	pipeline := opts.Pipeline
-	conf, lines, err := a.load(pipeline)
+	conf, lines, err := a.load(pipeline, loadOptions(opts))
 	if err != nil {
 		return core.CheckResult{}, err
 	}
@@ -95,16 +103,34 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	if _, _, err := r.configureStep(); err != nil {
 		return failed, fmt.Errorf("%s: %w", pipeline, err)
 	}
-	return core.CheckResult{Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings, Delivery: conf.Delivery}, nil
+	return core.CheckResult{
+		Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings, Delivery: conf.Delivery,
+		Prepared: conf,
+	}, nil
+}
+
+// loadOptions picks the rewrite options out of opts.
+func loadOptions(opts core.StartOptions) LoadOptions {
+	return LoadOptions{DebugGroup: opts.DebugGroup}
 }
 
 // Start captures one batch without acking it, stops the capture stream,
 // truncates the batch to opts.MaxMessages, then feeds it through the stepper
-// into rpcn_debug_sink. It returns nil once the sink has the result.
+// into rpcn_debug_sink. It returns nil once the sink has the result. It
+// runs opts.Prepared, the Configs Check returned, and loads the pipeline
+// itself only when Prepared is nil.
 func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Arriver) error {
-	conf, _, err := a.load(opts.Pipeline)
-	if err != nil {
-		return err
+	var conf Configs
+	switch p := opts.Prepared.(type) {
+	case Configs:
+		conf = p
+	case nil:
+		var err error
+		if conf, _, err = a.load(opts.Pipeline, loadOptions(opts)); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("start: Prepared is a %T, not the Configs Check returns", opts.Prepared)
 	}
 	r, err := a.newRun(conf, opts.Lookup, arr)
 	if err != nil {

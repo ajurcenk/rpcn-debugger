@@ -28,12 +28,12 @@ var (
 	nestedPipeline = filepath.Join("..", "..", "testdata", "tracer", "nested.yaml")
 )
 
-func load(path string) (engine.Configs, core.LineMap, error) {
+func load(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	p, err := rewrite.Rewrite(raw)
+	p, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup})
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
@@ -122,6 +122,55 @@ func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches
 }
 
 func standard() *service.Environment { return service.NewEnvironment() }
+
+// Start runs Check's Prepared without loading again (AD-6), and without
+// one (a caller that skipped Check) loads the pipeline itself. The loader
+// gets the rewrite options from StartOptions.
+func TestStartRunsPrepared(t *testing.T) {
+	var loads []engine.LoadOptions
+	counting := func(p string, o engine.LoadOptions) (engine.Configs, core.LineMap, error) {
+		loads = append(loads, o)
+		return load(p, o)
+	}
+	a := engine.New(standard(), testLogger(), counting)
+	opts := core.StartOptions{Pipeline: samplePipeline, DebugGroup: "rpcn-debug-jane"}
+	res, err := a.Check(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.Prepared.(engine.Configs); !ok {
+		t.Fatalf("Check Prepared = %T, want engine.Configs", res.Prepared)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	prepared := opts
+	prepared.Prepared = res.Prepared
+	arr := &arriver{}
+	if err := a.Start(ctx, prepared, arr); err != nil {
+		t.Fatal(err)
+	}
+	if len(loads) != 1 || loads[0].DebugGroup != "rpcn-debug-jane" {
+		t.Errorf("loads = %+v, want only Check's, with the debug group", loads)
+	}
+	if len(arr.delivered) != 1 {
+		t.Errorf("delivered %d batches from Prepared, want 1", len(arr.delivered))
+	}
+
+	arr = &arriver{}
+	if err := a.Start(ctx, opts, arr); err != nil {
+		t.Fatal(err)
+	}
+	if len(loads) != 2 || loads[1].DebugGroup != "rpcn-debug-jane" {
+		t.Errorf("loads = %+v, want Start without Prepared to load with the debug group", loads)
+	}
+	if len(arr.delivered) != 1 {
+		t.Errorf("delivered %d batches without Prepared, want 1", len(arr.delivered))
+	}
+
+	if err := a.Start(ctx, core.StartOptions{Pipeline: samplePipeline, Prepared: "configs"}, &arriver{}); err == nil {
+		t.Error("Start ran a Prepared that is not engine.Configs")
+	}
+}
 
 func TestSampleStepsAndDelivers(t *testing.T) {
 	env := standard()
@@ -735,8 +784,8 @@ pipeline:
 output:
   drop: {}
 `)
-	withTr := func(p string) (engine.Configs, core.LineMap, error) {
-		c, l, err := load(p)
+	withTr := func(p string, opts engine.LoadOptions) (engine.Configs, core.LineMap, error) {
+		c, l, err := load(p, opts)
 		if err == nil {
 			c.Translator = l.(rewrite.Plan)
 		}

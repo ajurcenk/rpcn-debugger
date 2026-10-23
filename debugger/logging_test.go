@@ -57,7 +57,7 @@ processor_resources:
 // sink writing to buf, attached to a launched Session whose frontend is fe.
 func newTestLogging(t *testing.T) (engineLog, dapLog *slog.Logger, buf *syncBuffer, fe *outputs) {
 	t.Helper()
-	plan, err := rewrite.Rewrite([]byte(logPipeline))
+	plan, err := rewrite.Rewrite([]byte(logPipeline), rewrite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestLogWithoutSession(t *testing.T) {
 
 // Once the session has ended, nothing more reaches the frontend.
 func TestLogAfterTerminate(t *testing.T) {
-	plan, err := rewrite.Rewrite([]byte(logPipeline))
+	plan, err := rewrite.Rewrite([]byte(logPipeline), rewrite.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

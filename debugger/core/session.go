@@ -143,6 +143,8 @@ type Session struct {
 	lookup      func(string) (string, bool) // env, then envFile, then the process (AD-22)
 	lines       LineMap
 	translate   Translate
+	debugGroup  string   // the debug-group base rewrite option (AD-5)
+	prepared    any      // Check's configs, run by Start (AD-6: one rewrite per launch)
 	delivery    Position // where Delivered Snapshots are positioned (AD-21)
 	delivered   int      // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
 	runDone     bool     // the run emitted Terminated: Log sends nothing more
@@ -290,7 +292,8 @@ func (s *Session) launch(c Launch) error {
 	// Check and Start resolve ${VAR} through the same lookup, so lint and
 	// parse see the values the run gets (AD-22).
 	lookup := EnvLookup(fileEnv, env)
-	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup})
+	group := debugGroup()
+	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group})
 	if err != nil {
 		ce, _ := AsError(err, CodePipelineInvalid).(Error)
 		ce.Message = TranslateText(res.Translator, ce.Message)
@@ -299,7 +302,7 @@ func (s *Session) launch(c Launch) error {
 
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
-	s.delivery = res.Delivery
+	s.delivery, s.debugGroup, s.prepared = res.Delivery, group, res.Prepared
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -328,7 +331,12 @@ func (s *Session) configurationDone() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel, s.done = cancel, make(chan struct{})
-	opts := StartOptions{Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup}
+	// Start runs the configs Check produced: an edit to the file after
+	// launch never desyncs them from s.lines (AD-6).
+	opts := StartOptions{
+		Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup,
+		DebugGroup: s.debugGroup, Prepared: s.prepared,
+	}
 	go s.run(ctx, opts, s.done)
 	return nil
 }

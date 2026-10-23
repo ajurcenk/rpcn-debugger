@@ -113,3 +113,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/plan-try-catch-stateful-and-buffer-warnings.md`
   summary: Delivered — the dropped `buffer` launch warning (the entry "warn when the top-level `buffer` section is dropped" above): a top-level `buffer` that is set (not null, empty or `none`) gets one warning at its key line, and a corpus case pins it.
   evidence: debugger/rewrite/state.go warnBuffer, called from Rewrite in debugger/rewrite/rewrite.go; goldens debugger/rewrite/testdata/buffer.yaml and buffer-none.yaml; corpus case testdata/equivalence/buffer (`memory: {}` keeps the batch as captured).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-one-rewrite-per-launch-with-session-supplied-rewrite-options-plan.md`
+  summary: CLAUDE.md's Layout is stale after E3 entry 1: add `core/debuggroup.go` (the Session's debug-group name), `rewrite.Options`/`Plan.Options` (`Rewrite(src, opts)`), the `Prepared` hand-off from Check to Start, and `dapdrive.Options.AfterLaunch`. For E3's refactor sweep, which keeps CLAUDE.md current.
+  evidence: quick review of E3 entry 1 (2026-10-23); fixes to agent-context files are deferred to a sweep.

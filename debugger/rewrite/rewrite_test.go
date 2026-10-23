@@ -64,7 +64,7 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got := render(Rewrite(raw))
+			got := render(Rewrite(raw, Options{}))
 			golden := strings.TrimSuffix(src, ".yaml") + ".golden"
 			if *update {
 				if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
@@ -98,8 +98,24 @@ func TestSampleIsTracerPipeline(t *testing.T) {
 	}
 }
 
+// The Plan keeps the options it was made with, and they change no output.
+func TestPlanOptions(t *testing.T) {
+	src := []byte("input:\n  generate: {mapping: 'root = 1'}\npipeline:\n  processors:\n    - mapping: 'root = 2'\n")
+	opts := Options{DebugGroup: "rpcn-debug-jane"}
+	p, err := Rewrite(src, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Options != opts {
+		t.Errorf("Plan.Options = %+v, want %+v", p.Options, opts)
+	}
+	if got, want := render(p, nil), render(Rewrite(src, Options{})); got != want {
+		t.Errorf("rewrite with options:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestPosition(t *testing.T) {
-	p, err := Rewrite([]byte("input:\n  generate: {mapping: 'root = 1'}\npipeline:\n  processors:\n    - mapping: 'root = 2'\n"))
+	p, err := Rewrite([]byte("input:\n  generate: {mapping: 'root = 1'}\npipeline:\n  processors:\n    - mapping: 'root = 2'\n"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +142,7 @@ func TestErrors(t *testing.T) {
 		"branch not mapping":  "input:\n  generate: {}\npipeline:\n  processors:\n    - branch: [1]\n",
 		"input procs mapping": "input:\n  generate: {}\n  processors: {a: 1}\n",
 	} {
-		_, err := Rewrite([]byte(src))
+		_, err := Rewrite([]byte(src), Options{})
 		if !core.HasCode(err, core.CodePipelineInvalid) {
 			t.Errorf("%s: error = %v, want PIPELINE_INVALID", name, err)
 		}
@@ -140,7 +156,7 @@ func TestNestedLineMap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := Rewrite(raw)
+	p, err := Rewrite(raw, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +211,7 @@ func TestStrictExpr(t *testing.T) {
 		{"true", "", 0, true},
 		{"false", "", 0, false},
 	} {
-		p, err := Rewrite(fmt.Appendf(nil, src, tc.strict))
+		p, err := Rewrite(fmt.Appendf(nil, src, tc.strict), Options{})
 		if err != nil {
 			t.Fatalf("%s: %v", tc.strict, err)
 		}

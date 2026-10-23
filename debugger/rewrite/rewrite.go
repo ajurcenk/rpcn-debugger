@@ -45,6 +45,9 @@ type Plan struct {
 	// positioned (AD-21): the user path output and the line of the
 	// top-level output key, or 0 when there is none.
 	Delivery core.Position
+	// Options are the rewrite options this Plan was made with. They are
+	// read-only.
+	Options Options
 
 	stops map[stop]core.Position
 	// paths and bases back Translate (see walker).
@@ -66,10 +69,18 @@ func (p Plan) Position(stepperID, childIndex int) (core.Position, bool) {
 	return pos, ok
 }
 
-// Rewrite turns pipeline YAML into a Plan (AD-4, AD-6). It never writes
-// anything to disk. Its errors are core.Errors with code PIPELINE_INVALID,
-// with Line and UserPath set when known.
-func Rewrite(src []byte) (Plan, error) {
+// Options are the rewrite's inputs besides the YAML. The Session supplies
+// them, so the rewrite stays pure (AD-5).
+type Options struct {
+	// DebugGroup is the debug-group base rpcn-debug-<os-user> that
+	// overridden consumer-group fields derive from (AD-5).
+	DebugGroup string
+}
+
+// Rewrite turns pipeline YAML into a Plan (AD-4, AD-6), with opts. It never
+// writes anything to disk. Its errors are core.Errors with code
+// PIPELINE_INVALID, with Line and UserPath set when known.
+func Rewrite(src []byte, opts Options) (Plan, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
 		return Plan{}, yamlError(err)
@@ -102,7 +113,7 @@ func Rewrite(src []byte) (Plan, error) {
 		stops: map[stop]core.Position{}, paths: map[string]string{}, bases: map[string]int{},
 		src: strings.Split(string(src), "\n"), procs: map[*yaml.Node]string{}, anchors: map[*yaml.Node]*yaml.Node{},
 	}
-	plan := Plan{positions: map[string]posMap{}, src: w.src}
+	plan := Plan{Options: opts, positions: map[string]posMap{}, src: w.src}
 	plan.Strict, w.strict = strict(root)
 	if isInterpolated(w.strict) {
 		// Encoded, so a quoted scalar stays quoted, as in the steppers;

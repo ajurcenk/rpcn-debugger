@@ -12,8 +12,8 @@ import (
 
 // loadMapped is load with the translator and the position map wired, as
 // debugger.Serve does.
-func loadMapped(path string) (engine.Configs, core.LineMap, error) {
-	c, l, err := load(path)
+func loadMapped(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, error) {
+	c, l, err := load(path, opts)
 	if err == nil {
 		p := l.(rewrite.Plan)
 		c.Translator, c.Positions = p, p.FilePosition
@@ -195,8 +195,8 @@ func TestCheckErrorUnmappedPosition(t *testing.T) {
   processors:
     - mapping: 'root = '
 `
-	none := func(path string) (engine.Configs, core.LineMap, error) {
-		c, l, err := loadMapped(path)
+	none := func(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, error) {
+		c, l, err := loadMapped(path, opts)
 		c.Positions = func(string, int, int) (int, int, string, bool) { return 0, 0, "", false }
 		return c, l, err
 	}

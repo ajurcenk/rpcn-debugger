@@ -590,3 +590,69 @@ output:
 		})
 	}
 }
+
+const launchedPipeline = `input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = "a"'
+pipeline:
+  processors:
+    - mapping: 'root = content().string() + "1"'
+    - mapping: 'root = content().string() + "2"'
+output:
+  drop: {}
+`
+
+// An edit after launch shifts every line and replaces the processors.
+const editedPipeline = `# edited
+
+
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = "b"'
+pipeline:
+  processors:
+    - mapping: 'root = "edited"'
+output:
+  drop: {}
+`
+
+// Start runs the configs Check produced at launch (AD-6: one rewrite per
+// launch): a pipeline file edited or removed between launch and
+// configurationDone changes neither the stops nor the output.
+func TestOneRewritePerLaunch(t *testing.T) {
+	for name, change := range map[string]func(path string) error{
+		"edited":  func(path string) error { return os.WriteFile(path, []byte(editedPipeline), 0o600) },
+		"deleted": os.Remove,
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "pipeline.yaml")
+			if err := os.WriteFile(path, []byte(launchedPipeline), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			want, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: path, Script: dapdrive.Always(dapdrive.Next)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := dapdrive.Run(ctx, dapdrive.Options{
+				Pipeline: path, Script: dapdrive.Always(dapdrive.Next),
+				AfterLaunch: func() error { return change(path) },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if g, w := strings.Join(trace(got), "\n"), strings.Join(trace(want), "\n"); g != w || len(want.Stops) < 3 {
+				t.Errorf("stops:\n%s\nwant the launched pipeline's:\n%s", g, w)
+			}
+			if len(got.Delivered) != 1 || len(got.Delivered[0]) != 1 || got.Delivered[0][0].Content != "a12" {
+				t.Errorf("delivered = %+v, want one batch holding a12", got.Delivered)
+			}
+		})
+	}
+}
