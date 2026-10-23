@@ -1,0 +1,18 @@
+# input
+sequence:
+    inputs:
+        - generate:
+            count: 1
+            interval: ""
+            mapping: 'root = {}'
+        - my_plugin_input:
+            address: localhost:1234
+# resources
+# warnings
+# inputs
+input (line 3) sequence: unknown: through input.sequence.inputs[1]: the debugger doesn't know what the my_plugin_input input does, so it is treated as side-effecting
+input.sequence.inputs[0] (line 5) generate: replay-safe
+input.sequence.inputs[1] (line 9) my_plugin_input: unknown: the debugger doesn't know what the my_plugin_input input does, so it is treated as side-effecting
+# delivery
+output line 12
+# lines

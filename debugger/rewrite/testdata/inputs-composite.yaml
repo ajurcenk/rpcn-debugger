@@ -1,0 +1,13 @@
+# A broker takes its worst child's class.
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+      - aws_sqs:
+          url: https://sqs.eu-west-1.amazonaws.com/1/q
+
+output:
+  drop: {}

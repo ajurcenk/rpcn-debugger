@@ -35,6 +35,8 @@ rpcn_debug_stepper:
 # warnings
 pipeline.processors[0].retry (line 9): retry with an interpolated parallel may run its processors concurrently (decided at runtime), so it runs as one step and nothing inside it is stepped
 processor_resources.r (line 17): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 24
 # lines

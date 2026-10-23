@@ -1,0 +1,10 @@
+# auto_replay_nacks: false would make the capture's nack commit the offsets,
+# so the capture config gets true, with a warning.
+input:
+  kafka_franz:
+    seed_brokers: [localhost:9092]
+    topics: [t]
+    auto_replay_nacks: false
+
+output:
+  drop: {}

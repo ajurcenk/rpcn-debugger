@@ -1,0 +1,13 @@
+# An input with no table row is unknown, and so is its composite.
+input:
+  sequence:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+      - my_plugin_input:
+          address: localhost:1234
+
+output:
+  drop: {}

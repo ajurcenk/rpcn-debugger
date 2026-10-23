@@ -1,0 +1,27 @@
+# input
+broker:
+    inputs:
+        - resource: a
+        - resource: b
+# resources
+input_resources:
+    - label: a
+      broker:
+        inputs:
+            - resource: b
+            - aws_sqs:
+                url: https://sqs.eu-west-1.amazonaws.com/1/q
+    - label: b
+      resource: a
+# warnings
+# inputs
+input (line 4) broker: side-effecting: through input.broker.inputs[0]: through input_resources.a: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input.broker.inputs[0] (line 6) resource: side-effecting: through input_resources.a: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input_resources.a (line 11) broker: side-effecting: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input_resources.a.broker.inputs[0] (line 13) resource: side-effecting: through input_resources.b: through input_resources.a: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input_resources.b (line 17) resource: side-effecting: through input_resources.a: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input_resources.a.broker.inputs[1] (line 14) aws_sqs: side-effecting: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input.broker.inputs[1] (line 7) resource: side-effecting: through input_resources.b: through input_resources.a: through input_resources.a.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+# delivery
+output line 19
+# lines

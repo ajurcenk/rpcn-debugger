@@ -19,6 +19,8 @@ rpcn_debug_stepper:
         - mapping: 'root = this'
 # warnings
 pipeline.processors[0].my_plugin (line 9): my_plugin is not a parent processor the debugger knows, so it runs as one step and nothing inside it is stepped
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 14
 # lines

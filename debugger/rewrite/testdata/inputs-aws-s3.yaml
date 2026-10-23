@@ -1,0 +1,13 @@
+# aws_s3 is replay-safe without sqs, and side-effecting with sqs.url.
+input:
+  broker:
+    inputs:
+      - aws_s3:
+          bucket: b
+      - aws_s3:
+          bucket: b
+          sqs:
+            url: https://sqs.eu-west-1.amazonaws.com/1/q
+
+output:
+  drop: {}

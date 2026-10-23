@@ -1,0 +1,14 @@
+# input
+resource: q
+# resources
+input_resources:
+    - label: q
+      aws_sqs:
+        url: https://sqs.eu-west-1.amazonaws.com/1/q
+# warnings
+# inputs
+input (line 3) resource: side-effecting: through input_resources.q: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input_resources.q (line 7) aws_sqs: side-effecting: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+# delivery
+output line 10
+# lines

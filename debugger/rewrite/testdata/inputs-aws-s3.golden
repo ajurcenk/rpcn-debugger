@@ -1,0 +1,18 @@
+# input
+broker:
+    inputs:
+        - aws_s3:
+            bucket: b
+        - aws_s3:
+            bucket: b
+            sqs:
+                url: https://sqs.eu-west-1.amazonaws.com/1/q
+# resources
+# warnings
+# inputs
+input (line 3) broker: side-effecting: through input.broker.inputs[1]: receives the S3 event messages from the SQS queue: their receive count rises and they stay hidden
+input.broker.inputs[0] (line 5) aws_s3: replay-safe
+input.broker.inputs[1] (line 7) aws_s3: side-effecting: receives the S3 event messages from the SQS queue: their receive count rises and they stay hidden
+# delivery
+output line 12
+# lines

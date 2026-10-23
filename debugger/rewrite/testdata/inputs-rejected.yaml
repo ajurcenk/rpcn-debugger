@@ -1,0 +1,18 @@
+# http_server and dynamic are rejected; the walker still reports dynamic's
+# children. The refusal comes in E3 entry 4.
+input:
+  batched:
+    child:
+      dynamic:
+        inputs:
+          a:
+            http_server:
+              path: /post
+          b:
+            generate:
+              mapping: 'root = {}'
+    policy:
+      count: 1
+
+output:
+  drop: {}

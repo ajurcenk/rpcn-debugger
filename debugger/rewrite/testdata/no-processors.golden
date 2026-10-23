@@ -5,6 +5,8 @@ generate:
     mapping: 'root = "x"'
 # resources
 # warnings
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 7
 # lines

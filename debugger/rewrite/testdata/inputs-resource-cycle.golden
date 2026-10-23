@@ -1,0 +1,25 @@
+# input
+resource: a
+# resources
+input_resources:
+    - label: a
+      broker:
+        inputs:
+            - resource: b
+            - resource: b
+    - label: b
+      read_until:
+        check: 'true'
+        input:
+            resource: a
+# warnings
+# inputs
+input (line 3) resource: replay-safe
+input_resources.a (line 7) broker: replay-safe
+input_resources.a.broker.inputs[0] (line 9) resource: replay-safe
+input_resources.b (line 12) read_until: replay-safe
+input_resources.b.read_until.input (line 15) resource: replay-safe
+input_resources.a.broker.inputs[1] (line 10) resource: replay-safe
+# delivery
+output line 17
+# lines

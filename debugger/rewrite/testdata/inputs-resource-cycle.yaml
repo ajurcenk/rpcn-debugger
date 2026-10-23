@@ -1,0 +1,18 @@
+# A resource cycle ends, and each resource is classified once.
+input:
+  resource: a
+
+input_resources:
+  - label: a
+    broker:
+      inputs:
+        - resource: b
+        - resource: b
+  - label: b
+    read_until:
+      check: 'true'
+      input:
+        resource: a
+
+output:
+  drop: {}

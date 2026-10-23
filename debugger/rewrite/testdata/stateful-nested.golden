@@ -43,6 +43,8 @@ rpcn_debug_stepper:
                                         key: '${! this }'
 # warnings
 pipeline.processors[0].try (line 9): the engine runs the try children over every message one child at a time, while the debugger steps one message through all of them, so children that share state across messages (such as a cache) may give different output
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 18
 # lines

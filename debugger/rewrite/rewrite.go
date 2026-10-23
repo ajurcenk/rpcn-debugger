@@ -32,6 +32,10 @@ type Plan struct {
 	Steppers []string
 	// Warnings are the launch warnings for the user, in rewrite order.
 	Warnings []string
+	// Inputs are the findings of the input-tree walk (AD-5), one per
+	// input in walker order (pre-order, resources where first named). The
+	// rewrite refuses nothing on them; the Session decides.
+	Inputs []InputFinding
 	// Strict is error_handling.strict, for the step stream (AD-4(b)). It is
 	// false when strict is an interpolation: StrictExpr then holds it.
 	Strict bool
@@ -128,7 +132,9 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		plan.StrictExpr, plan.StrictLine = strings.TrimSuffix(enc, "\n"), w.strict.Line
 	}
 	capture := without(input, "processors")
-	w.overrideGroup(capture, opts.DebugGroup)
+	iw := newInputWalker(w, value(root, "input_resources"), w.overrideGroup(capture, opts.DebugGroup))
+	iw.block(capture, "input")
+	plan.Inputs = iw.findings
 	w.procs[capture] = "input"
 	var err error
 	if plan.Input, plan.positions[core.PartInput], err = w.encodeMapped(capture); err != nil {
@@ -244,46 +250,41 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	return plan, nil
 }
 
-// groupInputs are the inputs whose consumer_group the capture config
-// overrides: redpanda and the deprecated kafka_franz, which share the field.
-var groupInputs = []string{"redpanda", "kafka_franz"}
-
-// overrideGroup sets the consumer_group of the top-level input in the
+// overrideGroup sets the group fields of the top-level input in the
 // capture config capture to <base>-0 (AD-5), with a launch warning naming
-// both groups. Only a literal, non-empty group is replaced; with an empty
-// base nothing changes. It copies what it changes, so the user's input node
-// stays as parsed.
-func (w *walker) overrideGroup(capture *yaml.Node, base string) {
-	if base == "" {
-		return
+// both groups, when the input table marks the input overridable (redpanda
+// and kafka_franz; E3 entry 5 does the rest). Only a literal, non-empty
+// group is replaced; with an empty base nothing changes. It copies what it
+// changes, so the user's input node stays as parsed, and returns the new
+// group nodes.
+func (w *walker) overrideGroup(capture *yaml.Node, base string) map[*yaml.Node]bool {
+	done := map[*yaml.Node]bool{}
+	ck, conf := component(capture)
+	if base == "" || ck == nil || conf == nil || conf.Kind != yaml.MappingNode {
+		return done
 	}
-	for _, name := range groupInputs {
-		ck, conf := field(capture, name)
-		if conf == nil || conf.Kind != yaml.MappingNode {
-			continue
-		}
-		gk, g := field(conf, "consumer_group")
+	row := inputTable[ck.Value]
+	if !row.overridable {
+		return done
+	}
+	nc := *conf
+	nc.Content = slices.Clone(conf.Content)
+	for _, name := range row.groups {
+		gk, g := field(&nc, name)
 		if g == nil || g.Kind != yaml.ScalarNode || isNull(g) || g.Value == "" || isInterpolated(g) {
-			return
+			continue
 		}
 		group := base + "-0"
 		ng := *g
 		ng.Value, ng.Tag, ng.Style = group, "!!str", 0
-		nc := *conf
-		nc.Content = slices.Clone(conf.Content)
-		for i := 0; i+1 < len(nc.Content); i += 2 {
-			if nc.Content[i] == gk {
-				nc.Content[i+1] = &ng
-			}
-		}
-		for i := 0; i+1 < len(capture.Content); i += 2 {
-			if capture.Content[i] == ck {
-				capture.Content[i+1] = &nc
-			}
-		}
-		w.warn(gk.Line, "input."+name+".consumer_group", "consumer group %q is replaced by the debug group %q for the capture", g.Value, group)
-		return
+		nc.Content[slices.Index(nc.Content, gk)+1] = &ng
+		done[&ng] = true
+		w.warn(gk.Line, "input."+ck.Value+"."+name, "consumer group %q is replaced by the debug group %q for the capture", g.Value, group)
 	}
+	if len(done) > 0 {
+		capture.Content[slices.Index(capture.Content, ck)+1] = &nc
+	}
+	return done
 }
 
 // strict returns error_handling.strict: its value, and the node to write

@@ -41,6 +41,8 @@ rpcn_debug_stepper:
 # warnings
 pipeline.processors[0].cached (line 9): cached is not a parent processor the debugger knows, so it runs as one step and nothing inside it is stepped
 processor_resources.r (line 17): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 28
 # lines

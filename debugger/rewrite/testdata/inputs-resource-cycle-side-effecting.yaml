@@ -1,0 +1,20 @@
+# A resource cycle with a side-effecting member: every member and every
+# reference takes its class, whichever resource the walk reaches first.
+input:
+  broker:
+    inputs:
+      - resource: a
+      - resource: b
+
+input_resources:
+  - label: a
+    broker:
+      inputs:
+        - resource: b
+        - aws_sqs:
+            url: https://sqs.eu-west-1.amazonaws.com/1/q
+  - label: b
+    resource: a
+
+output:
+  drop: {}

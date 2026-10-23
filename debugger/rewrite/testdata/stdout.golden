@@ -17,6 +17,8 @@ rpcn_debug_stepper:
 # warnings
 output.broker.outputs[0].stdout (line 14): the stdout output is redirected to dry-run: stdout carries the debugger's DAP stream, so results go to VS Code only
 output.broker.outputs[1].stderr (line 15): the stderr output is redirected to dry-run: stderr carries the debugger's DAP stream, so results go to VS Code only
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 11
 # lines

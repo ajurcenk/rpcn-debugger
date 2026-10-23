@@ -1,0 +1,28 @@
+# input
+broker:
+    inputs:
+        - file:
+            paths: [a.txt]
+            auto_replay_nacks: true
+        - file:
+            paths: [b.txt]
+            auto_replay_nacks: true
+        - resource: r
+# resources
+input_resources:
+    - label: r
+      generate:
+        mapping: 'root = {}'
+        auto_replay_nacks: true
+# warnings
+input.broker.inputs[0].file.auto_replay_nacks (line 8): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints
+input_resources.r.generate.auto_replay_nacks (line 18): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints
+# inputs
+input (line 4) broker: replay-safe
+input.broker.inputs[0] (line 6) file: replay-safe
+input.broker.inputs[1] (line 9) file: replay-safe
+input.broker.inputs[2] (line 12) resource: replay-safe
+input_resources.r (line 16) generate: replay-safe
+# delivery
+output line 20
+# lines

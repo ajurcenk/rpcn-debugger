@@ -1,0 +1,21 @@
+# Nested and interpolated auto_replay_nacks are forced to true as well, in
+# input_resources too; a literal true and an absent one are left as they are.
+input:
+  broker:
+    inputs:
+      - file:
+          paths: [a.txt]
+          auto_replay_nacks: ${X}
+      - file:
+          paths: [b.txt]
+          auto_replay_nacks: true
+      - resource: r
+
+input_resources:
+  - label: r
+    generate:
+      mapping: 'root = {}'
+      auto_replay_nacks: "false"
+
+output:
+  drop: {}

@@ -21,6 +21,8 @@ rpcn_debug_stepper:
         - log:
             message: hi
 # warnings
+# inputs
+input (line 3) generate: replay-safe
 # delivery
 output line 19
 # lines

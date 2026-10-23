@@ -1,0 +1,23 @@
+# input
+batched:
+    child:
+        dynamic:
+            inputs:
+                a:
+                    http_server:
+                        path: /post
+                b:
+                    generate:
+                        mapping: 'root = {}'
+    policy:
+        count: 1
+# resources
+# warnings
+# inputs
+input (line 4) batched: rejected: through input.batched.child: inputs can be added to it at run time through its HTTP API, so the debugger can't see them all
+input.batched.child (line 6) dynamic: rejected: inputs can be added to it at run time through its HTTP API, so the debugger can't see them all
+input.batched.child.dynamic.inputs.a (line 9) http_server: rejected: it is a server and waits for clients
+input.batched.child.dynamic.inputs.b (line 12) generate: replay-safe
+# delivery
+output line 17
+# lines

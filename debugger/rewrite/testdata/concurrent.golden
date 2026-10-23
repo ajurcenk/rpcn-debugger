@@ -27,6 +27,8 @@ rpcn_debug_stepper:
 # warnings
 pipeline.processors[1].parallel (line 10): parallel runs its processors concurrently, so it runs as one step and nothing inside it is stepped
 pipeline.processors[2].retry (line 16): retry with parallel: true runs its processors concurrently, so it runs as one step and nothing inside it is stepped
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 21
 # lines

@@ -22,6 +22,8 @@ rpcn_debug_stepper:
             root = this
             root.doubled = this.n * 2
 # warnings
+# inputs
+input (line 4) generate: replay-safe
 # delivery
 output line 20
 # lines

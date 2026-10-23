@@ -24,6 +24,8 @@ output.broker.outputs[0].processors (line 17): this processor list is not run in
 output.broker.batching (line 13): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
 output.broker.outputs[1].switch.cases[0].output.batching (line 23): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
 output_resources.other.batching (line 30): output batching isn't applied in dry-run: the batches shown are the pipeline's own, and production batch boundaries may differ
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 11
 # lines

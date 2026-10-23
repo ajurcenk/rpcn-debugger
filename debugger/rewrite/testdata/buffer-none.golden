@@ -15,6 +15,8 @@ rpcn_debug_stepper:
     processors:
         - mapping: 'root = this'
 # warnings
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 14
 # lines

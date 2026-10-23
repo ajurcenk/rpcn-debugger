@@ -10,6 +10,10 @@ input_resources:
         interval: ""
         mapping: 'root = {}'
 # warnings
+# inputs
+input (line 3) broker: replay-safe
+input.broker.inputs[0] (line 5) resource: replay-safe
+input_resources.in1 (line 9) generate: replay-safe
 # delivery
 output line 14
 # lines

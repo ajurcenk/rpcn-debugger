@@ -47,6 +47,8 @@ pipeline.processors[1].parallel (line 11): parallel runs its processors concurre
 processor_resources.b (line 17): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
 processor_resources.r (line 21): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
 processor_resources.via_b (line 24): this resource is used inside a parent that runs as one step (a concurrent or unknown parent), so it runs as one step and nothing inside it is stepped
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 31
 # lines

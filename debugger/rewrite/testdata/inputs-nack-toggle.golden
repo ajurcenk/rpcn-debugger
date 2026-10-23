@@ -1,0 +1,13 @@
+# input
+kafka_franz:
+    seed_brokers: ['localhost:9092']
+    topics: [t]
+    auto_replay_nacks: true
+# resources
+# warnings
+input.kafka_franz.auto_replay_nacks (line 7): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints
+# inputs
+input (line 4) kafka_franz: replay-safe
+# delivery
+output line 9
+# lines

@@ -1,0 +1,11 @@
+# The input takes the class of the input resource it names.
+input:
+  resource: q
+
+input_resources:
+  - label: q
+    aws_sqs:
+      url: https://sqs.eu-west-1.amazonaws.com/1/q
+
+output:
+  drop: {}

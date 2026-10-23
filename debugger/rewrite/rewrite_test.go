@@ -33,6 +33,14 @@ func render(p Plan, err error) string {
 	for _, w := range p.Warnings {
 		fmt.Fprintf(&b, "%s\n", w)
 	}
+	b.WriteString("# inputs\n")
+	for _, f := range p.Inputs {
+		fmt.Fprintf(&b, "%s (line %d) %s: %s", f.UserPath, f.Line, f.Component, f.Class)
+		if f.Effect != "" {
+			fmt.Fprintf(&b, ": %s", f.Effect)
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "# delivery\n%s line %d\n", p.Delivery.UserPath, p.Delivery.Line)
 	b.WriteString("# lines\n")
 	keys := make([]stop, 0, len(p.stops))

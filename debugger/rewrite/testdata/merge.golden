@@ -58,6 +58,8 @@ rpcn_debug_stepper:
             request_map: 'root = this'
             result_map: 'root.b = this'
 # warnings
+# inputs
+input (line 2) generate: replay-safe
 # delivery
 output line 31
 # lines

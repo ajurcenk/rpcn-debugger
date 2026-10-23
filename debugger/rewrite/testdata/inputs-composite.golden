@@ -1,0 +1,18 @@
+# input
+broker:
+    inputs:
+        - generate:
+            count: 1
+            interval: ""
+            mapping: 'root = {}'
+        - aws_sqs:
+            url: https://sqs.eu-west-1.amazonaws.com/1/q
+# resources
+# warnings
+# inputs
+input (line 3) broker: side-effecting: through input.broker.inputs[1]: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+input.broker.inputs[0] (line 5) generate: replay-safe
+input.broker.inputs[1] (line 9) aws_sqs: side-effecting: receives messages from the queue: their receive count rises (redrive to the dead-letter queue) and they stay hidden for message_timeout
+# delivery
+output line 12
+# lines
