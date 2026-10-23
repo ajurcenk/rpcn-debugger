@@ -1,0 +1,21 @@
+# Kafka sample: capture one batch from a Redpanda topic without touching
+# the pipeline's consumer group. The capture joins the debug group
+# rpcn-debug-<os-user>-0 instead of "prod" (a launch warning names both) and
+# never acks, so no offset is committed and a second F5 captures the same
+# records. The broker comes from REDPANDA_BROKERS (default localhost:9092);
+# produce a few records to the "orders" topic first, e.g.
+#   rpk topic create orders && echo '{"id":1}' | rpk topic produce orders
+input:
+  redpanda:
+    seed_brokers: ["${REDPANDA_BROKERS:localhost:9092}"]
+    topics: [orders]
+    consumer_group: prod
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.seen = true
+
+output:
+  drop: {}

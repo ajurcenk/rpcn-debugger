@@ -223,3 +223,72 @@ func TestStrictExpr(t *testing.T) {
 		}
 	}
 }
+
+// E3 entry 2: the top-level input's literal consumer_group becomes
+// <DebugGroup>-0 in the capture config, with one warning; anything else
+// leaves the Plan as it is without options.
+func TestDebugGroupOverride(t *testing.T) {
+	const opt = "rpcn-debug-jo"
+	const warn = `input.%s.consumer_group (line 5): consumer group "prod" is replaced by the debug group "rpcn-debug-jo-0" for the capture`
+	pipe := func(in string) string {
+		return "input:\n  " + in + ":\n    seed_brokers: [localhost:9092]\n    topics: [t]\n" +
+			"pipeline:\n  processors:\n    - mapping: 'root = this'\n"
+	}
+	withGroup := func(in, group string) string {
+		return strings.Replace(pipe(in), "    topics: [t]\n", "    topics: [t]\n    consumer_group: "+group+"\n", 1)
+	}
+	for _, c := range []struct {
+		name, src, group string
+		input            string // the component whose group is overridden, or ""
+		valueLine        int    // the file line of the group's value
+	}{
+		{"override", withGroup("redpanda", "prod"), opt, "redpanda", 5},
+		// The warning names the key's line, not the value's.
+		{"value on its own line", withGroup("redpanda", "\n      prod"), opt, "redpanda", 6},
+		{"deprecated input", withGroup("kafka_franz", "prod"), opt, "kafka_franz", 5},
+		{"no group", pipe("redpanda"), opt, "", 0},
+		{"empty group", withGroup("redpanda", `""`), opt, "", 0},
+		{"interpolated group", withGroup("redpanda", "${GROUP}"), opt, "", 0},
+		{"no option", withGroup("redpanda", "prod"), "", "", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := []byte(c.src)
+			p, err := Rewrite(src, Options{DebugGroup: c.group})
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := Rewrite(src, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.input == "" {
+				if got, want := render(p, nil), render(base, nil); got != want {
+					t.Errorf("rewrite:\n%s\nwant (as without options):\n%s", got, want)
+				}
+				return
+			}
+			want := strings.Replace(base.Input, "consumer_group: prod", "consumer_group: rpcn-debug-jo-0", 1)
+			if want == base.Input {
+				t.Fatalf("no consumer_group in the capture config:\n%s", base.Input)
+			}
+			if p.Input != want {
+				t.Errorf("capture config:\n%s\nwant:\n%s", p.Input, want)
+			}
+			if w := fmt.Sprintf(warn, c.input); !slices.Equal(p.Warnings, append(slices.Clone(base.Warnings), w)) {
+				t.Errorf("warnings = %q, want %q plus %q", p.Warnings, base.Warnings, w)
+			}
+			if !slices.Equal(p.Steppers, base.Steppers) || p.Resources != base.Resources {
+				t.Error("the override changed the step config")
+			}
+			// A lint error at the replaced value still names the user's line.
+			encLine := strings.Split(p.Input, "\n")
+			enc := slices.IndexFunc(encLine, func(l string) bool {
+				return strings.Contains(l, "consumer_group:")
+			})
+			col := strings.Index(encLine[enc], "rpcn-debug-jo-0") + 1
+			if line, _, _, ok := p.FilePosition(core.PartInput, enc+1, col); !ok || line != c.valueLine {
+				t.Errorf("FilePosition(input, %d, %d) = line %d, %v; want line %d", enc+1, col, line, ok, c.valueLine)
+			}
+		})
+	}
+}

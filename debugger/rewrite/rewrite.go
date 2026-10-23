@@ -3,6 +3,7 @@ package rewrite
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -127,6 +128,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		plan.StrictExpr, plan.StrictLine = strings.TrimSuffix(enc, "\n"), w.strict.Line
 	}
 	capture := without(input, "processors")
+	w.overrideGroup(capture, opts.DebugGroup)
 	w.procs[capture] = "input"
 	var err error
 	if plan.Input, plan.positions[core.PartInput], err = w.encodeMapped(capture); err != nil {
@@ -240,6 +242,48 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	}
 	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
+}
+
+// groupInputs are the inputs whose consumer_group the capture config
+// overrides: redpanda and the deprecated kafka_franz, which share the field.
+var groupInputs = []string{"redpanda", "kafka_franz"}
+
+// overrideGroup sets the consumer_group of the top-level input in the
+// capture config capture to <base>-0 (AD-5), with a launch warning naming
+// both groups. Only a literal, non-empty group is replaced; with an empty
+// base nothing changes. It copies what it changes, so the user's input node
+// stays as parsed.
+func (w *walker) overrideGroup(capture *yaml.Node, base string) {
+	if base == "" {
+		return
+	}
+	for _, name := range groupInputs {
+		ck, conf := field(capture, name)
+		if conf == nil || conf.Kind != yaml.MappingNode {
+			continue
+		}
+		gk, g := field(conf, "consumer_group")
+		if g == nil || g.Kind != yaml.ScalarNode || isNull(g) || g.Value == "" || isInterpolated(g) {
+			return
+		}
+		group := base + "-0"
+		ng := *g
+		ng.Value, ng.Tag, ng.Style = group, "!!str", 0
+		nc := *conf
+		nc.Content = slices.Clone(conf.Content)
+		for i := 0; i+1 < len(nc.Content); i += 2 {
+			if nc.Content[i] == gk {
+				nc.Content[i+1] = &ng
+			}
+		}
+		for i := 0; i+1 < len(capture.Content); i += 2 {
+			if capture.Content[i] == ck {
+				capture.Content[i+1] = &nc
+			}
+		}
+		w.warn(gk.Line, "input."+name+".consumer_group", "consumer group %q is replaced by the debug group %q for the capture", g.Value, group)
+		return
+	}
 }
 
 // strict returns error_handling.strict: its value, and the node to write

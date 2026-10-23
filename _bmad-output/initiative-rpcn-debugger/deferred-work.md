@@ -117,3 +117,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-one-rewrite-per-launch-with-session-supplied-rewrite-options-plan.md`
   summary: CLAUDE.md's Layout is stale after E3 entry 1: add `core/debuggroup.go` (the Session's debug-group name), `rewrite.Options`/`Plan.Options` (`Rewrite(src, opts)`), the `Prepared` hand-off from Check to Start, and `dapdrive.Options.AfterLaunch`. For E3's refactor sweep, which keeps CLAUDE.md current.
   evidence: quick review of E3 entry 1 (2026-10-23); fixes to agent-context files are deferred to a sweep.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-tracer-bullet-a-kafka-capture-under-the-debug-group-commits-plan.md`
+  summary: CLAUDE.md's Layout should list `testdata/tracer/kafka.yaml` (the Kafka F5 sample for E3's acceptance run) and `test/integration/neverack_test.go` (the never-ack test). For E3's refactor sweep, with the entry-1 item above.
+  evidence: quick review of E3 entry 2 (2026-10-23); fixes to agent-context files are deferred to a sweep.
