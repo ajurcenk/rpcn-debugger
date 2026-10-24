@@ -3,7 +3,7 @@ title: 'output: real and none'
 type: 'feature'
 ticket: '7'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: '1016836dcde2b1d3fcf1955d0623a000df9dbcb5'
 route: 'full'
 route_source: 'auto'
