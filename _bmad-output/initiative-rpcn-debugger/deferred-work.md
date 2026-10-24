@@ -125,3 +125,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-tracer-bullet-a-kafka-capture-under-the-debug-group-commits-plan.md`
   summary: Tell users what the debug group leaves on the cluster: an empty group `rpcn-debug-<os-user>-<k>` (no members, no offsets) that stays until the broker expires it or `rpk group delete` removes it, and that joining it needs Group READ on that name, so credentials limited to the production group can't capture. Belongs in the group-override launch warning or note (E3 entry 5) and in the user docs (epic-local-release).
   evidence: 3.2 VS Code check (2026-10-23): `rpk group list` shows `rpcn-debug-aleksejjurcenko-0` in state Empty after the session. The user kept the group-based capture (D5).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-consumer-group-override-for-every-group-field-plan.md`
+  summary: A debug session killed abruptly (the binary gets no clean shutdown) leaves its member in the debug group until the broker's session timeout, so the next capture under the same `rpcn-debug-<os-user>-<k>` waits up to ~60 s in `CompletingRebalance` before it receives anything. Say so in the user docs and in the "Waiting for the input" note, or have the note name the group; production is unaffected.
+  evidence: 3.5 VS Code prep (2026-10-23): after timeout-killed DAP runs, `rpk group describe rpcn-debug-aleksejjurcenko-0` showed CompletingRebalance with 1 member for 60 s; the next session then captured normally.
