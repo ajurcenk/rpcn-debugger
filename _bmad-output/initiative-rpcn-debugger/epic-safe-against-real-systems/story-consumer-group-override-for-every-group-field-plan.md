@@ -3,7 +3,7 @@ title: 'Consumer-group override for every group field'
 type: 'feature'
 ticket: '5'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: 'cbcf1e529339f8ca611d7f5224fdb9fc3018474d'
 route: 'full'
 route_source: 'auto'
