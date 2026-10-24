@@ -77,9 +77,9 @@ Stepping: the debugger stops before each processor and once after the last one o
 
 Repeated entries carry a label in the call stack: `[msg i/n]` under `for_each` and `try`, `[attempt i/max]` under `retry` (`[attempt i]` when `max_retries` is 0), `[loop i]` under `while` and `[group i]` under `group_by`; the Debug Console reports each retry attempt, the messages a `try` (or `error_handling.strict`) skips, and a warning the first time you pause inside a `retry`, since that changes its backoff timing. Samples for each parent are in `testdata/tracer/parents/`.
 
-At the end of the run the Debug Console shows each batch delivered to the dry-run output (after `output.processors`): `Delivered batch i (n messages) to dry-run output`, then each message's content (cut at 4 KiB), its metadata as `key = value` lines (internal `__` keys marked) and its error, or `Nothing was delivered` when every message was deleted. By default (`"output": "dry-run"`) nothing is written to your real output, and output `batching` isn't applied (a launch warning says so), so production batch boundaries may differ. `"output": "none"` also writes nothing. `"output": "real"` writes each delivered batch to the pipeline's output once, after `output.processors` (which run only once, in the stepper), with a launch warning naming the output; the output then runs its per-output processors (`broker`, `switch` cases, …) as in production, but its `batching` is removed (with a warning: the captured batch is written as one batch), every `stdout` or `stderr` output, or `file` output to `/dev/stdout`-like paths, in it or in `output_resources` is replaced by `drop`, since stdout carries the DAP stream, and a `redpanda_common` output (or `redpanda` without `seed_brokers`) fails the launch. A write the output refuses fails the run; an output that can't connect retries, as in production, until you stop the session. (The Debug Console text still says "dry-run output" in every mode for now.)
+At the end of the run the Debug Console shows each batch delivered to the dry-run output (after `output.processors`): `Delivered batch i (n messages) to dry-run output`, then each message's content (cut at 4 KiB), its metadata as `key = value` lines (internal `__` keys marked) and its error, or `Nothing was delivered` when every message was deleted. By default nothing is written to your real output; see [Where the delivered batch goes](#where-the-delivered-batch-goes-output) for `output: real` and `none`.
 
-A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `output` (`dry-run`, the default, `real` or `none`; see above), `env` and `envFile` (the pipeline's `${VAR}` resolve from the debugger's environment, then the dotenv `envFile`, then `env`, the later one winning; use `${env:NAME}` rather than literal secrets), and `allowSideEffects` and `inputClasses` (see [What a debug session does to your input](#what-a-debug-session-does-to-your-input)). Any other key fails the launch. Engine warnings and processor errors show in the Debug Console, naming your processor path (`pipeline.processors[1]`) and, for a Bloblang error in a `|` block or a one-line plain mapping, its file line; every log line, Info included, also goes to the debugger's stderr. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
+A `redpanda-connect` launch.json entry takes `pipeline` (default: the active file), `cwd` (default: the workspace folder; relative paths resolve against it), `maxMessages` (default 10: the captured batch is cut to that many, and the Debug Console says so; try `testdata/tracer/batch12.yaml`), `output` (`dry-run`, the default, `real` or `none`; see [Where the delivered batch goes](#where-the-delivered-batch-goes-output)), `env` and `envFile` (the pipeline's `${VAR}` resolve from the debugger's environment, then the dotenv `envFile`, then `env`, the later one winning; use `${env:NAME}` rather than literal secrets), and `allowSideEffects` and `inputClasses` (see [What a debug session does to your input](#what-a-debug-session-does-to-your-input)). Any other key fails the launch. Engine warnings and processor errors show in the Debug Console, naming your processor path (`pipeline.processors[1]`) and, for a Bloblang error in a `|` block or a one-line plain mapping, its file line; every log line, Info included, also goes to the debugger's stderr. The schema VS Code validates against is generated from Go: after changing `dap.LaunchConfig`, run `task gen:schema` (`task lint:schema`, part of `task ci`, fails on a stale `vscode/package.json`).
 
 ## What a debug session does to your input
 
@@ -122,6 +122,38 @@ Use a dev copy of the source when you can't afford those effects.
 Only `input`, the processor lists, `output`, `error_handling` and the `*_resources` sections reach the engine. `buffer` and the top-level `redpanda` block are dropped with a warning; `metrics`, `tracer`, `http`, `logger`, `shutdown_*` and `tests` are dropped silently.
 
 Start offsets stay as configured. One that resolves to latest (`start_offset: latest`, `start_from_oldest: false`) gets a launch warning, since the capture then waits for new records. When the input has sent nothing after 5 seconds, the Debug Console shows one "Waiting for the input" note.
+
+## Where the delivered batch goes: `output`
+
+The `output` launch key decides what happens to each batch the pipeline delivers, after `output.processors`:
+
+| `output` | Debug Console | Your real output |
+| --- | --- | --- |
+| `dry-run` (default) | Shows each delivered batch | Nothing is written |
+| `real` | Shows each delivered batch | Each delivered batch is written to it, once |
+| `none` | Shows each delivered batch | Nothing is written |
+
+```json
+{
+  "type": "redpanda-connect",
+  "request": "launch",
+  "name": "Debug and write to the real output",
+  "pipeline": "${workspaceFolder}/pipeline.yaml",
+  "output": "real"
+}
+```
+
+Under **`dry-run`** and **`none`**, the pipeline's `output` block is never built: nothing connects to the output system. Output `batching` isn't applied, and a composite output's per-output processors (`broker` outputs, `switch` cases, `fallback`) don't run; a launch warning says so for each, since production batch boundaries and results may differ.
+
+Under **`real`**, the launch warns, naming the output it writes to, and:
+
+- `output.processors` run once, in the stepper, before the write. The output then runs its per-output processors (`broker`, `switch` cases, …) as in production.
+- Output `batching` is removed (with a warning): the captured batch is written as one batch, so the output gets exactly the batch the Debug Console shows.
+- Every `stdout` or `stderr` output, and every `file` output to `/dev/stdout`, `/dev/stderr`, `/dev/fd/1`, `/dev/fd/2`, `/proc/self/fd/1` or `/proc/self/fd/2`, in the output or in `output_resources`, is replaced by `drop` (with a warning), because stdout carries the DAP stream.
+- A `redpanda_common` output, or a `redpanda` output without `seed_brokers`, fails the launch: it writes through the shared client of the top-level `redpanda` block, which only `rpk connect` sets up.
+- A write the output refuses fails the run. An output that can't connect retries, as in production, until you stop the session.
+
+The input side is the same in every mode: the capture never acknowledges anything ([What a debug session does to your input](#what-a-debug-session-does-to-your-input)). The Debug Console still says "dry-run output" in every mode for now.
 
 ## License
 
