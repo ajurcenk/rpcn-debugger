@@ -58,6 +58,7 @@ var FixedInputs = map[string]string{
 	"stdin":             "stdin carries the debugger's DAP stream",
 	"dynamic":           "inputs can be added to it at run time through its HTTP API, so the debugger can't see them all",
 	"redpanda_migrator": "it needs its paired redpanda_migrator output, which the capture doesn't have",
+	"redpanda_common":   "it reads through the shared client of the top-level redpanda block, which only rpk connect sets up, not a debug session",
 }
 
 // checkInputClasses returns LAUNCH_INVALID for an inputClasses value

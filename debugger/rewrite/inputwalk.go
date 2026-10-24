@@ -127,6 +127,17 @@ func component(b *yaml.Node) (k, v *yaml.Node) {
 // replay-safe here; the engine reports it. An inputClasses override of the
 // component replaces its own class before its children's are rolled up, so
 // a composite follows its overridden children.
+// hardRejected reports whether the input component name with config conf
+// can't run in a debug session at all, so neither a group override nor
+// inputClasses applies to it: the FixedInputs components, and a redpanda
+// input without seed_brokers, which needs the shared client (E3 entry 6).
+func hardRejected(name string, conf *yaml.Node) bool {
+	if _, ok := core.FixedInputs[name]; ok {
+		return true
+	}
+	return name == "redpanda" && !isSet(conf, "seed_brokers")
+}
+
 func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, bool) {
 	k, conf := component(b)
 	if k == nil {
@@ -134,8 +145,11 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, boo
 	}
 	name := k.Value
 	row, known := inputTable[name]
+	fixed := hardRejected(name, conf)
 	if iw.refs == nil {
-		iw.overrideGroups(row, conf, path+"."+name)
+		if !fixed {
+			iw.overrideGroups(row, conf, path+"."+name)
+		}
 		iw.forceReplayNacks(conf, path+"."+name)
 		iw.warnLatest(row, conf, path+"."+name)
 	}
@@ -155,9 +169,10 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, boo
 		}
 	}
 	override, loosened := InputClass(""), false
-	// A FixedInputs component stays rejected (the Session refuses an
-	// override that loosens it; this keeps the rewrite safe on its own).
-	if _, fixed := core.FixedInputs[name]; !fixed {
+	// A hard-rejected input stays rejected: the Session refuses an
+	// override that loosens a FixedInputs component, and this keeps the
+	// rewrite safe on its own, also for redpanda without seed_brokers.
+	if !fixed {
 		if o, ok := iw.overrides[name]; ok {
 			override, loosened = o, rank(o) < rank(class)
 			note := fmt.Sprintf("inputClasses marks %s %s", name, o)

@@ -89,7 +89,7 @@
               },
               "keepConsumerGroup": {
                 "default": false,
-                "description": "Keep the consumer groups of the pipeline's inputs for the capture. By default the capture replaces each Kafka-family consumer_group (kafka, kafka_franz, redpanda, redpanda_common) and each nats queue with its own debug group rpcn-debug-<user>-<k>, so the production group never rebalances. A kept group joins the production group, whose members rebalance, so the launch then also needs allowSideEffects.",
+                "description": "Keep the consumer groups of the pipeline's inputs for the capture. By default the capture replaces each Kafka-family consumer_group (kafka, kafka_franz, redpanda) and each nats queue with its own debug group rpcn-debug-<user>-<k>, so the production group never rebalances. A kept group joins the production group, whose members rebalance, so the launch then also needs allowSideEffects.",
                 "type": "boolean"
               },
               "maxMessages": {

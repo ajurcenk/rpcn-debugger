@@ -197,6 +197,22 @@ var committed = seIf("start_offset: committed starts from the consumer group's c
 	return strIs(conf, "start_offset", "earliest", "committed")
 })
 
+// noSharedClient is why an input that reads through the shared client of
+// the top-level redpanda block can't be debugged: only the rpk connect CLI
+// creates that client (connect internal/cli/enterprise.go,
+// GlobalRedpandaManager); StreamBuilder never does (E3 entry 6).
+const noSharedClient = "it reads through the shared client of the top-level redpanda block, which only rpk connect sets up, not a debug session"
+
+// redpandaInput is the redpanda input's class: without seed_brokers it
+// falls back to the shared client (C/kafka/input_redpanda.go:204), which a
+// debug session doesn't have; otherwise the franz start_offset rule.
+func redpandaInput(conf *yaml.Node) (InputClass, string) {
+	if !isSet(conf, "seed_brokers") {
+		return Rejected, "without seed_brokers " + noSharedClient
+	}
+	return committed(conf)
+}
+
 // unsure is the effect of a row the research couldn't settle; the user's
 // decision of 2026-10-23 makes those side-effecting.
 func unsure(what string) classFunc {
@@ -271,9 +287,9 @@ var inputTable = map[string]inputRow{
 	// Kafka family. A kept group is side-effecting through groups.
 	"kafka":       {groups: kafkaGroup, starts: []string{"start_from_oldest"}, overridable: true},
 	"kafka_franz": {class: committed, groups: kafkaGroup, starts: franzStart, overridable: true},
-	"redpanda":    {class: committed, groups: kafkaGroup, starts: franzStart, overridable: true},
-	// Stays replay-safe until E3 entry 6 probes the shared client.
-	"redpanda_common": {class: committed, groups: kafkaGroup, starts: []string{"start_offset"}, overridable: true},
+	"redpanda":    {class: redpandaInput, groups: kafkaGroup, starts: franzStart, overridable: true},
+	// It always reads through the shared client (E3 entry 6).
+	"redpanda_common": {class: always(Rejected, noSharedClient), groups: kafkaGroup, starts: []string{"start_offset"}},
 	// C/ockam/input_kafka.go:97-128.
 	"ockam_kafka": {
 		class:  unsure("starts a local Ockam node, enrolls its enrollment_ticket and may claim its relay"),

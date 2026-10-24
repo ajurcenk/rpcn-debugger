@@ -16,6 +16,7 @@ import (
 	_ "github.com/redpanda-data/benthos/v4/public/components/io"
 	_ "github.com/redpanda-data/connect/v4/public/components/aws"
 	_ "github.com/redpanda-data/connect/v4/public/components/kafka"
+	_ "github.com/redpanda-data/connect/v4/public/components/kafka/enterprise"
 	_ "github.com/redpanda-data/connect/v4/public/components/nats"
 	_ "github.com/redpanda-data/connect/v4/public/components/postgresql"
 
@@ -199,6 +200,14 @@ func TestServeInputClasses(t *testing.T) {
 		"rejected http_server": {
 			src: "input:\n  http_server: {path: /post}\n", code: core.CodeInputRejected,
 			text: []string{"the http_server input at input, line 2", "it is a server and waits for clients", "`replay` launch key"},
+		},
+		"rejected redpanda_common": {
+			src: "input:\n  redpanda_common: {topics: [t], consumer_group: prod}\n", code: core.CodeInputRejected,
+			text: []string{"the redpanda_common input at input, line 2", "shared client of the top-level redpanda block, which only rpk connect sets up"},
+		},
+		"rejected redpanda without seed_brokers": {
+			src: "input:\n  redpanda: {topics: [t], consumer_group: prod}\n", code: core.CodeInputRejected,
+			text: []string{"the redpanda input at input, line 2", "without seed_brokers it reads through the shared client"},
 		},
 		"side-effecting": {
 			src: sqsInput, code: core.CodeSideEffectsNotAllowed,

@@ -75,12 +75,15 @@ var inputCases = map[string][]inputCase{
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", want: ReplaySafe},
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod}", want: SideEffecting},
 		{conf: "{seed_brokers: [k:9092], topics: [t], start_offset: committed}", want: SideEffecting},
+		// Without seed_brokers it falls back to the shared client (E3 entry 6).
+		{conf: "{topics: [t]}", want: Rejected},
+		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", want: Rejected},
 	},
+	// Always the shared client, which a debug session doesn't have (E3 entry 6).
 	"redpanda_common": {
-		{conf: "{topics: [t]}", want: ReplaySafe},
-		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", want: ReplaySafe},
-		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", keep: true, want: SideEffecting},
-		{conf: "{topics: [t], start_offset: committed}", want: SideEffecting},
+		{conf: "{topics: [t]}", want: Rejected},
+		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", want: Rejected},
+		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", keep: true, want: Rejected},
 	},
 	"ockam_kafka":       {{conf: "{kafka: {topics: [t]}}", want: SideEffecting}},
 	"redpanda_migrator": {{conf: "{topics: [t]}", want: Rejected}},
@@ -237,7 +240,7 @@ var inputCases = map[string][]inputCase{
 // fieldDependent are the rows whose class depends on their fields (or
 // children): their cases must reach more than one class.
 var fieldDependent = []string{
-	"kafka", "kafka_franz", "redpanda", "redpanda_common", "mqtt", "nats", "nanomsg",
+	"kafka", "kafka_franz", "redpanda", "mqtt", "nats", "nanomsg",
 	"sql_select", "csv", "aws_s3", "azure_blob_storage", "sftp", "http_client",
 	"broker", "sequence", "read_until", "batched", "resource",
 }
@@ -365,12 +368,6 @@ func TestGroupOverrideMatrix(t *testing.T) {
 			capture: []string{"consumer_group: dbg-0"}, absent: []string{"prod"},
 			classes:  []InputClass{ReplaySafe},
 			warnings: []string{replaced("input.kafka.consumer_group", "consumer group", "prod", "dbg-0", 2)},
-		},
-		"redpanda_common": {
-			src:     "input:\n  redpanda_common: {topics: [t], consumer_group: prod}\n",
-			capture: []string{"consumer_group: dbg-0"}, absent: []string{"prod"},
-			classes:  []InputClass{ReplaySafe},
-			warnings: []string{replaced("input.redpanda_common.consumer_group", "consumer group", "prod", "dbg-0", 2)},
 		},
 		"nats queue": {
 			src:     "input:\n  nats: {urls: [nats://n], subject: s, queue: workers}\n",
@@ -608,6 +605,79 @@ func TestFixedInputs(t *testing.T) {
 		}
 		if c, e := row.class(nil); c != Rejected || e != why {
 			t.Errorf("%s: row %s %q, want rejected %q", name, c, e, why)
+		}
+	}
+}
+
+// Every top-level section of the stock config schema has a decision in
+// topLevel, or ends in _resources (carried), so a section Connect adds
+// fails here until the rewrite decides what to do with it (AD-5).
+func TestTopLevelAllowlist(t *testing.T) {
+	td, err := schema.Standard("x", "x").TemplateData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, f := range td.Fields {
+		name := f.FullName
+		if strings.Contains(name, ".") {
+			continue
+		}
+		seen++
+		if _, ok := topLevel[name]; !ok && !strings.HasSuffix(name, "_resources") {
+			t.Errorf("top-level section %q has no decision in topLevel", name)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no top-level sections in the stock schema")
+	}
+	// A dropped section's content reaches neither stream.
+	for name, sec := range topLevel {
+		if sec.use != dropped {
+			continue
+		}
+		src := name + ":\n  marker_" + name + ": 1\ninput:\n  generate: {mapping: 'root = 1'}\n"
+		p, err := Rewrite([]byte(src), Options{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(p.Input+p.Resources+strings.Join(p.Steppers, ""), "marker_"+name) {
+			t.Errorf("dropped section %s reached the engine", name)
+		}
+	}
+}
+
+// The top-level redpanda block is dropped with a warning: only rpk connect
+// sets up its shared client and topics (E3 entry 6).
+func TestRedpandaBlockDropped(t *testing.T) {
+	src := "redpanda:\n  seed_brokers: [k:9092]\n  logs_topic: __logs\ninput:\n  generate: {mapping: 'root = 1'}\n"
+	p, err := Rewrite([]byte(src), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(p.Input+p.Resources+strings.Join(p.Steppers, ""), "__logs") {
+		t.Error("the redpanda block reached the engine")
+	}
+	want := "redpanda (line 1): the top-level redpanda block isn't used in a debug session"
+	if !slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.HasPrefix(w, want) }) {
+		t.Errorf("warnings %q, want one starting %q", p.Warnings, want)
+	}
+}
+
+// A redpanda input without seed_brokers can't run (it needs the shared
+// client): its group isn't overridden and inputClasses can't loosen it.
+func TestSeedlessRedpandaStaysRejected(t *testing.T) {
+	src := "input:\n  broker:\n    inputs:\n      - redpanda: {topics: [t], consumer_group: a}\n      - kafka_franz: {seed_brokers: [k:9092], topics: [t], consumer_group: b}\n"
+	p, err := Rewrite([]byte(src), Options{DebugGroup: "dbg", InputClasses: map[string]InputClass{"redpanda": ReplaySafe}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.Input, "consumer_group: a") || !strings.Contains(p.Input, "consumer_group: dbg-0") {
+		t.Errorf("capture config: the seedless redpanda keeps a and kafka_franz gets dbg-0:\n%s", p.Input)
+	}
+	for _, f := range p.Inputs {
+		if f.Component == "redpanda" && f.Class != Rejected {
+			t.Errorf("seedless redpanda finding %+v, want rejected", f)
 		}
 	}
 }

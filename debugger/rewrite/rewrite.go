@@ -227,10 +227,14 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 			}
 		}
 	}
-	w.warnBuffer(field(root, "buffer"))
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if k, v := root.Content[i], root.Content[i+1]; topLevel[k.Value].warn != nil {
+			topLevel[k.Value].warn(w, k, v)
+		}
+	}
 
-	// metrics, tracer, http and logger are dropped (AD-5): only the input,
-	// the steppers and the *_resources sections reach the engine.
+	// Of the top-level sections (topLevel), only the input, the steppers
+	// and the *_resources sections reach the engine (AD-5).
 	res := &yaml.Node{Kind: yaml.MappingNode}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if k, v := root.Content[i], root.Content[i+1]; strings.HasSuffix(k.Value, "_resources") {
@@ -251,6 +255,48 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	}
 	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
+}
+
+// section is what the rewrite does with a top-level section (AD-5).
+type section int
+
+const (
+	// dropped sections never reach the engine: the engine gets no-op
+	// metrics and tracer and the AD-15 logger, and the rest only matter to
+	// rpk connect.
+	dropped section = iota
+	// used sections are read by the rewrite itself: input is the capture
+	// config, pipeline and output become steppers and the delivery
+	// position, and error_handling sets strict.
+	used
+)
+
+// topLevelSection is one allowlist entry: what happens to the section,
+// and the launch warning given when it is dropped and set, or nil.
+type topLevelSection struct {
+	use  section
+	warn func(w *walker, k, v *yaml.Node)
+}
+
+// topLevel is the allowlist of top-level sections (AD-5, E3 entry 6).
+// Every section of the stock config schema is here or ends in _resources;
+// the *_resources sections are carried to the capture and step streams.
+// TestTopLevelAllowlist checks both, and that a dropped section reaches
+// neither stream. Any other key is left to the engine's lint.
+var topLevel = map[string]topLevelSection{
+	"input": {use: used}, "pipeline": {use: used}, "output": {use: used}, "error_handling": {use: used},
+	"buffer":   {use: dropped, warn: func(w *walker, k, v *yaml.Node) { w.warnBuffer(k, v) }},
+	"redpanda": {use: dropped, warn: warnRedpanda},
+	"metrics":  {}, "tracer": {}, "http": {}, "logger": {},
+	"shutdown_delay": {}, "shutdown_timeout": {}, "tests": {},
+}
+
+// warnRedpanda warns when the top-level redpanda block (key k, value v) is
+// set: only rpk connect sets up its shared client and topics.
+func warnRedpanda(w *walker, k, v *yaml.Node) {
+	if !isNull(v) {
+		w.warn(k.Line, "redpanda", "the top-level redpanda block isn't used in a debug session: its shared client, logs_topic and status_topic are only set up by rpk connect")
+	}
 }
 
 // strict returns error_handling.strict: its value, and the node to write
