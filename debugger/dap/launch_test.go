@@ -29,9 +29,9 @@ func TestDecodeLaunch(t *testing.T) {
 		},
 		"every key": {
 			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env",
-				"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"}}`,
+				"keepConsumerGroup":true,"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"}}`,
 			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3,
-				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", AllowSideEffects: true,
+				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", KeepConsumerGroup: true, AllowSideEffects: true,
 				InputClasses: map[string]string{"aws_sqs": "replay-safe", "generate": "rejected", "nats": "side-effecting"}},
 		},
 		"no arguments": {args: ``, want: LaunchConfig{MaxMessages: 10}},
@@ -76,6 +76,7 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		"classes array":   {`{"pipeline":"p.yaml","inputClasses":["aws_sqs"]}`, []string{`"inputClasses"`, "an array"}},
 		"allow string":    {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
 		"allow null":      {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
+		"keep string":     {`{"pipeline":"p.yaml","keepConsumerGroup":"yes"}`, []string{`"keepConsumerGroup"`, "a boolean", "a string"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -119,7 +120,7 @@ func TestSchema(t *testing.T) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "allowSideEffects", "inputClasses"} {
+	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses"} {
 		p, ok := props[k].(map[string]any)
 		if !ok {
 			t.Errorf("schema has no %q (has %v)", k, keys)
@@ -129,11 +130,13 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%q has no description", k)
 		}
 	}
-	if len(props) != 7 {
-		t.Errorf("schema keys = %v, want exactly the seven launch keys", keys)
+	if len(props) != 8 {
+		t.Errorf("schema keys = %v, want exactly the eight launch keys", keys)
 	}
-	if p := props["allowSideEffects"].(map[string]any); p["type"] != "boolean" || p["default"] != false {
-		t.Errorf("allowSideEffects = %v, want a boolean, default false", p)
+	for _, k := range []string{"keepConsumerGroup", "allowSideEffects"} {
+		if p := props[k].(map[string]any); p["type"] != "boolean" || p["default"] != false {
+			t.Errorf("%s = %v, want a boolean, default false", k, p)
+		}
 	}
 	ic := props["inputClasses"].(map[string]any)
 	want := map[string]any{"type": "string", "enum": []string{"replay-safe", "side-effecting", "rejected"}}
@@ -238,13 +241,16 @@ func TestLaunchInputKeysReachTheSession(t *testing.T) {
 	eng := newFakeEngine()
 	eng.opts = make(chan core.StartOptions, 1)
 	c := startServer(t, eng)
-	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml", "allowSideEffects": true,
+	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml", "allowSideEffects": true, "keepConsumerGroup": true,
 		"inputClasses": map[string]any{"aws_sqs": "replay-safe"}})
 	c.send("configurationDone", map[string]any{})
 	c.response("configurationDone", true)
 	got := <-eng.opts
 	if !reflect.DeepEqual(got.InputClasses, map[string]core.InputClass{"aws_sqs": core.ClassReplaySafe}) {
 		t.Errorf("Start options InputClasses = %v, want aws_sqs replay-safe", got.InputClasses)
+	}
+	if !got.KeepConsumerGroup {
+		t.Error("Start options KeepConsumerGroup = false, want true")
 	}
 	c.threadEvent("started")
 	c.event("stopped")

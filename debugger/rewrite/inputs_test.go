@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -44,8 +45,9 @@ type inputCase struct {
 	// conf is the component config as YAML flow (or a block indented
 	// for the component key), "{}" when empty.
 	conf string
-	// group is the DebugGroup option.
+	// group is the DebugGroup option, and keep KeepConsumerGroup.
 	group string
+	keep  bool
 	want  InputClass
 }
 
@@ -54,13 +56,15 @@ type inputCase struct {
 var inputCases = map[string][]inputCase{
 	"kafka": {
 		{conf: "{addresses: [k:9092], topics: [t]}", want: ReplaySafe},
-		{conf: "{addresses: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", want: SideEffecting},
-		{conf: "{addresses: [k:9092], topics: [t], consumer_group: '${G}'}", want: SideEffecting},
+		{conf: "{addresses: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", want: ReplaySafe},
+		{conf: "{addresses: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", keep: true, want: SideEffecting},
+		{conf: "{addresses: [k:9092], topics: [t], consumer_group: '${G}'}", group: "dbg", want: SideEffecting},
 	},
 	"kafka_franz": {
 		{conf: "{seed_brokers: [k:9092], topics: [t]}", want: ReplaySafe},
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", want: ReplaySafe},
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod}", want: SideEffecting},
+		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod}", group: "dbg", keep: true, want: SideEffecting},
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: '${G}'}", group: "dbg", want: SideEffecting},
 		{conf: "{seed_brokers: [k:9092], topics: [t], consumer_group: prod, start_offset: committed}", group: "dbg", want: SideEffecting},
 		{conf: "{seed_brokers: [k:9092], topics: [t], start_offset: '${S}'}", want: SideEffecting},
@@ -74,8 +78,8 @@ var inputCases = map[string][]inputCase{
 	},
 	"redpanda_common": {
 		{conf: "{topics: [t]}", want: ReplaySafe},
-		// Not overridden until E3 entry 5.
-		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", want: SideEffecting},
+		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", want: ReplaySafe},
+		{conf: "{topics: [t], consumer_group: prod}", group: "dbg", keep: true, want: SideEffecting},
 		{conf: "{topics: [t], start_offset: committed}", want: SideEffecting},
 	},
 	"ockam_kafka":       {{conf: "{kafka: {topics: [t]}}", want: SideEffecting}},
@@ -102,6 +106,8 @@ var inputCases = map[string][]inputCase{
 	"nats": {
 		{conf: "{urls: [nats://n], subject: s}", want: ReplaySafe},
 		{conf: "{urls: [nats://n], subject: s, queue: q}", want: SideEffecting},
+		{conf: "{urls: [nats://n], subject: s, queue: q}", group: "dbg", want: ReplaySafe},
+		{conf: "{urls: [nats://n], subject: s, queue: q}", group: "dbg", keep: true, want: SideEffecting},
 	},
 	"nats_jetstream": {{conf: "{urls: [nats://n], subject: s}", want: SideEffecting}},
 	"nats_stream":    {{conf: "{urls: [nats://n], cluster_id: c, subject: s}", want: SideEffecting}},
@@ -258,7 +264,7 @@ func TestInputTableRows(t *testing.T) {
 		for _, c := range cases {
 			src := "input:\n  " + name + ": " + c.conf + "\n" +
 				"input_resources:\n  - label: q\n    aws_sqs: {url: http://q}\n"
-			p, err := Rewrite([]byte(src), Options{DebugGroup: c.group})
+			p, err := Rewrite([]byte(src), Options{DebugGroup: c.group, KeepConsumerGroup: c.keep})
 			if err != nil {
 				t.Errorf("%s %s: %v", name, c.conf, err)
 				continue
@@ -269,7 +275,7 @@ func TestInputTableRows(t *testing.T) {
 			}
 			f := p.Inputs[0]
 			if f.UserPath != "input" || f.Component != name || f.Line != 2 || f.Class != c.want {
-				t.Errorf("%s %s (group %q): finding %+v, want class %s", name, c.conf, c.group, f, c.want)
+				t.Errorf("%s %s (group %q, keep %v): finding %+v, want class %s", name, c.conf, c.group, c.keep, f, c.want)
 			}
 			if (f.Class == ReplaySafe) != (f.Effect == "") {
 				t.Errorf("%s %s: class %s with effect %q", name, c.conf, f.Class, f.Effect)
@@ -284,21 +290,196 @@ func TestInputTableRows(t *testing.T) {
 	}
 }
 
-// Only the top-level redpanda/kafka_franz group is overridden (E3 entry 2);
-// a nested one is kept, so the input is side-effecting (entry 5 overrides
-// it).
-func TestNestedGroupKept(t *testing.T) {
-	src := "input:\n  broker:\n    inputs:\n      - redpanda: {seed_brokers: [k:9092], topics: [t], consumer_group: prod}\n"
-	p, err := Rewrite([]byte(src), Options{DebugGroup: "dbg"})
-	if err != nil {
-		t.Fatal(err)
+// The E3 entry 5 matrix: every overridable group in the capture tree gets
+// <DebugGroup>-<k>, k in walker order, with one warning each; a kept,
+// interpolated or left-alone group makes its input side-effecting; a start
+// offset at latest gets one warning (AD-5, D4, D5).
+func TestGroupOverrideMatrix(t *testing.T) {
+	const rp = "{seed_brokers: [k:9092], topics: [t], consumer_group: %s}"
+	broker := func(kind string) string {
+		return "input:\n  " + kind + ":\n    inputs:\n" +
+			"      - redpanda: " + fmt.Sprintf(rp, "a") + "\n" +
+			"      - redpanda: " + fmt.Sprintf(rp, "b") + "\n"
 	}
-	if strings.Contains(p.Input, "dbg") {
-		t.Errorf("nested group overridden:\n%s", p.Input)
+	franzRes := "input_resources:\n  - label: r\n    kafka_franz: {seed_brokers: [k:9092], topics: [t], consumer_group: prod}\n"
+	replaced := func(path, noun, from, to string, line int) string {
+		return fmt.Sprintf("%s (line %d): %s %q is replaced by the debug group %q for the capture", path, line, noun, from, to)
 	}
-	if len(p.Inputs) != 2 || p.Inputs[0].Class != SideEffecting || p.Inputs[1].Class != SideEffecting ||
-		!strings.Contains(p.Inputs[1].Effect, `"prod"`) {
-		t.Errorf("findings %+v, want both side-effecting with the kept group", p.Inputs)
+	for name, c := range map[string]struct {
+		src  string
+		keep bool
+		// capture and resources must be in the capture config and in
+		// Plan.Resources; absent must be in neither.
+		capture, resources, absent []string
+		// classes are the findings' classes in walker order.
+		classes []InputClass
+		// effect must be in the first side-effecting finding's effect.
+		effect   string
+		warnings []string
+	}{
+		"nested": {
+			src:     broker("broker"),
+			capture: []string{"consumer_group: dbg-0", "consumer_group: dbg-1"}, absent: []string{"consumer_group: a", "consumer_group: b"},
+			classes: []InputClass{ReplaySafe, ReplaySafe, ReplaySafe},
+			warnings: []string{
+				replaced("input.broker.inputs[0].redpanda.consumer_group", "consumer group", "a", "dbg-0", 4),
+				replaced("input.broker.inputs[1].redpanda.consumer_group", "consumer group", "b", "dbg-1", 5),
+			},
+		},
+		"sequence": {
+			src:     broker("sequence"),
+			capture: []string{"consumer_group: dbg-0", "consumer_group: dbg-1"}, absent: []string{"consumer_group: a"},
+			classes: []InputClass{ReplaySafe, ReplaySafe, ReplaySafe},
+			warnings: []string{
+				replaced("input.sequence.inputs[0].redpanda.consumer_group", "consumer group", "a", "dbg-0", 4),
+				replaced("input.sequence.inputs[1].redpanda.consumer_group", "consumer group", "b", "dbg-1", 5),
+			},
+		},
+		"read_until and batched": {
+			src: "input:\n  read_until:\n    check: 'true'\n    input:\n      batched:\n        policy: {count: 1}\n        child:\n" +
+				"          redpanda: " + fmt.Sprintf(rp, "a") + "\n",
+			capture: []string{"consumer_group: dbg-0"}, absent: []string{"consumer_group: a"},
+			classes: []InputClass{ReplaySafe, ReplaySafe, ReplaySafe},
+			warnings: []string{
+				replaced("input.read_until.input.batched.child.redpanda.consumer_group", "consumer group", "a", "dbg-0", 8),
+			},
+		},
+		"resource": {
+			src:       "input:\n  resource: r\n" + franzRes,
+			resources: []string{"consumer_group: dbg-0"}, absent: []string{"consumer_group: prod"},
+			classes:  []InputClass{ReplaySafe, ReplaySafe},
+			warnings: []string{replaced("input_resources.r.kafka_franz.consumer_group", "consumer group", "prod", "dbg-0", 5)},
+		},
+		"resource named twice": {
+			src:       "input:\n  broker:\n    inputs:\n      - resource: r\n      - redpanda: " + fmt.Sprintf(rp, "a") + "\n      - resource: r\n" + franzRes,
+			capture:   []string{"consumer_group: dbg-1"},
+			resources: []string{"consumer_group: dbg-0"}, absent: []string{"consumer_group: prod", "dbg-2"},
+			classes: []InputClass{ReplaySafe, ReplaySafe, ReplaySafe, ReplaySafe, ReplaySafe},
+			warnings: []string{
+				replaced("input_resources.r.kafka_franz.consumer_group", "consumer group", "prod", "dbg-0", 9),
+				replaced("input.broker.inputs[1].redpanda.consumer_group", "consumer group", "a", "dbg-1", 5),
+			},
+		},
+		"legacy kafka": {
+			src:     "input:\n  kafka: {addresses: [k:9092], topics: [t], consumer_group: prod}\n",
+			capture: []string{"consumer_group: dbg-0"}, absent: []string{"prod"},
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{replaced("input.kafka.consumer_group", "consumer group", "prod", "dbg-0", 2)},
+		},
+		"redpanda_common": {
+			src:     "input:\n  redpanda_common: {topics: [t], consumer_group: prod}\n",
+			capture: []string{"consumer_group: dbg-0"}, absent: []string{"prod"},
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{replaced("input.redpanda_common.consumer_group", "consumer group", "prod", "dbg-0", 2)},
+		},
+		"nats queue": {
+			src:     "input:\n  nats: {urls: [nats://n], subject: s, queue: workers}\n",
+			capture: []string{"queue: dbg-0"}, absent: []string{"workers"},
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{replaced("input.nats.queue", "queue group", "workers", "dbg-0", 2)},
+		},
+		"interpolated": {
+			src:     "input:\n  redpanda: " + fmt.Sprintf(rp, "'${GROUP}'") + "\n",
+			capture: []string{"${GROUP}"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting}, effect: "joins the consumer group in consumer_group, which the debugger can't override, and its members rebalance",
+		},
+		"keep": {
+			src: "input:\n  redpanda: " + fmt.Sprintf(rp, "prod") + "\n", keep: true,
+			capture: []string{"consumer_group: prod"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting}, effect: `joins consumer group "prod" (consumer_group), and its members rebalance`,
+		},
+		"keep nested resource": {
+			src: "input:\n  broker:\n    inputs:\n      - resource: r\n" + franzRes, keep: true,
+			resources: []string{"consumer_group: prod"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting, SideEffecting, SideEffecting}, effect: `joins consumer group "prod"`,
+		},
+		"left alone": {
+			src:     "input:\n  postgres_cdc: {dsn: postgres://p, slot_name: s, tables: [t]}\n",
+			capture: []string{"slot_name: s"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting}, effect: "replication slot",
+		},
+		"left alone pubsub": {
+			src:     "input:\n  gcp_pubsub: {project: p, subscription: s}\n",
+			capture: []string{"subscription: s"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting}, effect: "subscription",
+		},
+		"latest": {
+			src:      "input:\n  redpanda: {seed_brokers: [k:9092], topics: [t], start_offset: latest}\n",
+			capture:  []string{"start_offset: latest"},
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{`input.redpanda.start_offset (line 2): start_offset: latest starts at the latest offset, so the capture waits for new records and the "Waiting for the input" note may follow`},
+		},
+		"oldest false": {
+			src:      "input:\n  kafka: {addresses: [k:9092], topics: [t], start_from_oldest: false}\n",
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{`input.kafka.start_from_oldest (line 2): start_from_oldest: false starts at the latest offset, so the capture waits for new records and the "Waiting for the input" note may follow`},
+		},
+		"latest once": {
+			src:      "input:\n  kafka_franz: {seed_brokers: [k:9092], topics: [t], start_offset: latest, start_from_oldest: false}\n",
+			classes:  []InputClass{ReplaySafe},
+			warnings: []string{`input.kafka_franz.start_offset (line 2): start_offset: latest starts at the latest offset, so the capture waits for new records and the "Waiting for the input" note may follow`},
+		},
+		"committed, oldest false": {
+			src:     "input:\n  kafka_franz: {seed_brokers: [k:9092], topics: [t], start_offset: committed, start_from_oldest: false}\n",
+			classes: []InputClass{SideEffecting}, effect: "start_offset: committed",
+		},
+		"latest kept": {
+			src:  "input:\n  redpanda: {seed_brokers: [k:9092], topics: [t], consumer_group: prod, start_offset: latest}\n",
+			keep: true, classes: []InputClass{SideEffecting}, effect: `joins consumer group "prod" (consumer_group), and its members rebalance`,
+			warnings: []string{`input.redpanda.start_offset (line 2): start_offset: latest starts at the latest offset unless the kept group has committed offsets, so the capture may wait for new records and the "Waiting for the input" note may follow`},
+		},
+		"nats keep": {
+			src: "input:\n  nats: {urls: [nats://n], subject: s, queue: workers}\n", keep: true,
+			capture: []string{"queue: workers"}, absent: []string{"dbg"},
+			classes: []InputClass{SideEffecting}, effect: `joins queue group "workers" and takes its share of the messages, which aren't redelivered after the nack`,
+		},
+		"nats interpolated": {
+			src:     "input:\n  nats: {urls: [nats://n], subject: s, queue: '${Q}'}\n",
+			classes: []InputClass{SideEffecting}, effect: "joins the queue group in queue, which the debugger can't override, and takes its share of the messages, which aren't redelivered after the nack",
+		},
+		"earliest": {
+			src:     "input:\n  redpanda: {seed_brokers: [k:9092], topics: [t], start_offset: earliest, start_from_oldest: true}\n",
+			classes: []InputClass{ReplaySafe},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, err := Rewrite([]byte(c.src), Options{DebugGroup: "dbg", KeepConsumerGroup: c.keep})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, s := range c.capture {
+				if !strings.Contains(p.Input, s) {
+					t.Errorf("capture config has no %q:\n%s", s, p.Input)
+				}
+			}
+			for _, s := range c.resources {
+				if !strings.Contains(p.Resources, s) {
+					t.Errorf("resources have no %q:\n%s", s, p.Resources)
+				}
+			}
+			for _, s := range c.absent {
+				if strings.Contains(p.Input, s) || strings.Contains(p.Resources, s) {
+					t.Errorf("%q is still there:\n%s\n%s", s, p.Input, p.Resources)
+				}
+			}
+			var classes []InputClass
+			effect := ""
+			for _, f := range p.Inputs {
+				classes = append(classes, f.Class)
+				if effect == "" && f.Class == SideEffecting {
+					effect = f.Effect
+				}
+			}
+			if !slices.Equal(classes, c.classes) {
+				t.Errorf("classes %v, want %v (findings %+v)", classes, c.classes, p.Inputs)
+			}
+			if !strings.Contains(effect, c.effect) {
+				t.Errorf("effect %q, want %q", effect, c.effect)
+			}
+			if !slices.Equal(p.Warnings, c.warnings) {
+				t.Errorf("warnings:\n%q\nwant:\n%q", p.Warnings, c.warnings)
+			}
+		})
 	}
 }
 

@@ -127,12 +127,13 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 			return false, s.sendFailure(r, err)
 		}
 		launch := core.Launch{
-			Pipeline:         cfg.Pipeline,
-			Cwd:              cfg.Cwd,
-			MaxMessages:      cfg.MaxMessages,
-			Env:              cfg.Env,
-			EnvFile:          cfg.EnvFile,
-			AllowSideEffects: cfg.AllowSideEffects,
+			Pipeline:          cfg.Pipeline,
+			Cwd:               cfg.Cwd,
+			MaxMessages:       cfg.MaxMessages,
+			Env:               cfg.Env,
+			EnvFile:           cfg.EnvFile,
+			AllowSideEffects:  cfg.AllowSideEffects,
+			KeepConsumerGroup: cfg.KeepConsumerGroup,
 		}
 		if cfg.InputClasses != nil {
 			launch.InputClasses = make(map[string]core.InputClass, len(cfg.InputClasses))

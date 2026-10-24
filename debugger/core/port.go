@@ -88,7 +88,8 @@ type CheckResult struct {
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
 	// Check reads and rewrites the pipeline file opts.Pipeline, with the
-	// rewrite options in opts (DebugGroup, InputClasses), and parses and
+	// rewrite options in opts (DebugGroup, InputClasses, KeepConsumerGroup),
+	// and parses and
 	// lints it without running anything, resolving ${VAR} through
 	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages and
 	// opts.Prepared. It returns the rewritten configs in
@@ -128,6 +129,10 @@ type StartOptions struct {
 	// the class each named input component gets instead of the input
 	// table's. A name that isn't an input component is LAUNCH_INVALID.
 	InputClasses map[string]InputClass
+	// KeepConsumerGroup is the launch's keepConsumerGroup (AD-5), a rewrite
+	// option: the capture keeps every consumer group as configured instead
+	// of overriding it with the debug group.
+	KeepConsumerGroup bool
 	// Prepared is CheckResult.Prepared from this launch's Check, passed
 	// back to Start unchanged. nil makes Start load the pipeline itself.
 	Prepared any

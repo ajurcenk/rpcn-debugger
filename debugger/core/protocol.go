@@ -29,6 +29,11 @@ type Launch struct {
 	// resolves against Cwd, and it must exist. It overrides the process
 	// environment (AD-22).
 	EnvFile string
+	// KeepConsumerGroup keeps the consumer groups of the capture tree as
+	// configured instead of overriding them with the debug group (AD-5). A
+	// kept group makes its input side-effecting, so it needs
+	// AllowSideEffects.
+	KeepConsumerGroup bool
 	// AllowSideEffects allows a capture from inputs whose capture has side
 	// effects on the system they read from (AD-5: the side-effecting and
 	// unknown classes), with one warning each. A rejected input is refused

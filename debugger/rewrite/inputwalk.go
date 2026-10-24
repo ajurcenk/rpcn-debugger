@@ -3,6 +3,7 @@ package rewrite
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -12,7 +13,8 @@ import (
 // inputWalker walks the capture tree (AD-5): the top-level input, the
 // child inputs of composites, and the input_resources that resource:
 // names. It classifies every input by the input table, records one finding
-// per input, and forces auto_replay_nacks to true on the way.
+// per input, and on the way overrides the consumer groups, forces
+// auto_replay_nacks to true and warns about start offsets at latest.
 type inputWalker struct {
 	w *walker
 	// resources maps each input_resources label to its entry and path.
@@ -26,9 +28,14 @@ type inputWalker struct {
 	// child is reported to refs and adds nothing, no finding is kept and
 	// nothing is forced.
 	refs func(label string)
-	// overridden holds the group nodes the capture replaced with the
-	// debug group: they don't make the input side-effecting.
-	overridden map[*yaml.Node]bool
+	// base is the debug-group base (Options.DebugGroup), and keep the
+	// launch's keepConsumerGroup: with an empty base or keep, no group is
+	// overridden.
+	base string
+	keep bool
+	// groups counts the inputs whose groups the walk overrode: the next
+	// one gets <base>-<groups> (AD-5, D5).
+	groups int
 	// overrides is the launch's inputClasses (Options.InputClasses): the
 	// class of each named component, applied before the rollup.
 	overrides map[string]InputClass
@@ -47,9 +54,10 @@ type resClass struct {
 	inherited bool
 }
 
-func newInputWalker(w *walker, inputResources *yaml.Node, overridden map[*yaml.Node]bool, overrides map[string]InputClass) *inputWalker {
+func newInputWalker(w *walker, inputResources *yaml.Node, opts Options) *inputWalker {
 	iw := &inputWalker{
-		w: w, resources: map[string]inputResource{}, emitted: map[string]bool{}, overridden: overridden, overrides: overrides,
+		w: w, resources: map[string]inputResource{}, emitted: map[string]bool{},
+		base: opts.DebugGroup, keep: opts.KeepConsumerGroup, overrides: opts.InputClasses,
 	}
 	if inputResources != nil && inputResources.Kind == yaml.SequenceNode {
 		for i, e := range inputResources.Content {
@@ -75,7 +83,7 @@ func (iw *inputWalker) resourceClasses() map[string]resClass {
 	classes := map[string]resClass{}
 	referrers := map[string][]string{}
 	for _, l := range labels {
-		local := &inputWalker{w: iw.w, resources: iw.resources, overridden: iw.overridden, overrides: iw.overrides, refs: func(ref string) {
+		local := &inputWalker{w: iw.w, resources: iw.resources, base: iw.base, keep: iw.keep, overrides: iw.overrides, refs: func(ref string) {
 			if !slices.Contains(referrers[ref], l) {
 				referrers[ref] = append(referrers[ref], l)
 			}
@@ -125,14 +133,16 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, boo
 		return ReplaySafe, "", false
 	}
 	name := k.Value
+	row, known := inputTable[name]
 	if iw.refs == nil {
+		iw.overrideGroups(row, conf, path+"."+name)
 		iw.forceReplayNacks(conf, path+"."+name)
+		iw.warnLatest(row, conf, path+"."+name)
 	}
 	idx := len(iw.findings)
 	iw.findings = append(iw.findings, InputFinding{UserPath: path, Line: k.Line, Component: name})
 
 	class, effect := ReplaySafe, ""
-	row, known := inputTable[name]
 	switch {
 	case !known:
 		class, effect = Unknown, "the debugger doesn't know what the "+name+" input does, so it is treated as side-effecting"
@@ -140,7 +150,7 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, boo
 		class, effect = row.class(conf)
 	}
 	if rank(class) < rank(SideEffecting) {
-		if g, ok := iw.keptGroup(conf, row.groups); ok {
+		if g, ok := iw.keptGroup(row, conf); ok {
 			class, effect = SideEffecting, g
 		}
 	}
@@ -247,20 +257,111 @@ func (iw *inputWalker) resource(ref *yaml.Node) (InputClass, string, string) {
 	return rc.class, rc.effect, r.path
 }
 
-// keptGroup returns the effect of the first group field in conf that is set
-// and that the capture didn't override (E3 entry 5 overrides the rest).
-func (iw *inputWalker) keptGroup(conf *yaml.Node, groups []string) (string, bool) {
-	for _, g := range groups {
-		n := fieldAt(conf, g)
-		if !isSet(conf, g) || iw.overridden[n] {
+// overridable reports whether the capture replaces the group value n of an
+// input of row with the debug group (AD-5): a literal, non-empty group of an
+// overridable row, when the launch has a debug-group base and doesn't keep
+// the groups. The walk replaces such a value with another one, so it holds
+// for the replaced value too. In a local walk (resourceClasses) it says
+// what the walk will do.
+func (iw *inputWalker) overridable(row inputRow, n *yaml.Node) bool {
+	return row.overridable && iw.base != "" && !iw.keep &&
+		n != nil && n.Kind == yaml.ScalarNode && !isNull(n) && n.Value != "" && !isInterpolated(n)
+}
+
+// overrideGroups replaces each overridable group field of the input config
+// conf at path with <base>-<k>, where k counts the inputs overridden so far
+// in walker order, so distinct groups stay distinct (AD-5, D5), with a
+// launch warning naming both groups. It replaces the value node, so lint
+// errors at it keep the user's position.
+func (iw *inputWalker) overrideGroups(row inputRow, conf *yaml.Node, path string) {
+	group := ""
+	for _, g := range row.groups {
+		gk, gv := field(conf, g)
+		if !iw.overridable(row, gv) {
 			continue
 		}
-		if n.Kind == yaml.ScalarNode && !isInterpolated(n) {
+		if group == "" {
+			group = fmt.Sprintf("%s-%d", iw.base, iw.groups)
+			iw.groups++
+		}
+		ng := *gv
+		ng.Value, ng.Tag, ng.Style = group, "!!str", 0
+		conf.Content[slices.Index(conf.Content, gk)+1] = &ng
+		iw.w.warn(gk.Line, path+"."+g, "%s %q is replaced by the debug group %q for the capture", groupNoun(row), gv.Value, group)
+	}
+}
+
+// groupNoun names what the group fields of row hold.
+func groupNoun(row inputRow) string {
+	if row.queueGroup {
+		return "queue group"
+	}
+	return "consumer group"
+}
+
+// queueShare is what a kept queue group does: core NATS queue members
+// split the messages, and the capture's nack doesn't redeliver them.
+const queueShare = "takes its share of the messages, which aren't redelivered after the nack"
+
+// keptGroup returns the effect of the first group field of row in conf that
+// is set and that the capture doesn't override: kept by keepConsumerGroup,
+// interpolated, or a field the debugger leaves alone (AD-5, D4).
+func (iw *inputWalker) keptGroup(row inputRow, conf *yaml.Node) (string, bool) {
+	for _, g := range row.groups {
+		n := fieldAt(conf, g)
+		if !isSet(conf, g) || iw.overridable(row, n) {
+			continue
+		}
+		literal := n.Kind == yaml.ScalarNode && !isInterpolated(n)
+		switch {
+		case row.queueGroup && literal:
+			return fmt.Sprintf("joins queue group %q and %s", n.Value, queueShare), true
+		case row.queueGroup:
+			return fmt.Sprintf("joins the queue group in %s, which the debugger can't override, and %s", g, queueShare), true
+		case literal:
 			return fmt.Sprintf("joins consumer group %q (%s), and its members rebalance", n.Value, g), true
 		}
 		return fmt.Sprintf("joins the consumer group in %s, which the debugger can't override, and its members rebalance", g), true
 	}
 	return "", false
+}
+
+// warnLatest gives the input config conf at path one launch warning when a
+// start-offset field of row resolves to latest (start_offset: latest, or
+// start_from_oldest: false): the capture then waits for new records, or,
+// under a kept group, starts at latest only when the group has no commits.
+// In a row with start_offset, start_from_oldest doesn't decide the start
+// (C/kafka/franz_reader.go:307-325), so only start_offset counts. The
+// field itself stays as configured.
+func (iw *inputWalker) warnLatest(row inputRow, conf *yaml.Node, path string) {
+	hasOffset := slices.ContainsFunc(row.starts, func(s string) bool {
+		return s == "start_offset" || strings.HasSuffix(s, ".start_offset")
+	})
+	for _, s := range row.starts {
+		parent, last := conf, s
+		if i := strings.LastIndexByte(s, '.'); i >= 0 {
+			parent, last = fieldAt(conf, s[:i]), s[i+1:]
+		}
+		if hasOffset && last == "start_from_oldest" {
+			continue
+		}
+		k, v := field(parent, last)
+		if k == nil || isNull(v) || v.Kind != yaml.ScalarNode || isInterpolated(v) {
+			continue
+		}
+		var oldest bool
+		latest := (last == "start_offset" && strings.EqualFold(v.Value, "latest")) ||
+			(last == "start_from_oldest" && v.ShortTag() == "!!bool" && v.Decode(&oldest) == nil && !oldest)
+		if !latest {
+			continue
+		}
+		if _, kept := iw.keptGroup(row, conf); kept {
+			iw.w.warn(k.Line, path+"."+s, "%s: %s starts at the latest offset unless the kept group has committed offsets, so the capture may wait for new records and the \"Waiting for the input\" note may follow", last, v.Value)
+		} else {
+			iw.w.warn(k.Line, path+"."+s, "%s: %s starts at the latest offset, so the capture waits for new records and the \"Waiting for the input\" note may follow", last, v.Value)
+		}
+		return
+	}
 }
 
 // forceReplayNacks sets auto_replay_nacks to true in the input config conf

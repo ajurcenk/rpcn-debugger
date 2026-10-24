@@ -63,7 +63,7 @@ type inputRow struct {
 	class classFunc
 	// groups are the consumer-group fields (dotted paths in the config).
 	// Unless the capture overrides it, a set group field makes the input
-	// side-effecting.
+	// side-effecting (AD-5, D4).
 	groups []string
 	// starts are the start-offset fields (dotted paths).
 	starts []string
@@ -71,9 +71,16 @@ type inputRow struct {
 	// its worst child's class.
 	children []childField
 	// overridable marks the inputs whose literal groups the capture
-	// replaces with the debug group (E3 entry 2: only redpanda and
-	// kafka_franz, and only at the top level).
+	// replaces with the debug group, wherever the walker reaches them (the
+	// user's decision of 2026-10-23: the Kafka family's consumer_group and
+	// the nats queue; every other group field would create durable objects
+	// on the production system, or break the input). Their groups are
+	// top-level fields.
 	overridable bool
+	// queueGroup marks a group field that is a queue group: its members
+	// share the messages instead of rebalancing partitions, so a kept one
+	// takes production's share.
+	queueGroup bool
 }
 
 // always returns a classFunc with a fixed class and effect.
@@ -262,11 +269,11 @@ var (
 // capture forces it (forceReplayNacks).
 var inputTable = map[string]inputRow{
 	// Kafka family. A kept group is side-effecting through groups.
-	"kafka":       {groups: kafkaGroup, starts: []string{"start_from_oldest"}},
+	"kafka":       {groups: kafkaGroup, starts: []string{"start_from_oldest"}, overridable: true},
 	"kafka_franz": {class: committed, groups: kafkaGroup, starts: franzStart, overridable: true},
 	"redpanda":    {class: committed, groups: kafkaGroup, starts: franzStart, overridable: true},
 	// Stays replay-safe until E3 entry 6 probes the shared client.
-	"redpanda_common": {class: committed, groups: kafkaGroup, starts: []string{"start_offset"}},
+	"redpanda_common": {class: committed, groups: kafkaGroup, starts: []string{"start_offset"}, overridable: true},
 	// C/ockam/input_kafka.go:97-128.
 	"ockam_kafka": {
 		class:  unsure("starts a local Ockam node, enrolls its enrollment_ticket and may claim its relay"),
@@ -302,8 +309,9 @@ var inputTable = map[string]inputRow{
 		groups: []string{"dynamodb.table"}, starts: []string{"start_from_oldest"},
 	},
 	"mqtt": {class: seIf("takes over the client id, leaves a persistent session or joins a shared subscription", mqttUnsafe)},
-	// C/nats/input.go:184 (ChanQueueSubscribe).
-	"nats":           {class: seIf("joins the queue group and takes its share of the messages", set("queue")), groups: []string{"queue"}},
+	// C/nats/input.go:184 (ChanQueueSubscribe): a kept queue joins the
+	// queue group and takes its share of the messages.
+	"nats":           {groups: []string{"queue"}, overridable: true, queueGroup: true},
 	"nats_jetstream": {class: unsure("may use a durable consumer, join a deliver group or create a stream"), groups: []string{"durable", "queue"}, starts: []string{"deliver"}},
 	"nats_stream":    {class: unsure("may use a durable subscription or join a queue group"), groups: []string{"durable_name", "queue"}, starts: []string{"start_from_oldest"}},
 	"nats_kv":        {},

@@ -67,6 +67,9 @@ type LoadOptions struct {
 	// input component gets instead of the input table's. Every name is an
 	// input component of the Adapter's environment.
 	InputClasses map[string]core.InputClass
+	// KeepConsumerGroup keeps the capture tree's consumer groups as
+	// configured instead of overriding them with the debug group.
+	KeepConsumerGroup bool
 }
 
 // Loader reads and rewrites a pipeline file with opts.
@@ -134,7 +137,7 @@ func (a *Adapter) loadOptions(opts core.StartOptions) (LoadOptions, error) {
 			return LoadOptions{}, core.NewError(core.CodeLaunchInvalid, `"inputClasses.%s": %s is not an input component`, name, name)
 		}
 	}
-	return LoadOptions{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses}, nil
+	return LoadOptions{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, KeepConsumerGroup: opts.KeepConsumerGroup}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream,

@@ -82,7 +82,9 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 		// The launch's "pipeline" names no readable file.
 		return engine.Configs{}, nil, core.NewError(core.CodeLaunchInvalid, "read the pipeline: %v", err)
 	}
-	plan, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses})
+	plan, err := rewrite.Rewrite(raw, rewrite.Options{
+		DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, KeepConsumerGroup: opts.KeepConsumerGroup,
+	})
 	if err != nil {
 		// Keep the rewrite's Line and UserPath.
 		var ce core.Error

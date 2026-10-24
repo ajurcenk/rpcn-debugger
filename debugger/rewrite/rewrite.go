@@ -3,7 +3,6 @@ package rewrite
 import (
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -78,8 +77,13 @@ func (p Plan) Position(stepperID, childIndex int) (core.Position, bool) {
 // them, so the rewrite stays pure (AD-5).
 type Options struct {
 	// DebugGroup is the debug-group base rpcn-debug-<os-user> that
-	// overridden consumer-group fields derive from (AD-5).
+	// overridden consumer-group fields derive from (AD-5): the k-th
+	// overridden input in walker order gets <DebugGroup>-<k>. Empty
+	// overrides nothing.
 	DebugGroup string
+	// KeepConsumerGroup is the launch's keepConsumerGroup: no group is
+	// overridden, so a set group field makes its input side-effecting.
+	KeepConsumerGroup bool
 	// InputClasses maps an input component name to the class it gets
 	// instead of the input table's (the launch's inputClasses, AD-5). It
 	// replaces the component's own class before a composite takes its
@@ -131,7 +135,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		plan.StrictExpr, plan.StrictLine = strings.TrimSuffix(enc, "\n"), w.strict.Line
 	}
 	capture := without(input, "processors")
-	iw := newInputWalker(w, value(root, "input_resources"), w.overrideGroup(capture, opts.DebugGroup), opts.InputClasses)
+	iw := newInputWalker(w, value(root, "input_resources"), opts)
 	iw.block(capture, "input")
 	plan.Inputs = iw.findings
 	w.procs[capture] = "input"
@@ -247,43 +251,6 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	}
 	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
-}
-
-// overrideGroup sets the group fields of the top-level input in the
-// capture config capture to <base>-0 (AD-5), with a launch warning naming
-// both groups, when the input table marks the input overridable (redpanda
-// and kafka_franz; E3 entry 5 does the rest). Only a literal, non-empty
-// group is replaced; with an empty base nothing changes. It copies what it
-// changes, so the user's input node stays as parsed, and returns the new
-// group nodes.
-func (w *walker) overrideGroup(capture *yaml.Node, base string) map[*yaml.Node]bool {
-	done := map[*yaml.Node]bool{}
-	ck, conf := component(capture)
-	if base == "" || ck == nil || conf == nil || conf.Kind != yaml.MappingNode {
-		return done
-	}
-	row := inputTable[ck.Value]
-	if !row.overridable {
-		return done
-	}
-	nc := *conf
-	nc.Content = slices.Clone(conf.Content)
-	for _, name := range row.groups {
-		gk, g := field(&nc, name)
-		if g == nil || g.Kind != yaml.ScalarNode || isNull(g) || g.Value == "" || isInterpolated(g) {
-			continue
-		}
-		group := base + "-0"
-		ng := *g
-		ng.Value, ng.Tag, ng.Style = group, "!!str", 0
-		nc.Content[slices.Index(nc.Content, gk)+1] = &ng
-		done[&ng] = true
-		w.warn(gk.Line, "input."+ck.Value+"."+name, "consumer group %q is replaced by the debug group %q for the capture", g.Value, group)
-	}
-	if len(done) > 0 {
-		capture.Content[slices.Index(capture.Content, ck)+1] = &nc
-	}
-	return done
 }
 
 // strict returns error_handling.strict: its value, and the node to write

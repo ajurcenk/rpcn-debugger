@@ -153,6 +153,7 @@ type Session struct {
 	translate    Translate
 	debugGroup   string                // the debug-group base rewrite option (AD-5)
 	inputClasses map[string]InputClass // the inputClasses rewrite option (AD-5)
+	keepGroup    bool                  // the keepConsumerGroup rewrite option (AD-5)
 	prepared     any                   // Check's configs, run by Start (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
 	delivered    int                   // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
@@ -311,7 +312,10 @@ func (s *Session) launch(c Launch) error {
 	if c.InputClasses != nil {
 		classes = maps.Clone(c.InputClasses)
 	}
-	res, err := s.engine.Check(StartOptions{Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group, InputClasses: classes})
+	res, err := s.engine.Check(StartOptions{
+		Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group, InputClasses: classes,
+		KeepConsumerGroup: c.KeepConsumerGroup,
+	})
 	if err != nil {
 		ce, _ := AsError(err, CodePipelineInvalid).(Error)
 		ce.Message = TranslateText(res.Translator, ce.Message)
@@ -326,6 +330,7 @@ func (s *Session) launch(c Launch) error {
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
 	s.delivery, s.debugGroup, s.prepared, s.inputClasses = res.Delivery, group, res.Prepared, classes
+	s.keepGroup = c.KeepConsumerGroup
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -358,7 +363,8 @@ func (s *Session) configurationDone() error {
 	// launch never desyncs them from s.lines (AD-6).
 	opts := StartOptions{
 		Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup,
-		DebugGroup: s.debugGroup, InputClasses: s.inputClasses, Prepared: s.prepared,
+		DebugGroup: s.debugGroup, InputClasses: s.inputClasses, KeepConsumerGroup: s.keepGroup,
+		Prepared: s.prepared,
 	}
 	go s.run(ctx, opts, s.done)
 	return nil

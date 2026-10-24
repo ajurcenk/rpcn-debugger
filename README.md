@@ -87,14 +87,14 @@ A session reads **one batch** from the pipeline's input, keeps at most `maxMessa
 
 - The capture returns an error (a nack) for every batch it receives, and the input is stopped right after the first one.
 - `auto_replay_nacks` is forced to `true` on every input in the capture, with a launch warning when the pipeline sets anything else. With it off, many inputs treat a nack as an ack (committing Kafka offsets, confirming a Postgres slot's LSN, advancing CDC checkpoints).
-- A Kafka-family input (`redpanda`, `kafka_franz`) reads under the debug consumer group `rpcn-debug-<os-user>-<k>`, never under the pipeline's own group, and commits nothing. The records stay in the topic, production's offsets and membership don't change, and the next session captures the same messages. The debug group stays on the cluster as an empty group (no members, no offsets) until the broker expires it or `rpk group delete` removes it, and joining it needs Group READ permission on that name.
+- A Kafka-family input (`kafka`, `kafka_franz`, `redpanda`, `redpanda_common`) reads under the debug consumer group `rpcn-debug-<os-user>-<k>`, never under the pipeline's own group, and commits nothing; a `nats` input's `queue` gets the same treatment. This applies anywhere in the input tree, `broker`/`sequence` children and `input_resources` included, and `k` counts the overridden inputs in order from 0, so distinct groups stay distinct. Each replacement gets a launch warning naming both groups. The records stay in the topic, production's offsets and membership don't change, and the next session captures the same messages. The debug group stays on the cluster as an empty group (no members, no offsets) until the broker expires it or `rpk group delete` removes it, and joining it needs Group READ permission on that name.
 
 Before anything connects, the launch checks every input in the input tree (`broker`, `sequence`, `read_until`, `batched`, `resource:` and the rest), using a built-in table of the stock binary's inputs:
 
 | Class | Examples | What the launch does |
 | --- | --- | --- |
-| Replay-safe: reading changes nothing at the source | `redpanda`/`kafka_franz` with an overridden group, `file`, `aws_s3` without `sqs`, `generate`, `http_client` with GET | Launches |
-| Side-effecting: receiving alone changes the source, or it isn't proven safe | `aws_sqs`, `gcp_pubsub`, `amqp_0_9`, `amqp_1`, `redis_streams`, `postgres_cdc`, `azure_queue_storage`, `mysql_cdc` | Fails with `SIDE_EFFECTS_NOT_ALLOWED` (1012) at the input's line, naming each effect, unless `allowSideEffects` is `true` |
+| Replay-safe: reading changes nothing at the source | a Kafka-family input or `nats` with an overridden group, `file`, `aws_s3` without `sqs`, `generate`, `http_client` with GET | Launches |
+| Side-effecting: receiving alone changes the source, or it isn't proven safe | a kept or interpolated consumer group, `aws_sqs`, `gcp_pubsub`, `amqp_0_9`, `amqp_1`, `redis_streams`, `postgres_cdc`, `azure_queue_storage`, `mysql_cdc` | Fails with `SIDE_EFFECTS_NOT_ALLOWED` (1012) at the input's line, naming each effect, unless `allowSideEffects` is `true` |
 | Unknown: no row in the table | a plugin input | Same as side-effecting |
 | Rejected: can't be debugged | `stdin` (it carries the DAP stream), `http_server`, `socket_server`, `dynamic` | Always fails with `INPUT_REJECTED` (1011), with a hint to replay a saved capture instead (coming with replay) |
 
@@ -117,7 +117,9 @@ Use a dev copy of the source when you can't afford those effects.
 
 **`inputClasses`** overrides the table for the session, by component name: `"inputClasses": {"mysql_cdc": "replay-safe"}` marks one you know is safe (the launch warns that the debugger can't prove it), and `{"generate": "rejected"}` makes one stricter. A composite follows its overridden children. `stdin`, `dynamic` and `redpanda_migrator` can't be loosened; an unknown name or class fails the launch.
 
-When the input has sent nothing after 5 seconds (for example a Kafka input reading from `latest`), the Debug Console shows one "Waiting for the input" note.
+**`keepConsumerGroup: true`** keeps every consumer group as configured. The input then joins the production group, whose members rebalance, so it counts as side-effecting and needs `allowSideEffects`. A group the debugger can't override (an interpolated `${GROUP}`) is treated the same way. Other group-like fields (a Postgres `slot_name`, a Pulsar `subscription_name`, a Pub/Sub `subscription`, checkpoint tables, NATS JetStream durables) are never overridden, because a new name would create durable objects on the production system.
+
+Start offsets stay as configured. One that resolves to latest (`start_offset: latest`, `start_from_oldest: false`) gets a launch warning, since the capture then waits for new records. When the input has sent nothing after 5 seconds, the Debug Console shows one "Waiting for the input" note.
 
 ## License
 
