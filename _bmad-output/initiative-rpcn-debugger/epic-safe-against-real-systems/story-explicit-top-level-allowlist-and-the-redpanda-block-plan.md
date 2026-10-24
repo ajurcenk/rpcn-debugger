@@ -3,7 +3,7 @@ title: 'Explicit top-level allowlist and the redpanda block'
 type: 'feature'
 ticket: '6'
 created: '2026-10-23'
-status: 'built'
+status: done
 baseline_revision: 'd6423c49535e4b173cf0b6c700ace3f70e83e285'
 route: 'oneshot'
 route_source: 'auto'
