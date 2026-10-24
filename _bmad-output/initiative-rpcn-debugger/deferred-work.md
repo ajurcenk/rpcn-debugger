@@ -129,3 +129,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-consumer-group-override-for-every-group-field-plan.md`
   summary: A debug session killed abruptly (the binary gets no clean shutdown) leaves its member in the debug group until the broker's session timeout, so the next capture under the same `rpcn-debug-<os-user>-<k>` waits up to ~60 s in `CompletingRebalance` before it receives anything. Say so in the user docs and in the "Waiting for the input" note, or have the note name the group; production is unaffected.
   evidence: 3.5 VS Code prep (2026-10-23): after timeout-killed DAP runs, `rpk group describe rpcn-debug-aleksejjurcenko-0` showed CompletingRebalance with 1 member for 60 s; the next session then captured normally.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-output-real-and-none-plan.md`
+  summary: When the step stream's Run fails (e.g. an output that fails to init under `output: real`), `engine.run.step` now returns at once, but the producer goroutine (`produce(context.Background(), batch)`) is left waiting and leaks for the life of the process. Bound or cancel it, for E3's refactor sweep or entry 8's write timeout.
+  evidence: E3 entry 7 review fix (2026-10-23), noted by the implementer; harmless today (one goroutine per failed session).

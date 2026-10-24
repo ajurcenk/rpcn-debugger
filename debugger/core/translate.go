@@ -24,11 +24,13 @@ func TranslateText(tr Translate, text string) string {
 }
 
 // The config parts the engine adds to its streams, as the rewrite names
-// them for its position map (AD-6): the capture input, the resources and
-// each top-level stepper (StepperPart).
+// them for its position map (AD-6): the capture input, the resources, the
+// step stream's output (rpcn_debug_sink, AD-21) and each top-level stepper
+// (StepperPart).
 const (
 	PartInput     = "input"
 	PartResources = "resources"
+	PartOutput    = "output"
 )
 
 // StepperPart returns the part name of top-level stepper i.

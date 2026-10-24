@@ -33,11 +33,11 @@ func load(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, e
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	p, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses})
+	p, err := rewrite.Rewrite(raw, rewrite.Options{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, Output: opts.Output})
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Warnings: p.Warnings, Strict: p.Strict, StrictExpr: p.StrictExpr, StrictLine: p.StrictLine, Delivery: p.Delivery, Inputs: p.Inputs}, p, nil
+	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Output: p.Output, Warnings: p.Warnings, Strict: p.Strict, StrictExpr: p.StrictExpr, StrictLine: p.StrictLine, Delivery: p.Delivery, Inputs: p.Inputs}, p, nil
 }
 
 func writePipeline(t *testing.T, src string) string {

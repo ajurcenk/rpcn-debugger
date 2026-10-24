@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +30,10 @@ type Configs struct {
 	// Steppers are the top-level rpcn_debug_stepper processor configs, in
 	// step order (input, pipeline, then output processors).
 	Steppers []string
+	// Output is the step stream's output config: rpcn_debug_sink with its
+	// mode and, under output: real, the user's output block (AD-21), added
+	// as given. "" means rpcn_debug_sink in dry-run.
+	Output string
 	// Warnings are the launch warnings for the user.
 	Warnings []string
 	// Strict is error_handling.strict, applied to the step stream (AD-4(b)).
@@ -48,9 +53,8 @@ type Configs struct {
 	// key (AD-21). Check returns it in its CheckResult.
 	Delivery core.Position
 	// Positions maps a line and column in the YAML of one config part
-	// (core.PartInput, core.StepperPart(k) or core.PartResources) to the
-	// user's file, with the
-	// user path of the innermost processor there (AD-6). It may be nil;
+	// (core.PartInput, core.StepperPart(k), core.PartResources or
+	// core.PartOutput) to the user's file, with the user path of the innermost processor there (AD-6). It may be nil;
 	// config errors then keep the rewritten config's positions.
 	Positions func(part string, line, col int) (fileLine, fileCol int, userPath string, ok bool)
 	// Inputs are the AD-5 findings of the capture tree, in walker order.
@@ -70,6 +74,9 @@ type LoadOptions struct {
 	// KeepConsumerGroup keeps the capture tree's consumer groups as
 	// configured instead of overriding them with the debug group.
 	KeepConsumerGroup bool
+	// Output is where rpcn_debug_sink sends the batches it receives
+	// (AD-21). "" is dry-run.
+	Output core.OutputMode
 }
 
 // Loader reads and rewrites a pipeline file with opts.
@@ -137,7 +144,10 @@ func (a *Adapter) loadOptions(opts core.StartOptions) (LoadOptions, error) {
 			return LoadOptions{}, core.NewError(core.CodeLaunchInvalid, `"inputClasses.%s": %s is not an input component`, name, name)
 		}
 	}
-	return LoadOptions{DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, KeepConsumerGroup: opts.KeepConsumerGroup}, nil
+	return LoadOptions{
+		DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, KeepConsumerGroup: opts.KeepConsumerGroup,
+		Output: opts.Output,
+	}, nil
 }
 
 // Start captures one batch without acking it, stops the capture stream,
@@ -291,8 +301,12 @@ func (r *run) configureStep() (*service.StreamBuilder, service.MessageBatchHandl
 			return nil, nil, r.configError(core.StepperPart(i), r.stepperName(i), err)
 		}
 	}
-	if err := b.AddOutputYAML(SinkName + ": {}"); err != nil {
-		return nil, nil, err
+	out := r.conf.Output
+	if out == "" {
+		out = SinkName + ": {}"
+	}
+	if err := b.AddOutputYAML(out); err != nil {
+		return nil, nil, r.configError(core.PartOutput, "output", err)
 	}
 	return b, produce, nil
 }
@@ -330,6 +344,13 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 	var prodErr error
 	select {
 	case prodErr = <-prodDone:
+	case err := <-runErr:
+		// The stream ended before delivering, e.g. the user's output under
+		// output: real failed to init: the producer would wait for ever.
+		if err == nil {
+			err = errors.New("it stopped before delivering the batch")
+		}
+		return fmt.Errorf("run the step stream: %w", err)
 	case <-ctx.Done():
 		select {
 		case prodErr = <-prodDone:

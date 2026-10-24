@@ -18,24 +18,26 @@ func TestDecodeLaunch(t *testing.T) {
 	}{
 		"defaults": {
 			args: `{"type":"redpanda-connect","request":"launch","name":"Debug pipeline","pipeline":"/w/p.yaml"}`,
-			want: LaunchConfig{Pipeline: "/w/p.yaml", MaxMessages: 10},
+			want: LaunchConfig{Pipeline: "/w/p.yaml", MaxMessages: 10, Output: "dry-run"},
 		},
 		"vs code keys": {
 			args: `{"type":"redpanda-connect","request":"launch","name":"n","pipeline":"p.yaml",
 				"__sessionId":"abc","__configurationTarget":6,"presentation":{"hidden":true},
 				"preLaunchTask":"build","postDebugTask":"clean","internalConsoleOptions":"openOnSessionStart",
 				"debugServer":4711,"noDebug":false,"suppressMultipleSessionWarning":true}`,
-			want: LaunchConfig{Pipeline: "p.yaml", MaxMessages: 10},
+			want: LaunchConfig{Pipeline: "p.yaml", MaxMessages: 10, Output: "dry-run"},
 		},
 		"every key": {
 			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env",
-				"keepConsumerGroup":true,"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"}}`,
-			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3,
+				"keepConsumerGroup":true,"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"},
+				"output":"real"}`,
+			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3, Output: "real",
 				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", KeepConsumerGroup: true, AllowSideEffects: true,
 				InputClasses: map[string]string{"aws_sqs": "replay-safe", "generate": "rejected", "nats": "side-effecting"}},
 		},
-		"no arguments": {args: ``, want: LaunchConfig{MaxMessages: 10}},
-		"null":         {args: `null`, want: LaunchConfig{MaxMessages: 10}},
+		"no arguments": {args: ``, want: LaunchConfig{MaxMessages: 10, Output: "dry-run"}},
+		"null":         {args: `null`, want: LaunchConfig{MaxMessages: 10, Output: "dry-run"}},
+		"output none":  {args: `{"output":"none"}`, want: LaunchConfig{MaxMessages: 10, Output: "none"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -77,6 +79,9 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		"allow string":    {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
 		"allow null":      {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
 		"keep string":     {`{"pipeline":"p.yaml","keepConsumerGroup":"yes"}`, []string{`"keepConsumerGroup"`, "a boolean", "a string"}},
+		"output maybe":    {`{"pipeline":"p.yaml","output":"maybe"}`, []string{`"output"`, "one of dry-run, real, none"}},
+		"output bool":     {`{"pipeline":"p.yaml","output":true}`, []string{`"output"`, "a string"}},
+		"output null":     {`{"pipeline":"p.yaml","output":null}`, []string{`"output"`, "null"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -120,7 +125,7 @@ func TestSchema(t *testing.T) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses"} {
+	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses", "output"} {
 		p, ok := props[k].(map[string]any)
 		if !ok {
 			t.Errorf("schema has no %q (has %v)", k, keys)
@@ -130,8 +135,12 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%q has no description", k)
 		}
 	}
-	if len(props) != 8 {
-		t.Errorf("schema keys = %v, want exactly the eight launch keys", keys)
+	if len(props) != 9 {
+		t.Errorf("schema keys = %v, want exactly the nine launch keys", keys)
+	}
+	if out := props["output"].(map[string]any); out["type"] != "string" || out["default"] != "dry-run" ||
+		!reflect.DeepEqual(out["enum"], []string{"dry-run", "real", "none"}) {
+		t.Errorf("output = %v, want a string enum dry-run, real, none, default dry-run", out)
 	}
 	for _, k := range []string{"keepConsumerGroup", "allowSideEffects"} {
 		if p := props[k].(map[string]any); p["type"] != "boolean" || p["default"] != false {
@@ -237,12 +246,29 @@ func TestInputClassesEnum(t *testing.T) {
 	}
 }
 
+// The output enum is the set core accepts.
+func TestOutputEnum(t *testing.T) {
+	var enum []string
+	for _, f := range launchFields() {
+		if f.key == "output" {
+			enum = f.enum
+		}
+	}
+	var want []string
+	for _, m := range core.OutputModes {
+		want = append(want, string(m))
+	}
+	if !reflect.DeepEqual(enum, want) {
+		t.Errorf("output enum = %v, want core.OutputModes %v", enum, want)
+	}
+}
+
 func TestLaunchInputKeysReachTheSession(t *testing.T) {
 	eng := newFakeEngine()
 	eng.opts = make(chan core.StartOptions, 1)
 	c := startServer(t, eng)
 	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml", "allowSideEffects": true, "keepConsumerGroup": true,
-		"inputClasses": map[string]any{"aws_sqs": "replay-safe"}})
+		"inputClasses": map[string]any{"aws_sqs": "replay-safe"}, "output": "real"})
 	c.send("configurationDone", map[string]any{})
 	c.response("configurationDone", true)
 	got := <-eng.opts
@@ -251,6 +277,9 @@ func TestLaunchInputKeysReachTheSession(t *testing.T) {
 	}
 	if !got.KeepConsumerGroup {
 		t.Error("Start options KeepConsumerGroup = false, want true")
+	}
+	if got.Output != core.OutputReal {
+		t.Errorf("Start options Output = %q, want real", got.Output)
 	}
 	c.threadEvent("started")
 	c.event("stopped")

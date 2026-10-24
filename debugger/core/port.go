@@ -88,7 +88,8 @@ type CheckResult struct {
 // behind it owns the rewrite and the Connect engine.
 type Engine interface {
 	// Check reads and rewrites the pipeline file opts.Pipeline, with the
-	// rewrite options in opts (DebugGroup, InputClasses, KeepConsumerGroup),
+	// rewrite options in opts (DebugGroup, InputClasses, KeepConsumerGroup,
+	// Output),
 	// and parses and
 	// lints it without running anything, resolving ${VAR} through
 	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages and
@@ -133,6 +134,9 @@ type StartOptions struct {
 	// option: the capture keeps every consumer group as configured instead
 	// of overriding it with the debug group.
 	KeepConsumerGroup bool
+	// Output is the launch's output (AD-5, AD-21), a rewrite option:
+	// where rpcn_debug_sink sends the batches it receives. "" is dry-run.
+	Output OutputMode
 	// Prepared is CheckResult.Prepared from this launch's Check, passed
 	// back to Start unchanged. nil makes Start load the pipeline itself.
 	Prepared any

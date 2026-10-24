@@ -387,7 +387,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 | DAP handles | `threadId` stable per thread; `frameId` and `variablesReference` become invalid on every resume (AD-17). Limits: 32 frames, 64 batches and 1024 messages per stop; stop ids wrap modulo 64 |
 | Errors | Processor errors on messages are data (`Snapshot.error`). Session failures are `core.Error` (AD-3) |
 | Logging | `log/slog`, one handler, stderr plus DAP `Output` (AD-15) |
-| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `env`, `envFile`, `license`, `inputClasses` (component name to class, AD-5). Built so far: `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` (E2); `allowSideEffects`, `inputClasses`, `keepConsumerGroup` (E3) |
+| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `env`, `envFile`, `license`, `inputClasses` (component name to class, AD-5). Built so far: `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` (E2); `allowSideEffects`, `inputClasses`, `keepConsumerGroup`, `output` (E3) |
 | Equivalence tests | `testdata/equivalence/<name>/{pipeline.yaml, expect.yaml, input files}`. `expect.yaml` declares the reference `batches` and `messages`, Step In `stops` (path, frame count), `no_stops_under` paths and required `output` lines (AD-8) |
 | CI lint | `golangci-lint` with `forbidigo` and `depguard` (AD-2, AD-15); a launch-schema check (AD-12) |
 

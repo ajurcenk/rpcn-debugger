@@ -154,6 +154,7 @@ type Session struct {
 	debugGroup   string                // the debug-group base rewrite option (AD-5)
 	inputClasses map[string]InputClass // the inputClasses rewrite option (AD-5)
 	keepGroup    bool                  // the keepConsumerGroup rewrite option (AD-5)
+	output       OutputMode            // the output rewrite option (AD-21)
 	prepared     any                   // Check's configs, run by Start (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
 	delivered    int                   // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
@@ -257,6 +258,9 @@ func (s *Session) launch(c Launch) error {
 	if err := checkInputClasses(c.InputClasses); err != nil {
 		return err
 	}
+	if err := checkOutputMode(c.Output); err != nil {
+		return err
+	}
 	// Every path ends up absolute: frontends open and highlight the frame's
 	// file by it.
 	cwd, err := filepath.Abs(c.Cwd)
@@ -314,7 +318,7 @@ func (s *Session) launch(c Launch) error {
 	}
 	res, err := s.engine.Check(StartOptions{
 		Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group, InputClasses: classes,
-		KeepConsumerGroup: c.KeepConsumerGroup,
+		KeepConsumerGroup: c.KeepConsumerGroup, Output: c.Output.Effective(),
 	})
 	if err != nil {
 		ce, _ := AsError(err, CodePipelineInvalid).(Error)
@@ -330,7 +334,7 @@ func (s *Session) launch(c Launch) error {
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
 	s.delivery, s.debugGroup, s.prepared, s.inputClasses = res.Delivery, group, res.Prepared, classes
-	s.keepGroup = c.KeepConsumerGroup
+	s.keepGroup, s.output = c.KeepConsumerGroup, c.Output.Effective()
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -364,7 +368,7 @@ func (s *Session) configurationDone() error {
 	opts := StartOptions{
 		Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup,
 		DebugGroup: s.debugGroup, InputClasses: s.inputClasses, KeepConsumerGroup: s.keepGroup,
-		Prepared: s.prepared,
+		Output: s.output, Prepared: s.prepared,
 	}
 	go s.run(ctx, opts, s.done)
 	return nil

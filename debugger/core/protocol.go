@@ -44,6 +44,9 @@ type Launch struct {
 	// a rewrite option, applied before a composite takes its worst child's
 	// class. A loosened class gets a warning.
 	InputClasses map[string]InputClass
+	// Output is where delivered batches go (AD-5, AD-21): one of
+	// OutputModes, with "" read as OutputDryRun.
+	Output OutputMode
 }
 
 // ConfigurationDone starts the debuggee.

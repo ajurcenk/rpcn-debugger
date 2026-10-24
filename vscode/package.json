@@ -99,6 +99,16 @@
                 "minimum": 1,
                 "type": "integer"
               },
+              "output": {
+                "default": "dry-run",
+                "description": "Where each delivered batch goes, after output.processors. dry-run (the default) shows it in the Debug Console and writes nothing. real also writes it to the pipeline's output, as in production (its batching and per-output processors included; stdout and stderr outputs are replaced by drop), with a launch warning. none shows it and writes nothing.",
+                "enum": [
+                  "dry-run",
+                  "real",
+                  "none"
+                ],
+                "type": "string"
+              },
               "pipeline": {
                 "description": "The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged.",
                 "minLength": 1,

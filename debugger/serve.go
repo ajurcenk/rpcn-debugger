@@ -84,6 +84,7 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 	}
 	plan, err := rewrite.Rewrite(raw, rewrite.Options{
 		DebugGroup: opts.DebugGroup, InputClasses: opts.InputClasses, KeepConsumerGroup: opts.KeepConsumerGroup,
+		Output: opts.Output,
 	})
 	if err != nil {
 		// Keep the rewrite's Line and UserPath.
@@ -98,6 +99,7 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 		Input:      plan.Input,
 		Resources:  plan.Resources,
 		Steppers:   plan.Steppers,
+		Output:     plan.Output,
 		Warnings:   plan.Warnings,
 		Strict:     plan.Strict,
 		StrictExpr: plan.StrictExpr,

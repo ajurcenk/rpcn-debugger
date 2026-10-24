@@ -25,13 +25,16 @@ import (
 //   - default: the default value, applied when the key is absent;
 //   - min: the minimum of an integer, or the minimum length of a string;
 //   - max: the maximum of an integer;
-//   - enum: the comma-separated values a string map's values must be one of.
+//   - enum: the comma-separated values a string, or a string map's values,
+//     must be one of.
 type LaunchConfig struct {
 	Pipeline string `json:"pipeline" min:"1" desc:"The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged."`
 
 	Cwd string `json:"cwd" desc:"The directory that relative paths (pipeline, envFile) resolve against. A relative cwd resolves against the debugger's working directory. When unset, the workspace folder is used."`
 
 	MaxMessages int `json:"maxMessages" default:"10" min:"1" max:"1024" desc:"The most messages of the captured batch to step through, at most 1024. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept."`
+
+	Output string `json:"output" default:"dry-run" enum:"dry-run,real,none" desc:"Where each delivered batch goes, after output.processors. dry-run (the default) shows it in the Debug Console and writes nothing. real also writes it to the pipeline's output, as in production (its batching and per-output processors included; stdout and stderr outputs are replaced by drop), with a launch warning. none shows it and writes nothing."`
 
 	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Applied last: env overrides envFile, which overrides the debugger's own environment."`
 
@@ -73,7 +76,7 @@ type launchField struct {
 	def   any // nil: no default
 	min   *int
 	max   *int     // integers only
-	enum  []string // string maps only: the allowed values
+	enum  []string // strings and string maps only: the allowed values
 }
 
 // launchFields returns the LaunchConfig keys in struct order. The tags are
@@ -111,8 +114,8 @@ func launchFields() []launchField {
 			f.max = &n
 		}
 		if e, ok := sf.Tag.Lookup("enum"); ok {
-			if sf.Type.Kind() != reflect.Map || e == "" {
-				panic(fmt.Sprintf("LaunchConfig.%s: bad enum tag %q (string maps only)", sf.Name, e))
+			if (sf.Type.Kind() != reflect.Map && sf.Type.Kind() != reflect.String) || e == "" {
+				panic(fmt.Sprintf("LaunchConfig.%s: bad enum tag %q (strings and string maps only)", sf.Name, e))
 			}
 			f.enum = strings.Split(e, ",")
 		}
@@ -222,6 +225,9 @@ func decodeLaunch(raw json.RawMessage) (LaunchConfig, error) {
 				}
 			}
 		}
+		if f.enum != nil && f.typ.Kind() == reflect.String && !slices.Contains(f.enum, ptr.Elem().String()) {
+			return LaunchConfig{}, invalidLaunch("%q must be one of %s", f.key, strings.Join(f.enum, ", "))
+		}
 		if f.max != nil {
 			if n := ptr.Elem().Int(); n > int64(*f.max) {
 				return LaunchConfig{}, invalidLaunch("%q must be at most %d, not %d", f.key, *f.max, n)
@@ -294,6 +300,9 @@ func Schema() map[string]any {
 			p["type"] = "string"
 			if f.min != nil {
 				p["minLength"] = *f.min
+			}
+			if f.enum != nil {
+				p["enum"] = f.enum
 			}
 		case reflect.Int:
 			p["type"] = "integer"

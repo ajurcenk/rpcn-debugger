@@ -45,6 +45,12 @@ type Plan struct {
 	StrictExpr string
 	// StrictLine is the file line of the StrictExpr scalar, or 0.
 	StrictLine int
+	// Output is the step stream's output config (AD-21), as YAML for
+	// StreamBuilder.AddOutputYAML: rpcn_debug_sink with the mode of
+	// Options.Output and, under output: real, the user's output block
+	// without its top-level processors and with stdout and stderr replaced
+	// by drop.
+	Output string
 	// Delivery is where rpcn_debug_sink's Delivered Snapshots are
 	// positioned (AD-21): the user path output and the line of the
 	// top-level output key, or 0 when there is none.
@@ -91,6 +97,9 @@ type Options struct {
 	// Session validates the values and the engine the names; a
 	// core.FixedInputs component keeps its class whatever it says.
 	InputClasses map[string]InputClass
+	// Output is the launch's output mode (AD-21): where rpcn_debug_sink
+	// sends what it receives. "" is dry-run.
+	Output core.OutputMode
 }
 
 // Rewrite turns pipeline YAML into a Plan (AD-4, AD-6), with opts. It never
@@ -213,17 +222,43 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	}
 	w.warnNestedLists(input, "input", "runs during capture, not stepped")
 	plan.Delivery = core.Position{UserPath: "output"}
-	if k, out := field(root, "output"); out != nil {
-		plan.Delivery.Line = k.Line
-		w.warnStdout(out, "output")
-		w.warnNestedLists(out, "output", "is not run in dry-run")
-		w.warnBatching(out, "output")
+	mode := opts.Output.Effective()
+	outKey, out := field(root, "output")
+	outRes := value(root, "output_resources")
+	// Under real, user and userRes are the copies written to (realOutput).
+	var user, userRes *yaml.Node
+	if mode == core.OutputReal {
+		if !isNull(out) && out.Kind == yaml.MappingNode {
+			if user, err = w.realOutput(without(out, "processors"), "output", true); err != nil {
+				return Plan{}, err
+			}
+		}
+		// The real warning goes first; realOutput added its own after it.
+		n := len(w.warnings)
+		w.warnReal(outKey, out, user)
+		w.warnings = append(append(w.warnings[:0:0], w.warnings[n:]...), w.warnings[:n]...)
+		if outRes != nil {
+			// A real output may write through a resource output.
+			if userRes, err = w.realOutput(outRes, "output_resources", false); err != nil {
+				return Plan{}, err
+			}
+		}
 	}
-	if res := value(root, "output_resources"); res != nil {
-		w.warnStdout(res, "output_resources")
-		if res.Kind == yaml.SequenceNode {
-			for i, e := range res.Content {
-				w.warnBatching(e, resourcePath("output_resources", i, e))
+	if out != nil {
+		plan.Delivery.Line = outKey.Line
+		// Under real the user's output runs its per-output processors as
+		// in production (AD-21).
+		if mode != core.OutputReal {
+			w.warnStdout(out, "output", mode)
+			w.warnNestedLists(out, "output", "is not run in dry-run")
+			w.warnBatching(out, "output", false)
+		}
+	}
+	if outRes != nil && mode != core.OutputReal {
+		w.warnStdout(outRes, "output_resources", mode)
+		if outRes.Kind == yaml.SequenceNode {
+			for i, e := range outRes.Content {
+				w.warnBatching(e, resourcePath("output_resources", i, e), false)
 			}
 		}
 	}
@@ -238,6 +273,9 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	res := &yaml.Node{Kind: yaml.MappingNode}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		if k, v := root.Content[i], root.Content[i+1]; strings.HasSuffix(k.Value, "_resources") {
+			if k.Value == "output_resources" && userRes != nil {
+				v = userRes
+			}
 			res.Content = append(res.Content, k, v)
 			if v.Kind == yaml.SequenceNode {
 				for j, e := range v.Content {
@@ -252,6 +290,9 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		if plan.Resources, plan.positions[core.PartResources], err = w.encodeMapped(res); err != nil {
 			return Plan{}, err
 		}
+	}
+	if plan.Output, plan.positions[core.PartOutput], err = w.encodeMapped(w.sinkConfig(outKey, user, mode)); err != nil {
+		return Plan{}, err
 	}
 	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
