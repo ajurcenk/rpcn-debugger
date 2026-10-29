@@ -3,7 +3,7 @@ title: 'Launch warnings: side-effecting processors and state split between captu
 type: 'feature'
 ticket: '9'
 created: '2026-10-29'
-status: 'built'
+status: done
 baseline_revision: 'af03af36b15ef7d3b70bd2a096a6a29b51b59b9e'
 route: 'full'
 route_source: 'auto'
