@@ -1,0 +1,60 @@
+# input
+broker:
+    inputs:
+        - generate:
+            count: 1
+            interval: ""
+            mapping: 'root = {}'
+          processors:
+            - cache:
+                resource: shared
+                operator: set
+                key: k
+                value: v
+            - rate_limit:
+                resource: rl
+# resources
+cache_resources:
+    - label: shared
+      memory: {}
+    - label: steponly
+      memory: {}
+rate_limit_resources:
+    - label: rl
+      local:
+        count: 10
+        interval: 1s
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [22, 26, 31]
+    processors:
+        - cache:
+            resource: shared
+            operator: get
+            key: k
+        - cache:
+            resource: steponly
+            operator: set
+            key: k
+            value: v
+        - rate_limit:
+            resource: rl
+# warnings
+input.broker.inputs[0].processors (line 11): this processor list runs during capture, not stepped
+cache_resources.shared (line 38): the memory cache "shared" is used both during capture and during stepping: its state isn't shared between capture and stepping, so the output may differ from production
+rate_limit_resources.rl (line 44): the local rate limit "rl" is used both during capture and during stepping: its state isn't shared between capture and stepping, so the output may differ from production
+# inputs
+input (line 5) broker: replay-safe
+input.broker.inputs[0] (line 7) generate: replay-safe
+# delivery
+output line 34
+# lines
+(0, 0) pipeline.processors[0] line 22
+(0, 1) pipeline.processors[1] line 26
+(0, 2) pipeline.processors[2] line 31
+(0, 3) pipeline.processors line 21

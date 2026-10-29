@@ -195,6 +195,14 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	bodies := resourceBodies(resources)
 	w.tainted = taintedResources(lists, resources, bodies)
 	w.statefulRes = statefulResources(bodies)
+	// Before any list is wrapped; the warnings go after the others.
+	effectWarn := &walker{}
+	effectWarn.warnEffects(effectSections{
+		input: input, lists: lists, paths: paths,
+		inputRes: value(root, "input_resources"), procRes: resources, cacheRes: value(root, "cache_resources"),
+		rateRes: value(root, "rate_limit_resources"), outputRes: value(root, "output_resources"),
+		output: value(root, "output"), real: opts.Output.Effective() == core.OutputReal,
+	})
 
 	for i, s := range sections {
 		if lists[i] == nil || len(lists[i].Content) == 0 {
@@ -294,6 +302,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	if plan.Output, plan.positions[core.PartOutput], err = w.encodeMapped(w.sinkConfig(outKey, user, mode)); err != nil {
 		return Plan{}, err
 	}
+	w.warnings = append(w.warnings, effectWarn.warnings...)
 	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
 	return plan, nil
 }

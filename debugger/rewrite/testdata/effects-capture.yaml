@@ -1,0 +1,45 @@
+# Processors in the input tree, and in resources reached only from it, run
+# during capture, not stepped (D7).
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+        processors:
+          - sql_insert:
+              driver: postgres
+              dsn: postgres://db/app
+              table: audit
+              columns: [a]
+              args_mapping: 'root = [1]'
+          - resource: capture_only
+      - resource: in1
+  processors:
+    - resource: both
+
+pipeline:
+  processors:
+    - resource: both
+
+output:
+  drop: {}
+
+input_resources:
+  - label: in1
+    generate:
+      count: 1
+      interval: ""
+      mapping: 'root = {}'
+    processors:
+      - http:
+          url: http://in
+
+processor_resources:
+  - label: capture_only
+    command:
+      name: touch
+  - label: both
+    aws_lambda:
+      function: f

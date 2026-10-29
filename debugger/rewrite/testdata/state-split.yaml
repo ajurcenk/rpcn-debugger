@@ -1,0 +1,47 @@
+# An in-process cache and a local rate limit used from both the input tree
+# and the step tree hold two states in a debug session (D9). A memory cache
+# used only in the pipeline doesn't.
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 1
+          interval: ""
+          mapping: 'root = {}'
+        processors:
+          - cache:
+              resource: shared
+              operator: set
+              key: k
+              value: v
+          - rate_limit:
+              resource: rl
+
+pipeline:
+  processors:
+    - cache:
+        resource: shared
+        operator: get
+        key: k
+    - cache:
+        resource: steponly
+        operator: set
+        key: k
+        value: v
+    - rate_limit:
+        resource: rl
+
+output:
+  drop: {}
+
+cache_resources:
+  - label: shared
+    memory: {}
+  - label: steponly
+    memory: {}
+
+rate_limit_resources:
+  - label: rl
+    local:
+      count: 10
+      interval: 1s

@@ -1,0 +1,57 @@
+# Side-effecting processors in the step tree get one warning each (D7); a
+# GET http and a read-only cache get on a remote cache don't.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+
+pipeline:
+  processors:
+    - sql_insert:
+        driver: postgres
+        dsn: postgres://user:secret@db:5432/app
+        table: t
+        columns: [a]
+        args_mapping: 'root = [this.a]'
+    - http:
+        url: http://x
+    - http:
+        url: http://x
+        verb: GET
+    - cache:
+        resource: r
+        operator: set
+        key: k
+        value: v
+    - cache:
+        resource: r
+        operator: get
+        key: k
+    - cache:
+        resource: m
+        operator: set
+        key: k
+        value: v
+    - javascript:
+        code: 'benthos.v0_fetch("http://y", {}, "POST", "")'
+    - openai_chat_completion:
+        api_key: k
+        model: gpt
+        tools:
+          - name: notify
+            description: d
+            parameters: {properties: {}}
+            processors:
+              - http:
+                  url: http://hook
+
+output:
+  drop: {}
+
+cache_resources:
+  - label: r
+    redis:
+      url: redis://cache:6379
+  - label: m
+    memory: {}

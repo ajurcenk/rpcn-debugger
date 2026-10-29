@@ -1,0 +1,71 @@
+# input
+broker:
+    inputs:
+        - generate:
+            count: 1
+            interval: ""
+            mapping: 'root = {}'
+          processors:
+            - sql_insert:
+                driver: postgres
+                dsn: postgres://db/app
+                table: audit
+                columns: [a]
+                args_mapping: 'root = [1]'
+            - resource: capture_only
+        - resource: in1
+# resources
+input_resources:
+    - label: in1
+      generate:
+        count: 1
+        interval: ""
+        mapping: 'root = {}'
+      processors:
+        - http:
+            url: http://in
+processor_resources:
+    - label: capture_only
+      command:
+        name: touch
+    - label: both
+      aws_lambda:
+        function: f
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [20]
+    processors:
+        - resource: both
+# stepper 1
+rpcn_debug_stepper:
+    id: 1
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [24]
+    processors:
+        - resource: both
+# warnings
+input.broker.inputs[0].processors (line 10): this processor list runs during capture, not stepped
+input.broker.inputs[0].processors[0].sql_insert (line 11): this processor inserts rows into table "audit" on the postgres database at "postgres://db/app": it runs during capture, not stepped
+processor_resources.capture_only.command (line 41): this processor runs the command "touch": it runs during capture, not stepped
+processor_resources.both.aws_lambda (line 44): this processor invokes the AWS Lambda function "f": processors run for real in a debug session
+input_resources.in1.processors[0].http (line 36): this processor sends POST requests to "http://in": it runs during capture, not stepped
+# inputs
+input (line 4) broker: replay-safe
+input.broker.inputs[0] (line 6) generate: replay-safe
+input.broker.inputs[1] (line 18) resource: replay-safe
+input_resources.in1 (line 31) generate: replay-safe
+# delivery
+output line 26
+# lines
+(0, 0) input.processors[0] line 20
+(0, 1) input.processors line 19
+(1, 0) pipeline.processors[0] line 24
+(1, 1) pipeline.processors line 23

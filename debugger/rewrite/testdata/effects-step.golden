@@ -1,0 +1,79 @@
+# input
+generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {}'
+# resources
+cache_resources:
+    - label: r
+      redis:
+        url: redis://cache:6379
+    - label: m
+      memory: {}
+# stepper 0
+rpcn_debug_stepper:
+    id: 0
+    parent: -1
+    mode: all
+    strict: false
+    concurrent: false
+    lines: [11, 17, 19, 22, 27, 31, 36, 38]
+    processors:
+        - sql_insert:
+            driver: postgres
+            dsn: postgres://user:secret@db:5432/app
+            table: t
+            columns: [a]
+            args_mapping: 'root = [this.a]'
+        - http:
+            url: http://x
+        - http:
+            url: http://x
+            verb: GET
+        - cache:
+            resource: r
+            operator: set
+            key: k
+            value: v
+        - cache:
+            resource: r
+            operator: get
+            key: k
+        - cache:
+            resource: m
+            operator: set
+            key: k
+            value: v
+        - javascript:
+            code: 'benthos.v0_fetch("http://y", {}, "POST", "")'
+        - openai_chat_completion:
+            api_key: k
+            model: gpt
+            tools:
+                - name: notify
+                  description: d
+                  parameters: {properties: {}}
+                  processors:
+                    - http:
+                        url: http://hook
+# warnings
+pipeline.processors[7].openai_chat_completion (line 38): openai_chat_completion is not a parent processor the debugger knows, so it runs as one step and nothing inside it is stepped
+pipeline.processors[0].sql_insert (line 11): this processor inserts rows into table "t" on the postgres database at "postgres://db:5432/app": processors run for real in a debug session
+pipeline.processors[1].http (line 17): this processor sends POST requests to "http://x": processors run for real in a debug session
+pipeline.processors[3].cache (line 22): this processor sets keys in the redis cache "r": processors run for real in a debug session
+pipeline.processors[6].javascript (line 36): this processor may send HTTP requests from JavaScript (v0_fetch): processors run for real in a debug session
+pipeline.processors[7].openai_chat_completion.tools[0].processors[0].http (line 46): when the model calls the tool "notify", this processor sends POST requests to "http://hook": processors run for real in a debug session
+# inputs
+input (line 4) generate: replay-safe
+# delivery
+output line 49
+# lines
+(0, 0) pipeline.processors[0] line 11
+(0, 1) pipeline.processors[1] line 17
+(0, 2) pipeline.processors[2] line 19
+(0, 3) pipeline.processors[3] line 22
+(0, 4) pipeline.processors[4] line 27
+(0, 5) pipeline.processors[5] line 31
+(0, 6) pipeline.processors[6] line 36
+(0, 7) pipeline.processors[7] line 38
+(0, 8) pipeline.processors line 10
