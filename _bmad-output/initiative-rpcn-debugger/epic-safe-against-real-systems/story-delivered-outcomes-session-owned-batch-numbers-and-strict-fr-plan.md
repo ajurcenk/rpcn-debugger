@@ -3,7 +3,7 @@ title: 'Delivered outcomes, Session-owned batch numbers, and strict from errored
 type: 'feature'
 ticket: '8'
 created: '2026-10-29'
-status: 'built'
+status: done
 baseline_revision: 'cfc0e7842f491fdd2286aaed76a06110a8580605'
 route: 'full'
 route_source: 'auto'
