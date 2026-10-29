@@ -87,6 +87,9 @@ type Adapter struct {
 	env  *service.Environment
 	log  *slog.Logger
 	load Loader
+	// writeTimeout bounds each batch's write under output: real; 0 means
+	// the sink's default (30 s).
+	writeTimeout time.Duration
 }
 
 var _ core.Engine = (*Adapter)(nil)
@@ -96,6 +99,12 @@ var _ core.Engine = (*Adapter)(nil)
 func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 	return &Adapter{env: env, log: log, load: load}
 }
+
+// SetWriteTimeout sets how long the sink waits under output: real for the
+// user's output to write one batch, reconnects included, before the batch
+// fails with OUTPUT_FAILED (default 30 s). It is for tests, and must be
+// called before Start.
+func (a *Adapter) SetWriteTimeout(d time.Duration) { a.writeTimeout = d }
 
 // Check loads the pipeline and parses and lints both stream configs, so
 // config errors fail the launch. ${VAR} resolves through opts.Lookup, as in
@@ -200,18 +209,22 @@ type run struct {
 	strict   bool                        // the effective error_handling.strict
 	sink     *sink
 	consumed atomic.Int64
+	// atOutput counts the errored messages on their way to the output: the
+	// top-level steppers keep it (stepper.atOutput), and once the batch is
+	// delivered it holds how many reached the output.
+	atOutput atomic.Int64
 }
 
 func (a *Adapter) newRun(conf Configs, lookup func(string) (string, bool), arr core.Arriver) (*run, error) {
-	r := &run{env: a.env.Clone(), capEnv: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr}}
+	r := &run{env: a.env.Clone(), capEnv: a.env.Clone(), log: a.log, conf: conf, lookup: lookup, sink: &sink{arr: arr, timeout: a.writeTimeout}}
 	var err error
 	if r.strict, err = r.resolveStrict(); err != nil {
 		return nil, err
 	}
-	if err = registerStepper(r.env, arr); err != nil {
+	if err = registerStepper(r.env, arr, &r.atOutput); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
-	if err = registerStepper(r.capEnv, nopArriver{}); err != nil {
+	if err = registerStepper(r.capEnv, nopArriver{}, nil); err != nil {
 		return nil, fmt.Errorf("register %s: %w", StepperName, err)
 	}
 	if err := registerSink(r.env, r.sink); err != nil {
@@ -335,12 +348,17 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 	runErr := make(chan error, 1)
 	go func() { runErr <- strm.Run(runCtx) }()
 
-	// The producer gets its own ctx: abandoning a transaction leaves the
-	// pipeline waiting to hand back its ack, which stalls the stop. When ctx
-	// ends, the session has released the stepper (Arrive returns), so the
-	// transaction finishes on its own; the wait for it is bounded anyway.
+	// The producer gets its own ctx, not ctx: abandoning a transaction
+	// leaves the pipeline waiting to hand back its ack, which stalls the
+	// stop. When ctx ends, the session has released the stepper (Arrive
+	// returns), so the transaction finishes on its own; the wait for it is
+	// bounded anyway. prodCtx is cancelled once the step stream has
+	// stopped, so the producer never outlives the run.
+	prodCtx, prodCancel := context.WithCancel(context.Background())
+	defer prodCancel()
+	r.atOutput.Store(int64(erroredIn(batch)))
 	prodDone := make(chan error, 1)
-	go func() { prodDone <- produce(context.Background(), batch) }()
+	go func() { prodDone <- produce(prodCtx, batch) }()
 	var prodErr error
 	select {
 	case prodErr = <-prodDone:
@@ -361,21 +379,39 @@ func (r *run) step(ctx context.Context, batch service.MessageBatch) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if prodErr != nil {
-		if r.strict && strings.Contains(prodErr.Error(), strictRejection) {
-			// Expected strict behaviour, not a failure: the output nacks the
-			// messages that failed a processing step.
-			return core.NewError(core.CodeStrictRejected, "%v", prodErr)
-		}
-		return fmt.Errorf("deliver the batch: %w", prodErr)
+	if err := r.deliveryError(prodErr); err != nil {
+		return err
 	}
 	return stopErr
 }
 
-// strictRejection is how benthos v4.84 (internal/component/output/
-// async_writer.go) wraps each message a strict output rejects. Its
-// batch.Error type is internal (AD-2), so the text is what can be matched.
-const strictRejection = "rejected due to failed processing"
+// deliveryError decides how the run ends from what happened to the batch,
+// never from error text (AD-3, AD-21), given the producer's error:
+//
+//   - a batch the user's output failed to write is OUTPUT_FAILED, naming
+//     the output and the write error;
+//   - otherwise, under strict with errored messages at the output, the
+//     output rejected them: STRICT_REJECTED, an outcome and no failure;
+//   - otherwise any producer error is a delivery failure.
+func (r *run) deliveryError(prodErr error) error {
+	if werr := r.sink.failure(); werr != nil {
+		e := core.NewError(core.CodeOutputFailed, "the output failed to write a delivered batch: %v", werr)
+		e.UserPath, e.Line = r.conf.Delivery.UserPath, r.conf.Delivery.Line
+		if e.UserPath == "" {
+			e.UserPath = "output"
+		}
+		return e
+	}
+	if prodErr == nil {
+		return nil
+	}
+	if r.strict && r.atOutput.Load() > 0 {
+		// Expected strict behaviour, not a failure: the output nacks the
+		// messages that failed a processing step.
+		return core.NewError(core.CodeStrictRejected, "%v", prodErr)
+	}
+	return fmt.Errorf("deliver the batch: %w", prodErr)
+}
 
 // stop stops strm and waits for its Run to return.
 func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.CancelFunc) error {
@@ -405,4 +441,4 @@ func (nopArriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 
 func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error { return nil }
 
-func (nopArriver) Deliver(context.Context, core.Batch) {}
+func (nopArriver) Deliver(context.Context, core.Batch, core.Outcome, error) {}

@@ -54,6 +54,11 @@ const (
 	// launch doesn't set allowSideEffects. UserPath and Line are the first
 	// such input's, and Message names every one with its effect.
 	CodeSideEffectsNotAllowed Code = "SIDE_EFFECTS_NOT_ALLOWED"
+	// CodeOutputFailed: under output: real, the user's output failed to
+	// write a delivered batch, or didn't finish within the write deadline
+	// (AD-21). UserPath and Line are the output's where known, and Message
+	// names the write error.
+	CodeOutputFailed Code = "OUTPUT_FAILED"
 )
 
 // numbers is the registry: code → stable DAP error id.
@@ -70,7 +75,7 @@ var numbers = map[Code]int{
 	CodeStrictRejected:        1010,
 	CodeInputRejected:         1011,
 	CodeSideEffectsNotAllowed: 1012,
-	// 1013 is reserved for OUTPUT_FAILED (AD-3).
+	CodeOutputFailed:          1013,
 }
 
 // Codes returns every registry code, in number order.

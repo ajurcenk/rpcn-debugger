@@ -37,8 +37,12 @@ type fakeEngine struct {
 	// deliver are the batches reported through Deliver at the end; nil:
 	// the batches of the end stop.
 	deliver []core.Batch
-	ended   chan error
-	opts    chan core.StartOptions // nil: not recorded
+	// outcomes are the outcomes of the delivered batches, in order (missing
+	// ones are recorded); a failed one carries writeErr.
+	outcomes []core.Outcome
+	writeErr string
+	ended    chan error
+	opts     chan core.StartOptions // nil: not recorded
 }
 
 func newFakeEngine() *fakeEngine {
@@ -105,8 +109,15 @@ func (e *fakeEngine) deliverAll(ctx context.Context, a core.Arriver, batches []c
 	if e.deliver != nil {
 		batches = e.deliver
 	}
-	for _, b := range batches {
-		a.Deliver(ctx, b)
+	for i, b := range batches {
+		o, err := core.OutcomeRecorded, error(nil)
+		if i < len(e.outcomes) {
+			o = e.outcomes[i]
+		}
+		if o == core.OutcomeFailed {
+			err = errors.New(e.writeErr)
+		}
+		a.Deliver(ctx, b, o, err)
 	}
 }
 

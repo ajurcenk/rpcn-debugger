@@ -76,8 +76,11 @@ type fakeEngine struct {
 	batch     []Batch
 	delivered chan []Batch
 	// deliver are the batches the engine reports through Deliver once its
-	// steppers ran.
-	deliver []Batch
+	// steppers ran, with outcomes (missing ones: recorded); a failed one
+	// carries writeErr.
+	deliver  []Batch
+	outcomes []Outcome
+	writeErr error
 	// captured is the (kept, total) the engine reports; zero: the batch's
 	// own size, untruncated.
 	captured [2]int
@@ -130,8 +133,15 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 	}
 	a.Captured(kept, total)
 	defer func() {
-		for _, b := range e.deliver {
-			a.Deliver(ctx, b)
+		for i, b := range e.deliver {
+			o, err := OutcomeRecorded, error(nil)
+			if i < len(e.outcomes) {
+				o = e.outcomes[i]
+			}
+			if o == OutcomeFailed {
+				err = e.writeErr
+			}
+			a.Deliver(ctx, b, o, err)
 		}
 	}()
 	steppers := e.steppers
@@ -690,11 +700,15 @@ func TestLogAfterRunTerminated(t *testing.T) {
 	rec.none(t)
 }
 
-// deliveredText renders a Delivered event: its position, then each
-// message's content.
+// deliveredText renders a Delivered event: its number, outcome and error,
+// its position, then each message's content.
 func deliveredText(e Delivered) string {
 	p := e.Snapshot.Position
-	out := fmt.Sprintf("%s line %d %s thread %d stepper %d:", p.UserPath, p.Line, p.File, p.ThreadID, p.StepperID)
+	out := fmt.Sprintf("%d %s", e.Batch, e.Outcome)
+	if e.Error != "" {
+		out += " (" + e.Error + ")"
+	}
+	out += fmt.Sprintf(" %s line %d %s thread %d stepper %d:", p.UserPath, p.Line, p.File, p.ThreadID, p.StepperID)
 	for _, b := range e.Snapshot.Batches {
 		for _, m := range b.Messages {
 			out += " " + string(m.Content.Raw)
@@ -737,8 +751,8 @@ func TestDelivered(t *testing.T) {
 	want := []string{
 		"thread started 1",
 		"stopped entry",
-		"delivered output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
-		"delivered output line 20 /p/pipeline.yaml thread 1 stepper -1: b c",
+		"delivered 1 recorded output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
+		"delivered 2 recorded output line 20 /p/pipeline.yaml thread 1 stepper -1: b c",
 		"thread exited 1",
 		"terminated ",
 	}
@@ -747,12 +761,19 @@ func TestDelivered(t *testing.T) {
 	}
 }
 
-// A run that delivers nothing says so, then ends as usual.
-func TestNothingDelivered(t *testing.T) {
+// Delivered carries the Session's batch number, the sink's outcome and the
+// write error, translated to user paths (AD-3, AD-21).
+func TestDeliveredOutcomes(t *testing.T) {
 	e := newEngine()
-	rec := &recorder{events: make(chan event, 64), delivery: true, threads: true}
+	b := Batch{Messages: []Message{{Content: Content{Raw: []byte("a")}}}}
+	e.deliver = []Batch{b, b}
+	e.outcomes = []Outcome{OutcomeWritten, OutcomeFailed}
+	e.writeErr = errors.New("refused at root.pipeline.processors.0")
+	e.tr = prefixTranslate{"root.pipeline.processors.0", "pipeline.processors"}
+	e.delivery = Position{UserPath: "output", Line: 20}
+	rec := &recorder{events: make(chan event, 64), delivery: true}
 	s := NewSession(e, rec)
-	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml"}); err != nil {
+	if err := do(s, Launch{Pipeline: "/p/pipeline.yaml", Output: OutputReal}); err != nil {
 		t.Fatal(err)
 	}
 	if err := do(s, ConfigurationDone{}); err != nil {
@@ -760,26 +781,67 @@ func TestNothingDelivered(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = do(s, Terminate{}) })
 	var got []string
-	for {
-		ev := rec.next(t)
-		got = append(got, ev.kind+" "+ev.detail)
+	for ev := rec.next(t); ev.kind != "terminated"; ev = rec.next(t) {
 		if ev.kind == "stopped" {
 			if err := do(s, Continue{}); err != nil {
 				t.Fatal(err)
 			}
+			continue
 		}
-		if ev.kind == "terminated" {
-			break
-		}
+		got = append(got, ev.kind+" "+ev.detail)
 	}
 	want := []string{
-		"thread started 1",
-		"stopped entry",
-		"output Nothing was delivered to dry-run output\n",
-		"thread exited 1",
-		"terminated ",
+		"delivered 1 written output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
+		"delivered 2 failed (refused at pipeline.processors) output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Errorf("events:\n%q\nwant:\n%q", got, want)
+		t.Errorf("events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// A run that delivers nothing says so, in the words of its output mode,
+// then ends as usual.
+func TestNothingDelivered(t *testing.T) {
+	for mode, text := range map[OutputMode]string{
+		"":           "Nothing was delivered to dry-run output\n",
+		OutputDryRun: "Nothing was delivered to dry-run output\n",
+		OutputReal:   "Nothing was delivered, so nothing was written to the output\n",
+		OutputNone:   "Nothing was delivered (output: none)\n",
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			e := newEngine()
+			rec := &recorder{events: make(chan event, 64), delivery: true, threads: true}
+			s := NewSession(e, rec)
+			if err := do(s, Launch{Pipeline: "/p/pipeline.yaml", Output: mode}); err != nil {
+				t.Fatal(err)
+			}
+			if err := do(s, ConfigurationDone{}); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = do(s, Terminate{}) })
+			var got []string
+			for {
+				ev := rec.next(t)
+				got = append(got, ev.kind+" "+ev.detail)
+				if ev.kind == "stopped" {
+					if err := do(s, Continue{}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if ev.kind == "terminated" {
+					break
+				}
+			}
+			want := []string{
+				"thread started 1",
+				"stopped entry",
+				"output " + text,
+				"thread exited 1",
+				"terminated ",
+			}
+			if strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Errorf("events:\n%q\nwant:\n%q", got, want)
+			}
+		})
 	}
 }

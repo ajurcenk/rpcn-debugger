@@ -262,8 +262,18 @@ type BreakpointResolved struct {
 	Breakpoint BreakpointResult
 }
 
-// Delivered reports what rpcn_debug_sink received (AD-21).
-type Delivered struct{ Snapshot Snapshot }
+// Delivered reports one batch rpcn_debug_sink received (AD-21), and what
+// became of it.
+type Delivered struct {
+	// Batch is the batch's number in the session, from 1. The Session owns
+	// it (AD-3); frontends display it and don't count.
+	Batch int
+	// Outcome is what the sink did with the batch.
+	Outcome Outcome
+	// Error is the write error under OutcomeFailed, or "".
+	Error    string
+	Snapshot Snapshot
+}
 
 // Output reports a message for the user.
 type Output struct {

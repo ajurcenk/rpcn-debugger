@@ -30,10 +30,12 @@ type Arriver interface {
 	// means the session ended and the stepper must deliver nothing.
 	Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error
 	// Deliver reports one batch rpcn_debug_sink received, after
-	// output.processors, built from its deep copy (AD-19, AD-21). The sink
-	// calls it once per batch, in the order received; the Session emits it
-	// as Delivered.
-	Deliver(ctx context.Context, batch Batch)
+	// output.processors, built from its deep copy (AD-19, AD-21), with what
+	// became of it: outcome, and under OutcomeFailed the write error err
+	// (nil otherwise). The sink calls it exactly once per batch, after the
+	// write under output: real, in the order received; the Session numbers
+	// it and emits it as Delivered.
+	Deliver(ctx context.Context, batch Batch, outcome Outcome, err error)
 }
 
 // LineMap maps a stop position to the user's file (AD-6, AD-16). Position

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/google/go-dap"
@@ -65,8 +64,6 @@ type server struct {
 
 	mu  sync.Mutex // guards seq and every write to w
 	seq int
-
-	delivered atomic.Int64 // Delivered batches so far, numbering them from 1
 }
 
 func (s *server) run() error {
@@ -456,24 +453,29 @@ type deliveredEvent struct {
 }
 
 // deliveredBody is the rpcnDelivered body: the batch's number in the
-// session, from 1, and its AD-11 Snapshot.
+// session, from 1, as the Session numbered it (AD-3), its outcome (recorded,
+// written, discarded or failed), the write error of a failed one, and its
+// AD-11 Snapshot.
 type deliveredBody struct {
 	Batch    int           `json:"batch"`
+	Outcome  string        `json:"outcome"`
+	Error    string        `json:"error,omitempty"`
 	Snapshot core.Snapshot `json:"snapshot"`
 }
 
 // delivered renders one Delivered event twice (AD-21): as Debug Console
 // text, and as the rpcnDelivered event with the full Snapshot.
 func (f frontend) delivered(e core.Delivered) {
-	n := int(f.s.delivered.Add(1))
 	out := &dap.OutputEvent{Event: f.s.event("output")}
 	out.Body.Category = "console"
-	out.Body.Output = deliveredText(n, e.Snapshot)
+	out.Body.Output = deliveredText(e)
 	if p := e.Snapshot.Position; p.File != "" && p.Line > 0 {
 		out.Body.Source = &dap.Source{Name: filepath.Base(p.File), Path: p.File}
 		out.Body.Line = p.Line
 	}
-	ev := &deliveredEvent{Event: f.s.event(deliveredEventName), Body: deliveredBody{Batch: n, Snapshot: e.Snapshot}}
+	ev := &deliveredEvent{Event: f.s.event(deliveredEventName), Body: deliveredBody{
+		Batch: e.Batch, Outcome: string(e.Outcome), Error: e.Error, Snapshot: e.Snapshot,
+	}}
 	for _, msg := range []dap.Message{out, ev} {
 		if err := f.s.send(msg); err != nil {
 			f.s.log.Warn("sending DAP event failed", "error", err)
@@ -486,13 +488,29 @@ func (f frontend) delivered(e core.Delivered) {
 // the rpcnDelivered event always carries all of it.
 const maxDeliveredContent = 4096
 
-// deliveredText renders delivered batch n for the Debug Console: a header,
-// then each message's content (text, or base64 when it isn't UTF-8), its
-// metadata as key = value lines (internal keys marked) and its error.
-func deliveredText(n int, snap core.Snapshot) string {
+// deliveredOutcome is the end of a delivered batch's header: what became of
+// the batch, in the words of its outcome (AD-21).
+func deliveredOutcome(e core.Delivered) string {
+	switch e.Outcome {
+	case core.OutcomeWritten:
+		return ", written to the output"
+	case core.OutcomeDiscarded:
+		return ", not written (output: none)"
+	case core.OutcomeFailed:
+		return ", failed to write: " + strings.ReplaceAll(e.Error, "\n", " ")
+	default:
+		return " to dry-run output"
+	}
+}
+
+// deliveredText renders delivered batch e for the Debug Console: a header
+// with the batch's number and outcome, then each message's content (text,
+// or base64 when it isn't UTF-8), its metadata as key = value lines
+// (internal keys marked) and its error.
+func deliveredText(e core.Delivered) string {
 	var b strings.Builder
-	for _, batch := range snap.Batches {
-		fmt.Fprintf(&b, "Delivered batch %d (%d messages) to dry-run output\n", n, len(batch.Messages))
+	for _, batch := range e.Snapshot.Batches {
+		fmt.Fprintf(&b, "Delivered batch %d (%d messages)%s\n", e.Batch, len(batch.Messages), deliveredOutcome(e))
 		for _, m := range batch.Messages {
 			content, b64, more := consoleContent(m.Content)
 			label := fmt.Sprintf("  message %d", m.Index)

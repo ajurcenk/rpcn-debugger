@@ -23,6 +23,37 @@ const (
 // order.
 var OutputModes = []OutputMode{OutputDryRun, OutputReal, OutputNone}
 
+// Outcome is what rpcn_debug_sink did with one batch it received (AD-21).
+type Outcome string
+
+// The outcomes, one per Delivered.
+const (
+	// OutcomeRecorded: under dry-run, the batch was recorded for the
+	// frontend only.
+	OutcomeRecorded Outcome = "recorded"
+	// OutcomeWritten: under output: real, the user's output wrote the batch.
+	OutcomeWritten Outcome = "written"
+	// OutcomeDiscarded: under output: none, the batch was written nowhere.
+	OutcomeDiscarded Outcome = "discarded"
+	// OutcomeFailed: under output: real, the user's output failed to write
+	// the batch, or didn't finish within the write deadline. The run ends
+	// with OUTPUT_FAILED.
+	OutcomeFailed Outcome = "failed"
+)
+
+// OutcomeOf returns the outcome of a batch the sink handled without a write
+// failure under mode m.
+func OutcomeOf(m OutputMode) Outcome {
+	switch m.Effective() {
+	case OutputReal:
+		return OutcomeWritten
+	case OutputNone:
+		return OutcomeDiscarded
+	default:
+		return OutcomeRecorded
+	}
+}
+
 // Effective returns m, with "" read as OutputDryRun.
 func (m OutputMode) Effective() OutputMode {
 	if m == "" {

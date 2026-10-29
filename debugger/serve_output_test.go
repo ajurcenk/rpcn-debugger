@@ -158,9 +158,15 @@ func runToEndOutput(t *testing.T, path string, args map[string]any) (delivered, 
 }
 
 // output: real writes the shown batch to the user's output once, with
-// output.processors applied once; none and dry-run write nothing.
+// output.processors applied once; none and dry-run write nothing. The
+// Debug Console's header says what became of the batch, per mode.
 func TestServeOutputRealWritesOnce(t *testing.T) {
-	for _, mode := range []string{"real", "none", "dry-run"} {
+	headers := map[string]string{
+		"real":    "Delivered batch 1 (2 messages), written to the output\n",
+		"none":    "Delivered batch 1 (2 messages), not written (output: none)\n",
+		"dry-run": "Delivered batch 1 (2 messages) to dry-run output\n",
+	}
+	for mode, header := range headers {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			outFile := filepath.Join(dir, "out.txt")
@@ -175,10 +181,13 @@ output:
 			if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			delivered := runToEnd(t, path, map[string]any{"output": mode})
+			delivered, out := runToEndOutput(t, path, map[string]any{"output": mode})
 			want := `{"n":1,"seen":1}` + "\n" + `{"n":2,"seen":1}`
 			if got := strings.Join(delivered, "\n"); got != want {
 				t.Errorf("delivered = %s, want %s", got, want)
+			}
+			if n := countPrefix(out, "Delivered batch"); n != 1 || countPrefix(out, header) != 1 {
+				t.Errorf("output = %q, want one delivered batch headed %q", out, header)
 			}
 			raw, err := os.ReadFile(outFile)
 			if mode != "real" {
@@ -197,11 +206,48 @@ output:
 	}
 }
 
-// A write the user's output refuses under output: real fails the run as a
-// delivery failure, and nothing is delivered. The file output's path is a
-// directory, so every write fails at once. (An unreachable broker is not
-// such a failure: the output retries its connection, as in production,
-// until the session ends.)
+// countPrefix counts the texts that start with prefix.
+func countPrefix(texts []string, prefix string) int {
+	n := 0
+	for _, s := range texts {
+		if strings.HasPrefix(s, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// A run that delivers nothing says so in the words of its output mode.
+func TestServeOutputNothingDelivered(t *testing.T) {
+	src := genInput + `pipeline:
+  processors:
+    - mapping: 'root = deleted()'
+output:
+  drop: {}
+`
+	for mode, note := range map[string]string{
+		"real":    "Nothing was delivered, so nothing was written to the output\n",
+		"none":    "Nothing was delivered (output: none)\n",
+		"dry-run": "Nothing was delivered to dry-run output\n",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "pipeline.yaml")
+			if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			delivered, out := runToEndOutput(t, path, map[string]any{"output": mode})
+			if len(delivered) != 0 || countPrefix(out, note) != 1 {
+				t.Errorf("delivered = %q, output = %q; want nothing and %q", delivered, out, note)
+			}
+		})
+	}
+}
+
+// A write the user's output refuses under output: real is one delivered
+// batch whose header says it failed, with the error, and the run fails with
+// OUTPUT_FAILED at the output key. The file output's path is a directory,
+// so every write fails at once. (An unreachable broker fails the same way
+// once the write deadline passes.)
 func TestServeOutputRealWriteFails(t *testing.T) {
 	dir := t.TempDir()
 	src := genInput + "output:\n  file: {path: " + dir + ", codec: lines}\n"
@@ -210,11 +256,15 @@ func TestServeOutputRealWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	delivered, out := runToEndOutput(t, path, map[string]any{"output": "real"})
-	if len(delivered) != 0 {
-		t.Errorf("delivered = %q after a failed write, want nothing", delivered)
+	if len(delivered) != 1 {
+		t.Errorf("delivered = %q, want the one failed batch", delivered)
 	}
-	if !strings.Contains(strings.Join(out, ""), "The debug run failed: deliver the batch: write to the output") {
-		t.Errorf("output = %q, want a delivery failure", out)
+	if countPrefix(out, "Delivered batch 1 (1 messages), failed to write: ") != 1 || !strings.Contains(strings.Join(out, ""), "is a directory") {
+		t.Errorf("output = %q, want the failed batch with its write error", out)
+	}
+	if countPrefix(out, "The debug run failed: the output failed to write a delivered batch: ") != 1 ||
+		!strings.Contains(strings.Join(out, ""), "(at output, line 3)") {
+		t.Errorf("output = %q, want the OUTPUT_FAILED run failure at the output key", out)
 	}
 }
 

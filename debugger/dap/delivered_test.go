@@ -107,10 +107,54 @@ func TestDelivered(t *testing.T) {
 	}
 }
 
-// The rpcnDelivered body is {batch, snapshot} with the AD-11 Snapshot JSON.
+// The console header and the rpcnDelivered body follow each batch's
+// outcome, and the batch number is the Session's (AD-3, AD-21).
+func TestDeliveredOutcomes(t *testing.T) {
+	eng := newFakeEngine()
+	b := core.Batch{Messages: []core.Message{jsonMessage(0, `{"n":1}`)}}
+	eng.deliver = []core.Batch{b, b, b, b}
+	eng.outcomes = []core.Outcome{core.OutcomeRecorded, core.OutcomeWritten, core.OutcomeDiscarded, core.OutcomeFailed}
+	eng.writeErr = "refused"
+	var headers []string
+	var events []*deliveredEvent
+	for _, m := range runToEnd(t, eng) {
+		switch e := m.(type) {
+		case *dap.OutputEvent:
+			if strings.HasPrefix(e.Body.Output, "Delivered") {
+				headers = append(headers, strings.SplitN(e.Body.Output, "\n", 2)[0])
+			}
+		case *deliveredEvent:
+			events = append(events, e)
+		}
+	}
+	want := []string{
+		"Delivered batch 1 (1 messages) to dry-run output",
+		"Delivered batch 2 (1 messages), written to the output",
+		"Delivered batch 3 (1 messages), not written (output: none)",
+		"Delivered batch 4 (1 messages), failed to write: refused",
+	}
+	if strings.Join(headers, "\n") != strings.Join(want, "\n") {
+		t.Errorf("headers:\n%s\nwant:\n%s", strings.Join(headers, "\n"), strings.Join(want, "\n"))
+	}
+	if len(events) != 4 {
+		t.Fatalf("%d rpcnDelivered events, want 4", len(events))
+	}
+	for i, e := range events {
+		wantErr := ""
+		if i == 3 {
+			wantErr = "refused"
+		}
+		if e.Body.Batch != i+1 || e.Body.Outcome != string(eng.outcomes[i]) || e.Body.Error != wantErr {
+			t.Errorf("event %d = batch %d, outcome %q, error %q", i, e.Body.Batch, e.Body.Outcome, e.Body.Error)
+		}
+	}
+}
+
+// The rpcnDelivered body is {batch, outcome, error?, snapshot} with the
+// AD-11 Snapshot JSON; error is left out unless the write failed.
 func TestDeliveredEventJSON(t *testing.T) {
 	ev := &deliveredEvent{Event: dap.Event{ProtocolMessage: dap.ProtocolMessage{Seq: 3, Type: "event"}, Event: deliveredEventName}}
-	ev.Body = deliveredBody{Batch: 1, Snapshot: core.Snapshot{SchemaVersion: core.SchemaVersion, Batches: []core.Batch{}}}
+	ev.Body = deliveredBody{Batch: 1, Outcome: "recorded", Snapshot: core.Snapshot{SchemaVersion: core.SchemaVersion, Batches: []core.Batch{}}}
 	raw, err := json.Marshal(ev)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +165,9 @@ func TestDeliveredEventJSON(t *testing.T) {
 	}
 	body, _ := got["body"].(map[string]any)
 	snap, _ := body["snapshot"].(map[string]any)
-	if got["event"] != "rpcnDelivered" || got["type"] != "event" || body["batch"] != float64(1) || snap["schemaVersion"] != core.SchemaVersion {
+	_, hasErr := body["error"]
+	if got["event"] != "rpcnDelivered" || got["type"] != "event" || body["batch"] != float64(1) || body["outcome"] != "recorded" || hasErr ||
+		snap["schemaVersion"] != core.SchemaVersion {
 		t.Errorf("rpcnDelivered = %s", raw)
 	}
 }

@@ -157,7 +157,7 @@ type Session struct {
 	output       OutputMode            // the output rewrite option (AD-21)
 	prepared     any                   // Check's configs, run by Start (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
-	delivered    int                   // batches delivered in this session (no Restart yet: reset it there, epic-edit-restart-replay)
+	delivered    int                   // batches delivered in this session, numbering them (AD-3; no Restart yet: reset it there, epic-edit-restart-replay)
 	runDone      bool                  // the run emitted Terminated: Log sends nothing more
 	captured     bool                  // Captured was called: the waiting note is not sent
 	launched     bool
@@ -432,10 +432,10 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	switch {
 	case err == nil:
 		s.mu.Lock()
-		none := s.delivered == 0
+		none, mode := s.delivered == 0, s.output
 		s.mu.Unlock()
 		if none {
-			s.fe.Emit(Output{Category: "console", Text: "Nothing was delivered to dry-run output\n"})
+			s.fe.Emit(Output{Category: "console", Text: nothingDelivered(mode) + "\n"})
 		}
 	case HasCode(err, CodeNothingCaptured):
 		s.fe.Emit(Output{Category: "console", Text: err.Error() + "\n"})
@@ -461,6 +461,19 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	s.runDone = true
 	s.mu.Unlock()
 	s.fe.Emit(Terminated{})
+}
+
+// nothingDelivered is the end-of-run note when the sink received no batch,
+// in the words of output mode m (AD-21).
+func nothingDelivered(m OutputMode) string {
+	switch m.Effective() {
+	case OutputReal:
+		return "Nothing was delivered, so nothing was written to the output"
+	case OutputNone:
+		return "Nothing was delivered (output: none)"
+	default:
+		return "Nothing was delivered to dry-run output"
+	}
 }
 
 // Captured implements Arriver. When the capture dropped messages for
@@ -497,11 +510,13 @@ func (s *Session) waitingNote() {
 	}
 }
 
-// Deliver implements Arriver: it emits batch as one Delivered event, in the
-// order the sink received it (AD-21). Its Snapshot is positioned at the
-// user path output, on the line of the top-level output key, on the root
-// thread; it has no frame or stepper (FrameID 0, StepperID -1).
-func (s *Session) Deliver(_ context.Context, batch Batch) {
+// Deliver implements Arriver: it numbers batch, from 1 in the session
+// (AD-3), and emits it as one Delivered event with its outcome and write
+// error, in the order the sink received it (AD-21). Its Snapshot is
+// positioned at the user path output, on the line of the top-level output
+// key, on the root thread; it has no frame or stepper (FrameID 0,
+// StepperID -1).
+func (s *Session) Deliver(_ context.Context, batch Batch, outcome Outcome, err error) {
 	if batch.Messages == nil {
 		batch.Messages = []Message{}
 	}
@@ -511,12 +526,17 @@ func (s *Session) Deliver(_ context.Context, batch Batch) {
 		return
 	}
 	s.delivered++
+	n, tr := s.delivered, s.translate
 	pos := Position{ThreadID: ThreadID, StepperID: -1, UserPath: s.delivery.UserPath, File: s.pipeline, Line: s.delivery.Line}
 	s.mu.Unlock()
 	if pos.UserPath == "" {
 		pos.UserPath = "output"
 	}
-	s.fe.Emit(Delivered{Snapshot: Snapshot{SchemaVersion: SchemaVersion, Position: pos, Batches: []Batch{batch}}})
+	ev := Delivered{Batch: n, Outcome: outcome, Snapshot: Snapshot{SchemaVersion: SchemaVersion, Position: pos, Batches: []Batch{batch}}}
+	if err != nil {
+		ev.Error = TranslateText(tr, err.Error())
+	}
+	s.fe.Emit(ev)
 }
 
 // Translator returns the Translate of the launched pipeline, or nil before

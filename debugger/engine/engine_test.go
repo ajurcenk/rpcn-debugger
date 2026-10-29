@@ -70,13 +70,18 @@ type arriver struct {
 	captured [][2]int // kept, total
 	block    chan struct{}
 	seen     chan struct{}
-	// delivered are the batches the sink reported, in order.
+	// delivered are the batches the sink reported, in order, with their
+	// outcomes and write errors.
 	delivered []core.Batch
+	outcomes  []core.Outcome
+	errs      []error
 }
 
-func (a *arriver) Deliver(_ context.Context, b core.Batch) {
+func (a *arriver) Deliver(_ context.Context, b core.Batch, o core.Outcome, err error) {
 	a.mu.Lock()
 	a.delivered = append(a.delivered, b)
+	a.outcomes = append(a.outcomes, o)
+	a.errs = append(a.errs, err)
 	a.mu.Unlock()
 }
 

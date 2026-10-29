@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
 
@@ -46,11 +47,18 @@ func stepperSpec() *service.ConfigSpec {
 }
 
 // registerStepper registers rpcn_debug_stepper on env. Every stepper built
-// from env reports its stop positions to a.
-func registerStepper(env *service.Environment, a core.Arriver) error {
+// from env reports its stop positions to a. When atOutput is not nil, each
+// top-level entry adds to it how many errored messages it leaves on their
+// way to the output (see stepper.atOutput).
+func registerStepper(env *service.Environment, a core.Arriver, atOutput *atomic.Int64) error {
 	return env.RegisterBatchProcessor(StepperName, stepperSpec(),
 		func(conf *service.ParsedConfig, res *service.Resources) (service.BatchProcessor, error) {
-			return newStepper(conf, res, a)
+			s, err := newStepper(conf, res, a)
+			if err != nil {
+				return nil, err
+			}
+			s.atOutput = atOutput
+			return s, nil
 		})
 }
 
@@ -119,6 +127,15 @@ type stepper struct {
 	procs       []*service.OwnedProcessor
 	arriver     core.Arriver
 	log         *service.Logger
+	// atOutput, when set, counts the errored messages on their way to the
+	// output (AD-3: STRICT_REJECTED is decided from it, never from error
+	// text). Every top-level entry (parent -1, no frame in ctx: one of the
+	// step stream's own processors) adds the errored messages it returns
+	// and takes away those it was given. Batches the engine passes by a
+	// top-level stepper without running it (strict) keep theirs counted, so
+	// once the batch has reached the output the counter holds how many
+	// errored messages did. Steppers run in order, one batch at a time.
+	atOutput *atomic.Int64
 }
 
 // attemptMemo is what a retry attempt leaves at its call site, so the next
@@ -138,12 +155,46 @@ type item struct {
 }
 
 func (s *stepper) ProcessBatch(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
-	if _, _, ok := core.TopFrame(ctx); !ok && s.parent >= 0 {
+	_, _, framed := core.TopFrame(ctx)
+	if !framed && s.parent >= 0 {
 		// Its parent dropped the ctx the parent's stepper passed it (AD-17).
 		s.log.With("code", string(core.CodeCtxLost)).Warnf(
 			"%s: stepper %d (inside stepper %d) found no frame in its context, so it runs on the root thread", core.CodeCtxLost, s.id, s.parent)
 	}
+	if s.atOutput != nil && !framed && s.parent < 0 {
+		in := int64(erroredIn(batch))
+		var res []service.MessageBatch
+		defer func() {
+			// res is what goes on towards the output; nil when the entry
+			// failed or the session ended.
+			n := int64(0)
+			for _, b := range res {
+				n += int64(erroredIn(b))
+			}
+			s.atOutput.Add(n - in)
+		}()
+		out, err := s.run(ctx, batch)
+		if err == nil {
+			res = out
+		}
+		return out, err
+	}
+	return s.run(ctx, batch)
+}
 
+// erroredIn counts the messages of b that carry an error.
+func erroredIn(b service.MessageBatch) int {
+	n := 0
+	for _, m := range b {
+		if m.GetError() != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// run is one entry of ProcessBatch.
+func (s *stepper) run(ctx context.Context, batch service.MessageBatch) ([]service.MessageBatch, error) {
 	in := snapshotBatches([]service.MessageBatch{batch})
 	entry, memo, msg := s.entry(in)
 	ctx, exit := s.arriver.Enter(ctx, entry)

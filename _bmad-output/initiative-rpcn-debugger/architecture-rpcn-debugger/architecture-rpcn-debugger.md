@@ -94,7 +94,7 @@ Unit IDs:
   - Adding a **field** to an existing command or event is not a spine change; adding a member is.
   - Errors are `core.Error{Code, Message, UserPath?, Line?, Inline}`. `Inline` means `Message` already names every location, and `UserPath`/`Line` hold the first one. `Code` is an `UPPER_SNAKE` string constant from the registry in `debugger/core/errors.go`, which also assigns each code a stable number for DAP. A new code takes the next number, which isn't a spine change; numbers are never reused: `LAUNCH_INVALID` 1001, `PIPELINE_INVALID` 1002, `NOTHING_CAPTURED` 1003, `SESSION_ENDED` 1004, `NOT_SUPPORTED` 1005, `NOT_STOPPED` 1006, `RUN_FAILED` 1007, `CTX_LOST` 1008, `LICENSE_REQUIRED` 1009, `STRICT_REJECTED` 1010, and, from epic-safe-against-real-systems, `INPUT_REJECTED` 1011 (with a replay hint), `SIDE_EFFECTS_NOT_ALLOWED` 1012 (`UserPath`/`Line` at the input, the effect in `Message`) and `OUTPUT_FAILED` 1013.
   - `STRICT_REJECTED` is a run outcome, not a failure: the Session reports it as a Debug Console note. It is decided from which messages reaching the sink carry an error, never from error text.
-  - The Session owns the delivered-batch number; frontends display it and don't count. `core.Delivered` carries it (1-based, reset on Restart). Target: today `debugger/dap` also counts (epic-safe-against-real-systems entry 8).
+  - The Session owns the delivered-batch number; frontends display it and don't count. `core.Delivered` carries it (1-based, reset on Restart), with the batch's `Outcome` (`recorded`, `written`, `discarded`, `failed`) and write `Error` (AD-21).
   - No go-dap type appears outside `debugger/dap`.
 
 ### AD-4: Capture-then-step, with two configs from one rewrite [ADOPTED]

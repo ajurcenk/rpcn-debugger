@@ -48,12 +48,12 @@ type spyArriver struct {
 	inner     core.Arriver
 }
 
-func (a *spyArriver) Deliver(ctx context.Context, b core.Batch) {
+func (a *spyArriver) Deliver(ctx context.Context, b core.Batch, o core.Outcome, err error) {
 	a.mu.Lock()
 	a.delivered = append(a.delivered, b)
 	a.mu.Unlock()
 	if a.inner != nil {
-		a.inner.Deliver(ctx, b)
+		a.inner.Deliver(ctx, b, o, err)
 	}
 }
 
