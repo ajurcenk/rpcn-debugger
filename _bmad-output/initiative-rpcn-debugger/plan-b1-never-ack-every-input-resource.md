@@ -3,7 +3,7 @@ title: 'Never-ack for input resources named at run time'
 type: 'bugfix'
 ticket: ''
 created: '2026-10-30'
-status: 'built'
+status: done
 baseline_revision: 'd0ba69162e7351b9195a1e374b1d221b754d2d87'
 route: 'oneshot'
 route_source: 'auto'
