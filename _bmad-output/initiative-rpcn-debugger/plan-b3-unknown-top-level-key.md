@@ -3,7 +3,7 @@ title: 'An unknown top-level key fails the launch'
 type: 'bugfix'
 ticket: ''
 created: '2026-10-30'
-status: 'built'
+status: done
 baseline_revision: 'dddf2a124d4382d3d82f4473b25409029ced78a9'
 route: 'oneshot'
 route_source: 'auto'
