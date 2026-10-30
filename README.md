@@ -2,7 +2,7 @@
 
 A visual debugger for [Redpanda Connect](https://docs.redpanda.com/redpanda-connect/) pipelines in VS Code. It captures one batch from a pipeline's input and steps it through the processors over the Debug Adapter Protocol.
 
-> **Status: tracer bullet.** A launch captures one batch from the pipeline's input without acknowledging it, stops before the first processor (input, then pipeline, then output processors), shows the stop's line and each message's content, and steps the batch through the input, pipeline and output processors, nested ones included. Breakpoints come later.
+> **Status: safe dry-run debugger.** A launch captures one batch from the pipeline's input without acknowledging it, under a debug consumer group for Kafka-family inputs, and refuses inputs whose capture would have side effects unless `allowSideEffects` is set. It stops before the first processor and steps the batch through the input, pipeline and output processors, nested ones included, showing each message's content, metadata and errors. Each delivered batch is shown in the Debug Console; `output: real` also writes it to the pipeline's output. Launch warnings name processors that act on real systems and state the debug session splits. Breakpoints, Bloblang statement stepping, Restart and replay come later.
 
 ## Layout
 
