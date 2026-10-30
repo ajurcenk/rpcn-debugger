@@ -181,3 +181,15 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
   summary: CLAUDE.md's `testdata/tracer/` entry should list the 3.11 samples (kafka-real, kafka-broker, side-effecting, unknown, rejected, warnings, output-failed). For the next refactor sweep.
   evidence: Agent-context edits are deferred to sweeps; found by the 3.11 review.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
+  summary: The effect scan (3.9) treats every `input_resources` entry as capture-time, so an unreferenced entry gets false "runs during capture" and state-split warnings although benthos never builds it; seed the capture side with the resources the input walk reached. For the next refactor sweep.
+  evidence: E3 retro R5: `debugger/rewrite/effects.go:481-484`, `519-523`.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
+  summary: Under `output: real` the state-split check ignores the output tree (`outRefs` is computed but unused), and `refKeys` misses the `cache` output's `target`, so a memory cache shared by an input-tree processor and an output-tree processor gets no warning. For the next refactor sweep.
+  evidence: E3 retro R6: `debugger/rewrite/effects.go:396`, `488-497`, `532-545`.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
+  summary: `debugger/logging.go` matches benthos log text (`strictRejection`, reusing the name 3.8 removed); the deferred Kafka-cancel and OUTPUT_FAILED log items would add more such filters. Rename it and keep the log-text filters in one table. For the next refactor sweep.
+  evidence: E3 retro V6: `logging.go:106,118`; 3.8's verification `grep strictRejection` no longer finds nothing.
