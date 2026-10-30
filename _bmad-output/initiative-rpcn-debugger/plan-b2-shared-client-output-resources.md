@@ -3,7 +3,7 @@ title: 'output: real refuses shared-client outputs reached through output_resour
 type: 'bugfix'
 ticket: ''
 created: '2026-10-30'
-status: 'built'
+status: done
 baseline_revision: '2840c598f872305fa0106338f586c20bed881c8d'
 route: 'oneshot'
 route_source: 'auto'
