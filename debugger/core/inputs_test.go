@@ -20,6 +20,7 @@ func TestLaunchInputDecision(t *testing.T) {
 	unknown := InputFinding{UserPath: "input", Line: 2, Component: "no_such", Class: ClassUnknown, Effect: "the debugger doesn't know what the no_such input does"}
 	redis := InputFinding{UserPath: "input.broker.inputs[2]", Line: 9, Component: "redis_list", Class: ClassSideEffecting, Effect: "pops the items"}
 	loosened := InputFinding{UserPath: "input", Line: 2, Component: "aws_sqs", Class: ClassReplaySafe, Override: ClassReplaySafe, Loosened: true}
+	keptGroup := InputFinding{UserPath: "input", Line: 2, Component: "kafka_franz", Class: ClassReplaySafe, Effect: `joins consumer group "prod" (consumer_group), and its members rebalance`, Override: ClassReplaySafe, Loosened: true}
 	cases := map[string]struct {
 		inputs   []InputFinding
 		allow    bool
@@ -36,6 +37,8 @@ func TestLaunchInputDecision(t *testing.T) {
 		"unknown":               {inputs: []InputFinding{unknown}, code: CodeSideEffectsNotAllowed, at: [2]any{"input", 2}, text: []string{"no_such"}},
 		"opt-in":                {inputs: []InputFinding{sqs}, allow: true, warnings: 1, text: []string{"aws_sqs", "receives messages from the queue"}},
 		"loosen":                {inputs: []InputFinding{loosened}, warnings: 1, text: []string{"inputClasses marks aws_sqs at input replay-safe; the debugger can't prove it"}},
+		// The warning keeps the effect the override set aside (E3 retro R4).
+		"loosen keeps the effect": {inputs: []InputFinding{keptGroup}, warnings: 1, text: []string{`inputClasses marks kafka_franz at input replay-safe; the debugger can't prove it. Without the override: joins consumer group "prod" (consumer_group), and its members rebalance`}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

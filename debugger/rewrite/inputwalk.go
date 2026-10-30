@@ -186,7 +186,8 @@ func (iw *inputWalker) block(b *yaml.Node, path string) (InputClass, string, boo
 			note := fmt.Sprintf("inputClasses marks %s %s", name, o)
 			switch {
 			case o == ReplaySafe:
-				effect = ""
+				// A loosened input keeps the effect the override sets
+				// aside, for the Session's warning (E3 retro R4).
 			case effect == "":
 				effect = note
 			case o != class:

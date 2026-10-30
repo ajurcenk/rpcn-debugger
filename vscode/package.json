@@ -56,7 +56,7 @@
             "properties": {
               "allowSideEffects": {
                 "default": false,
-                "description": "Allow capturing from inputs whose capture has side effects on the system they read from, such as a queue (aws_sqs, amqp_0_9, redis_list, …), a consumer group that is kept, or an input the debugger doesn't know. Each such input gets a warning naming its effect. Without it, the launch fails with SIDE_EFFECTS_NOT_ALLOWED. A rejected input (stdin, http_server, sockets) can't be debugged either way.",
+                "description": "Allow capturing from inputs whose capture has side effects on the system they read from, such as a queue (aws_sqs, amqp_0_9, redis_list, …), a consumer group that is kept, or an input the debugger doesn't know. Each such input gets a warning naming its effect. Without it, the launch fails with SIDE_EFFECTS_NOT_ALLOWED. It doesn't lift a rejected input (stdin, http_server, sockets, …), which fails with INPUT_REJECTED either way; only inputClasses can change that class, except for stdin, dynamic, redpanda_migrator, redpanda_common and redpanda without seed_brokers, which can't run in a debug session.",
                 "type": "boolean"
               },
               "cwd": {

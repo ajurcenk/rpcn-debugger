@@ -529,7 +529,7 @@ func TestInputClassesOverride(t *testing.T) {
 		"loosen": {
 			src:       "input:\n  aws_sqs: {url: http://q}\n",
 			overrides: map[string]InputClass{"aws_sqs": ReplaySafe},
-			want:      []want{{"input", ReplaySafe, ReplaySafe, true, ""}},
+			want:      []want{{"input", ReplaySafe, ReplaySafe, true, "receive count rises"}},
 		},
 		"tighten": {
 			src:       "input:\n  generate: {mapping: 'root = 1'}\n",
@@ -551,6 +551,11 @@ func TestInputClassesOverride(t *testing.T) {
 			overrides: map[string]InputClass{"aws_sqs": Rejected},
 			want:      []want{{"input", Rejected, Rejected, false, "receive count rises"}},
 		},
+		"kept group loosened keeps its effect": {
+			src:       "input:\n  kafka_franz: {seed_brokers: [k:9092], topics: [t], consumer_group: prod}\n",
+			overrides: map[string]InputClass{"kafka_franz": ReplaySafe},
+			want:      []want{{"input", ReplaySafe, ReplaySafe, true, `joins consumer group "prod"`}},
+		},
 		"stdin stays rejected": {
 			src:       "input:\n  stdin: {}\n",
 			overrides: map[string]InputClass{"stdin": ReplaySafe},
@@ -559,7 +564,7 @@ func TestInputClassesOverride(t *testing.T) {
 		"unknown loosened": {
 			src:       "input:\n  no_such_input: {}\n",
 			overrides: map[string]InputClass{"no_such_input": ReplaySafe},
-			want:      []want{{"input", ReplaySafe, ReplaySafe, true, ""}},
+			want:      []want{{"input", ReplaySafe, ReplaySafe, true, "doesn't know what the no_such_input input does"}},
 		},
 		"composite follows": {
 			src:       "input:\n  broker:\n    inputs:\n      - generate: {mapping: 'root = 1'}\n      - aws_sqs: {url: http://q}\n",
@@ -567,7 +572,7 @@ func TestInputClassesOverride(t *testing.T) {
 			want: []want{
 				{"input", ReplaySafe, "", false, ""},
 				{"input.broker.inputs[0]", ReplaySafe, "", false, ""},
-				{"input.broker.inputs[1]", ReplaySafe, ReplaySafe, true, ""},
+				{"input.broker.inputs[1]", ReplaySafe, ReplaySafe, true, "receive count rises"},
 			},
 		},
 		"composite override keeps its children": {
@@ -583,7 +588,7 @@ func TestInputClassesOverride(t *testing.T) {
 			overrides: map[string]InputClass{"aws_sqs": ReplaySafe},
 			want: []want{
 				{"input", ReplaySafe, "", false, ""},
-				{"input_resources.q", ReplaySafe, ReplaySafe, true, ""},
+				{"input_resources.q", ReplaySafe, ReplaySafe, true, "receive count rises"},
 			},
 		},
 	}

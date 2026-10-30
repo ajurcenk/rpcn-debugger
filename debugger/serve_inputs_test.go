@@ -228,6 +228,14 @@ func TestServeInputClasses(t *testing.T) {
 			src: sqsInput, args: map[string]any{"inputClasses": map[string]any{"aws_sqs": "replay-safe"}}, warnings: 1,
 			text: []string{"inputClasses marks aws_sqs at input replay-safe; the debugger can't prove it"},
 		},
+		// keepConsumerGroup plus a replay-safe override: the warning still
+		// says the capture joins the production group (E3 retro R4).
+		"loosen a kept group": {
+			src:      "input:\n  kafka_franz: {seed_brokers: [localhost:1], topics: [t], consumer_group: prod}\n",
+			args:     map[string]any{"keepConsumerGroup": true, "inputClasses": map[string]any{"kafka_franz": "replay-safe"}},
+			warnings: 1,
+			text:     []string{`inputClasses marks kafka_franz at input replay-safe; the debugger can't prove it. Without the override: joins consumer group "prod" (consumer_group), and its members rebalance`},
+		},
 		"tighten": {
 			src: genInput, args: map[string]any{"inputClasses": map[string]any{"generate": "rejected"}}, code: core.CodeInputRejected,
 			text: []string{"inputClasses marks generate rejected"},

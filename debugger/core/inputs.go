@@ -36,7 +36,8 @@ type InputFinding struct {
 	Class     InputClass
 	// Effect says what capturing from the input does to the system it
 	// reads from, or why it is rejected or unknown. It is empty for a
-	// replay-safe input.
+	// replay-safe input, except one inputClasses loosened, where it keeps
+	// the effect the override set aside.
 	Effect string
 	// Inherited is set when Class comes from a child input or a named
 	// input resource (a composite takes its worst child's class), whose own
@@ -93,7 +94,11 @@ func inputDecision(pipeline string, findings []InputFinding, allowSideEffects bo
 	var warnings []string
 	for _, f := range findings {
 		if f.Loosened {
-			warnings = append(warnings, fmt.Sprintf("inputClasses marks %s at %s %s; the debugger can't prove it", f.Component, f.UserPath, f.Override))
+			w := fmt.Sprintf("inputClasses marks %s at %s %s; the debugger can't prove it", f.Component, f.UserPath, f.Override)
+			if f.Override == ClassReplaySafe && f.Effect != "" {
+				w += ". Without the override: " + f.Effect
+			}
+			warnings = append(warnings, w)
 		}
 	}
 	if rejected := sources(findings, func(c InputClass) bool { return c == ClassRejected }); len(rejected) > 0 {
