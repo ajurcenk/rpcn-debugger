@@ -222,6 +222,9 @@ output:
 	}
 }
 
+// commonRes is an output resource that needs the shared client.
+const commonRes = "output_resources:\n  - label: o\n    redpanda_common: {topic: x}\n"
+
 // An output that needs the shared client of the top-level redpanda block
 // fails a real launch at its line; dry-run never builds it.
 func TestPlanOutputRealSharedClient(t *testing.T) {
@@ -232,6 +235,13 @@ func TestPlanOutputRealSharedClient(t *testing.T) {
 	}{
 		"redpanda_common":       {"output:\n  redpanda_common: {topic: out}\n", 4, "output.redpanda_common"},
 		"redpanda without seed": {"output:\n  broker:\n    outputs:\n      - redpanda: {topic: out}\n", 6, "output.broker.outputs[0].redpanda"},
+		// Through output_resources (E3 retro R2): a reached resource, one
+		// reached through another, and any resource when a resource: is
+		// only known at run time.
+		"resource":           {"output:\n  resource: o\n" + commonRes, 7, "output_resources.o.redpanda_common"},
+		"resource chain":     {"output:\n  resource: p\noutput_resources:\n  - label: p\n    fallback:\n      - resource: o\n  - label: o\n    redpanda_common: {topic: x}\n", 10, "output_resources.o.redpanda_common"},
+		"runtime resource":   {"output:\n  resource: ${O:o}\n" + commonRes, 7, "output_resources.o.redpanda_common"},
+		"unmatched resource": {"output:\n  resource: q\n" + commonRes, 7, "output_resources.o.redpanda_common"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -250,6 +260,18 @@ func TestPlanOutputRealSharedClient(t *testing.T) {
 	src := "input:\n  generate: {mapping: 'root = 1'}\noutput:\n  redpanda: {seed_brokers: [b], topic: out}\n"
 	if _, err := Rewrite([]byte(src), Options{Output: core.OutputReal}); err != nil {
 		t.Errorf("redpanda with seed_brokers: %v", err)
+	}
+	// A resource nothing reaches is never built; a field that isn't an
+	// output, such as a header named resource, reaches nothing.
+	for name, out := range map[string]string{
+		"unreferenced": "output:\n  drop: {}\n",
+		"header":       "output:\n  http_client: {url: http://x, headers: {resource: o}}\n",
+		"header value": "output:\n  http_client: {url: http://x, headers: {resource: unknown}}\n",
+	} {
+		src = "input:\n  generate: {mapping: 'root = 1'}\n" + out + commonRes
+		if _, err := Rewrite([]byte(src), Options{Output: core.OutputReal}); err != nil {
+			t.Errorf("%s redpanda_common resource: %v", name, err)
+		}
 	}
 }
 

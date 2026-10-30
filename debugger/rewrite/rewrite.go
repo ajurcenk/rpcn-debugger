@@ -248,6 +248,9 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		w.warnings = append(append(w.warnings[:0:0], w.warnings[n:]...), w.warnings[:n]...)
 		if outRes != nil {
 			// A real output may write through a resource output.
+			if err = sharedResources(out, outRes); err != nil {
+				return Plan{}, err
+			}
 			if userRes, err = w.realOutput(outRes, "output_resources", false); err != nil {
 				return Plan{}, err
 			}

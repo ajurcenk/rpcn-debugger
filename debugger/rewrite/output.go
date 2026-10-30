@@ -55,13 +55,12 @@ func (w *walker) realOutput(n *yaml.Node, path string, shared bool) (*yaml.Node,
 	c := resolve(n)
 	var err error
 	walkPairs(c, path, func(k, v *yaml.Node, p string) bool {
+		if shared {
+			if err = sharedClient(k, v, p); err != nil {
+				return true
+			}
+		}
 		switch {
-		case shared && k.Value == "redpanda_common" && v.Kind == yaml.MappingNode:
-			err = invalid(k.Line, p, "output: real can't write to the redpanda_common output at %s: %s", p, noSharedClientOut)
-			return true
-		case shared && k.Value == "redpanda" && v.Kind == yaml.MappingNode && !isSet(v, "seed_brokers"):
-			err = invalid(k.Line, p, "output: real can't write to the redpanda output at %s: without seed_brokers %s", p, noSharedClientOut)
-			return true
 		case k.Value == "stdout" || k.Value == "stderr":
 			w.warn(k.Line, p, "the %s output is replaced by drop under output: real: %s carries the debugger's DAP stream, so nothing is written to it", k.Value, k.Value)
 		case k.Value == "file" && isStdioFile(v):
@@ -86,6 +85,104 @@ func (w *walker) realOutput(n *yaml.Node, path string, shared bool) (*yaml.Node,
 		}
 	}
 	return c, nil
+}
+
+// sharedClient returns PIPELINE_INVALID when the output k: v at path p
+// needs the shared client of the top-level redpanda block
+// (redpanda_common, or redpanda without seed_brokers), and nil otherwise.
+func sharedClient(k, v *yaml.Node, p string) error {
+	switch {
+	case k.Value == "redpanda_common" && v.Kind == yaml.MappingNode:
+		return invalid(k.Line, p, "output: real can't write to the redpanda_common output at %s: %s", p, noSharedClientOut)
+	case k.Value == "redpanda" && v.Kind == yaml.MappingNode && !isSet(v, "seed_brokers"):
+		return invalid(k.Line, p, "output: real can't write to the redpanda output at %s: without seed_brokers %s", p, noSharedClientOut)
+	}
+	return nil
+}
+
+// sharedResources applies sharedClient under output: real to every
+// output_resources entry the output tree out reaches through resource:,
+// to a fixed point. A resource: that can't be resolved at launch
+// (interpolated, or naming no literal label) may reach any entry, so then
+// every entry is checked. An entry nothing reaches is never built.
+func sharedResources(out, outRes *yaml.Node) error {
+	if outRes == nil || outRes.Kind != yaml.SequenceNode {
+		return nil
+	}
+	bodies := map[string]*yaml.Node{}
+	for _, e := range outRes.Content {
+		if l := resourceLabel(e); l != nil && !isInterpolated(l) {
+			bodies[l.Value] = e
+		}
+	}
+	all := false
+	find := func(n *yaml.Node, add func(string)) {
+		outputRefs(n, func(v *yaml.Node) {
+			if _, ok := bodies[v.Value]; ok && v.Kind == yaml.ScalarNode && !isInterpolated(v) {
+				add(v.Value)
+			} else {
+				all = true
+			}
+		})
+	}
+	reached := closure(bodies, func(add func(string)) { find(out, add) }, find, nil)
+	for i, e := range outRes.Content {
+		if l := resourceLabel(e); !all && (l == nil || isInterpolated(l) || !reached[l.Value]) {
+			continue
+		}
+		var err error
+		walkPairs(resolve(e), resourcePath("output_resources", i, e), func(k, v *yaml.Node, p string) bool {
+			err = sharedClient(k, v, p)
+			return err != nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// outputRefs calls ref with the value of every resource output in the
+// output block n, following the child outputs of benthos's composite
+// outputs (each NewOutputField, NewOutputListField and NewOutputMapField
+// in benthos v4.84.0; connect adds none). Other fields, such as a header
+// named resource, are not references.
+func outputRefs(n *yaml.Node, ref func(v *yaml.Node)) {
+	k, v := component(n)
+	if k == nil {
+		return
+	}
+	list := func(l *yaml.Node) {
+		if l != nil && l.Kind == yaml.SequenceNode {
+			for _, c := range l.Content {
+				outputRefs(c, ref)
+			}
+		}
+	}
+	switch k.Value {
+	case "resource":
+		ref(v)
+	case "broker":
+		list(value(v, "outputs"))
+	case "fallback":
+		list(v)
+	case "reject_errored":
+		outputRefs(v, ref)
+	case "drop_on", "retry":
+		outputRefs(value(v, "output"), ref)
+	case "switch":
+		if cs := value(v, "cases"); cs != nil && cs.Kind == yaml.SequenceNode {
+			for _, c := range cs.Content {
+				outputRefs(value(c, "output"), ref)
+			}
+		}
+	case "dynamic":
+		if m := value(v, "outputs"); m != nil && m.Kind == yaml.MappingNode {
+			for i := 1; i < len(m.Content); i += 2 {
+				outputRefs(m.Content[i], ref)
+			}
+		}
+	}
 }
 
 // isStdioFile reports whether file output config v has a literal

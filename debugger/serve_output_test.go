@@ -62,6 +62,11 @@ func TestServeOutputLaunch(t *testing.T) {
 			want: []string{"output: real writes each delivered batch to the switch output"},
 			not:  []string{"not run in dry-run"},
 		},
+		"shared client through a resource under real": {
+			src:  genInput + "output:\n  resource: o\noutput_resources:\n  - label: o\n    redpanda_common: {topic: x}\n",
+			args: map[string]any{"output": "real"}, code: core.CodePipelineInvalid,
+			want: []string{"output_resources.o.redpanda_common", "shared client of the top-level redpanda block"},
+		},
 		"composite under dry-run": {
 			src:  composite,
 			want: []string{"output.switch.cases[0].output.processors (line 9): this processor list is not run in dry-run"},
