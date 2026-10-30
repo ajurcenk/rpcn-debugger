@@ -1,0 +1,20 @@
+# An unknown input (AD-5): the input resource is chosen by an environment
+# variable at run time, so the debugger can't tell what it reads, and treats
+# it as side-effecting. The launch is refused (SIDE_EFFECTS_NOT_ALLOWED,
+# 1012) without allowSideEffects; with it, the capture reads "hello".
+input_resources:
+  - label: lines
+    generate:
+      count: 1
+      interval: ""
+      mapping: 'root = "hello"'
+
+input:
+  resource: ${LINES_RESOURCE:lines}
+
+pipeline:
+  processors:
+    - mapping: 'root = content().uppercase()'
+
+output:
+  drop: {}

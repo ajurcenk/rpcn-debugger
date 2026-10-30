@@ -1,0 +1,24 @@
+# Kafka to Kafka, for `output: real` and `output: none` (AD-21). The capture
+# reads "orders" under the debug group (as kafka.yaml does). Under
+# output: real each delivered batch is also written to the "out" topic,
+# without the output's batching (a launch warning says it is stripped);
+# under none it is discarded; under dry-run (the default) it is only shown.
+# The broker comes from REDPANDA_BROKERS (default localhost:9092).
+input:
+  redpanda:
+    seed_brokers: ["${REDPANDA_BROKERS:localhost:9092}"]
+    topics: [orders]
+    consumer_group: prod
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.seen = true
+
+output:
+  kafka_franz:
+    seed_brokers: ["${REDPANDA_BROKERS:localhost:9092}"]
+    topic: out
+    batching:
+      count: 5

@@ -1,0 +1,14 @@
+# A rejected input (AD-5): http_server waits for clients, so a debug session
+# can't capture from it. The launch is refused (INPUT_REJECTED, 1011) with a
+# replay hint, even with allowSideEffects.
+input:
+  http_server:
+    address: 0.0.0.0:4195
+    path: /post
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  drop: {}

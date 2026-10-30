@@ -1,0 +1,19 @@
+# output: real with a write that fails (AD-21): the file output can't create
+# its path, so the batch's outcome is failed and the run ends with
+# OUTPUT_FAILED (1013). Under dry-run (the default) nothing is written and
+# the batch is only shown.
+input:
+  generate:
+    count: 2
+    batch_size: 2
+    interval: ""
+    mapping: 'root = {"n": counter()}'
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  file:
+    path: /proc/rpcn-debug-no-such-dir/out.jsonl
+    codec: lines

@@ -1,0 +1,44 @@
+# Launch warnings from E3 (AD-5, D7, D8, D9); nothing here is refused.
+# - The memory cache "seen" is written by a processor of the broker's child
+#   input (during capture) and read in the pipeline (while stepping): its
+#   state is split, so the get finds nothing and the message errors, unlike
+#   in production.
+# - The child input's processor list runs during capture, not stepped
+#   (input.processors at the top level are stepped).
+# - The http processor POSTs for real when stepped (to a closed port here,
+#   so it only errors).
+# - The top-level redpanda block isn't used in a debug session.
+cache_resources:
+  - label: seen
+    memory: {}
+
+input:
+  broker:
+    inputs:
+      - generate:
+          count: 3
+          batch_size: 3
+          interval: ""
+          mapping: 'root = {"id": counter()}'
+        processors:
+          - cache:
+              resource: seen
+              operator: set
+              key: '${! json("id") }'
+              value: '${! content() }'
+
+pipeline:
+  processors:
+    - cache:
+        resource: seen
+        operator: get
+        key: '${! json("id") }'
+    - http:
+        url: http://localhost:1/hook
+        retries: 0
+
+redpanda:
+  seed_brokers: ["localhost:9092"]
+
+output:
+  drop: {}

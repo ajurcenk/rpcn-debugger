@@ -161,3 +161,23 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
   summary: The remaining half of the stale debug-group member item (from 3.5): the "Waiting for the input" note should mention the possible ~60 s wait after a killed session, or name the debug group, so a user waiting on a stale member knows why. The README half was delivered by 3.10.
   evidence: debugger/core/session.go "Waiting for the input: nothing captured yet after %g s." names neither the group nor the stale-member wait.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
+  summary: `inputClasses` can loosen the server inputs (`http_server`, `socket_server`, `otlp_grpc`, `otlp_http`, `gateway`), which then capture from a server waiting for clients, and the `allowSideEffects` schema text in `debugger/dap/launch.go` says a rejected input ("stdin, http_server, sockets") can't be debugged either way; pin them (`core.FixedInputs`) or correct the text — needs a user decision.
+  evidence: `core.FixedInputs` holds only stdin, dynamic, redpanda_migrator and redpanda_common; `checkInputClasses` and `hardRejected` don't pin http_server. Found by the 3.11 review.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
+  summary: Every Kafka capture logs `level=WARN msg="Kafka broker read failed" … err="context canceled"` to the Debug Console when the capture stops; filter it (it's the capture's own cancel) — cosmetic.
+  evidence: Seen in every Kafka probe of 3.11 (kafka.yaml, kafka-real.yaml).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
+  summary: Under `OUTPUT_FAILED`, benthos's `Failed to send message to rpcn_debug_sink: write to the output: …` error reaches the Debug Console naming the internal sink, after the Session's own failure line; like the strict Warn (3.10), keep it on stderr — cosmetic.
+  evidence: 3.11 probe of output-failed.yaml with output: real.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
+  summary: "Delivered batch N (1 messages)" has no singular: `debugger/dap/server.go` formats `(%d messages)` — cosmetic.
+  evidence: 3.11 probe of side-effecting.yaml and kafka-broker.yaml.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-vs-code-acceptance-run-against-redpanda-plan.md`
+  summary: CLAUDE.md's `testdata/tracer/` entry should list the 3.11 samples (kafka-real, kafka-broker, side-effecting, unknown, rejected, warnings, output-failed). For the next refactor sweep.
+  evidence: Agent-context edits are deferred to sweeps; found by the 3.11 review.

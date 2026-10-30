@@ -1,0 +1,28 @@
+# The group override across the input tree (AD-5, D4): a broker of two
+# Kafka-family inputs, one of them an input resource. Each gets its own debug
+# group, k counting the overridden inputs in walker order:
+# rpcn-debug-<os-user>-0 for the broker's first child and -1 for the
+# resource. Both read "orders"; the broker comes from REDPANDA_BROKERS
+# (default localhost:9092).
+input_resources:
+  - label: orders_b
+    kafka_franz:
+      seed_brokers: ["${REDPANDA_BROKERS:localhost:9092}"]
+      topics: [orders]
+      consumer_group: prod-b
+
+input:
+  broker:
+    inputs:
+      - redpanda:
+          seed_brokers: ["${REDPANDA_BROKERS:localhost:9092}"]
+          topics: [orders]
+          consumer_group: prod-a
+      - resource: orders_b
+
+pipeline:
+  processors:
+    - mapping: 'root = this'
+
+output:
+  drop: {}

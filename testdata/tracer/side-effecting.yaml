@@ -1,0 +1,16 @@
+# A side-effecting input (AD-5): subprocess runs its command during capture.
+# Without allowSideEffects the launch is refused (SIDE_EFFECTS_NOT_ALLOWED,
+# 1012) with a warning naming the effect. With allowSideEffects: true, or
+# inputClasses: {subprocess: replay-safe}, it captures the first line
+# (subprocess emits one message per batch).
+input:
+  subprocess:
+    name: printf
+    args: ["a\nb\nc\n"]
+
+pipeline:
+  processors:
+    - mapping: 'root = content().uppercase()'
+
+output:
+  drop: {}
