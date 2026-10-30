@@ -3,7 +3,7 @@ title: 'VS Code acceptance run against Redpanda'
 type: 'chore'
 ticket: '11'
 created: '2026-10-30'
-status: 'built'
+status: done
 baseline_revision: '0cad9807a14db48427be072a9cfc686c9ff86541'
 route: 'oneshot'
 route_source: 'auto'
@@ -36,25 +36,25 @@ context: []
 Setup: the test Redpanda is on `localhost:19092` with topics `orders` (holding records) and `out`. Each launch sets `"env": {"REDPANDA_BROKERS": "localhost:19092"}`. Pass `-X brokers=localhost:19092` to every `rpk` command (the `local` profile points elsewhere), e.g. `rpk group describe <group> -X brokers=localhost:19092`.
 
 Done when 2 (consumer groups):
-- [ ] F5 on `kafka.yaml`: a launch warning says `"prod"` is replaced by `rpcn-debug-<os-user>-0`; the batch stops at the mapping; Continue delivers it. `rpk group describe prod` shows no new members or offsets; the debug group is Empty with no offsets. A second F5 captures the same records.
-- [ ] `kafka-broker.yaml`: two warnings: `"prod-a"` (the broker's first child) becomes `rpcn-debug-<os-user>-0` and `"prod-b"` (the input resource `orders_b`) becomes `-1`; a batch is captured and delivered.
-- [ ] `kafka.yaml` with `"keepConsumerGroup": true`: the launch is refused (1012), naming the `redpanda` input joining group `"prod"`. With `"allowSideEffects": true` added, it captures under `"prod"` with a side-effect warning and commits no offset.
+- [x] F5 on `kafka.yaml`: a launch warning says `"prod"` is replaced by `rpcn-debug-<os-user>-0`; the batch stops at the mapping; Continue delivers it. `rpk group describe prod` shows no new members or offsets; the debug group is Empty with no offsets. A second F5 captures the same records.
+- [x] `kafka-broker.yaml`: two warnings: `"prod-a"` (the broker's first child) becomes `rpcn-debug-<os-user>-0` and `"prod-b"` (the input resource `orders_b`) becomes `-1`; a batch is captured and delivered.
+- [x] `kafka.yaml` with `"keepConsumerGroup": true`: the launch is refused (1012), naming the `redpanda` input joining group `"prod"`. With `"allowSideEffects": true` added, it captures under `"prod"` with a side-effect warning and commits no offset.
 
 Done when 1 (input classes):
-- [ ] `side-effecting.yaml`: refused (1012), naming subprocess's effect. With `"allowSideEffects": true` it captures (warning naming the effect); with `"inputClasses": {"subprocess": "replay-safe"}` instead, it captures with the "can't prove it" warning.
-- [ ] `unknown.yaml`: refused (1012), "the input resource is only known at runtime, so it is treated as side-effecting". With `"allowSideEffects": true` it captures `HELLO`.
-- [ ] `rejected.yaml` (also with `"allowSideEffects": true`): refused (1011), "it is a server and waits for clients", with the replay hint.
+- [x] `side-effecting.yaml`: refused (1012), naming subprocess's effect. With `"allowSideEffects": true` it captures (warning naming the effect); with `"inputClasses": {"subprocess": "replay-safe"}` instead, it captures with the "can't prove it" warning.
+- [x] `unknown.yaml`: refused (1012), "the input resource is only known at runtime, so it is treated as side-effecting". With `"allowSideEffects": true` it captures `HELLO`.
+- [x] `rejected.yaml` (also with `"allowSideEffects": true`): refused (1011), "it is a server and waits for clients", with the replay hint.
 
 Done when 3 (output):
-- [ ] `kafka-real.yaml` with `"output": "real"`: warnings for the real output and the stripped batching; the Debug Console says "written to the output"; `rpk topic consume out -o -3 -X brokers=localhost:19092` shows the new records with `"seen": true`.
-- [ ] `kafka-real.yaml` with `"output": "none"`: "not written (output: none)"; nothing new in `out`. With no `output` key (dry-run), "to dry-run output", nothing new in `out`.
-- [ ] `output-failed.yaml` with `"output": "real"`: "failed to write: mkdir …", then the run ends with the output failure at `output, line 16`, no hang.
+- [x] `kafka-real.yaml` with `"output": "real"`: warnings for the real output and the stripped batching; the Debug Console says "written to the output"; `rpk topic consume out -o -3 -X brokers=localhost:19092` shows the new records with `"seen": true`.
+- [x] `kafka-real.yaml` with `"output": "none"`: "not written (output: none)"; nothing new in `out`. With no `output` key (dry-run), "to dry-run output", nothing new in `out`.
+- [x] `output-failed.yaml` with `"output": "real"`: "failed to write: mkdir …", then the run ends with the output failure at `output, line 16`, no hang.
 
 Launch warnings (CAP-11):
-- [ ] `warnings.yaml`: four warnings: the child input's processor list runs during capture; the `redpanda` block isn't used; the `http` processor sends POST requests; the memory cache `seen` state is split. Stepping the pipeline's `cache` get shows the message erroring (the cache is empty while stepping).
+- [x] `warnings.yaml`: four warnings: the child input's processor list runs during capture; the `redpanda` block isn't used; the `http` processor sends POST requests; the memory cache `seen` state is split. Stepping the pipeline's `cache` get shows the message erroring (the cache is empty while stepping).
 
 Done when 6:
-- [ ] `task ci` is green on the committed tree, and all of the above works from the installed `.vsix`.
+- [x] `task ci` is green on the committed tree, and all of the above works from the installed `.vsix`.
 
 ## Implementation Notes
 
@@ -68,6 +68,8 @@ The oneshot route was chosen because the entry is samples and this checklist; th
   - Every Kafka capture logs `level=WARN msg="Kafka broker read failed" … err="context canceled"` when the capture stops.
   - Under `OUTPUT_FAILED`, benthos's `Failed to send message to rpcn_debug_sink: …` error names the internal sink.
   - "Delivered batch 1 (1 messages)" should say "message".
+
+- 2026-10-30 acceptance (user): every checklist item passed in VS Code with the installed .vsix against the local Redpanda; no issues. Done when 1, 2, 3 and 6 are met.
 
 ## Review Triage Log
 
