@@ -2,7 +2,7 @@
 generate:
     count: 1
     interval: ""
-    mapping: 'root = 1'
+    mapping: 'root = 2'
 # resources
 # stepper 0
 rpcn_debug_stepper:
@@ -11,14 +11,14 @@ rpcn_debug_stepper:
     mode: all
     strict: false
     concurrent: false
-    lines: [11]
+    lines: [12]
     processors:
         - mapping: 'root = 2'
 # warnings
 # inputs
-input (line 4) generate: replay-safe
+input (line 5) generate: replay-safe
 # delivery
-output line 13
+output line 14
 # lines
-(0, 0) pipeline.processors[0] line 11
-(0, 1) pipeline.processors line 10
+(0, 0) pipeline.processors[0] line 12
+(0, 1) pipeline.processors line 11

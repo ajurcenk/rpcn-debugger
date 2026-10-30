@@ -135,7 +135,7 @@ processor_resources:
 		},
 		{
 			name: "alias",
-			src: genInput + `shared: &bad 'root = '
+			src: genInput + `tracer: &bad 'root = '
 pipeline:
   processors:
     - mapping: 'root = this'

@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -709,5 +710,22 @@ func TestSeedlessRedpandaStaysRejected(t *testing.T) {
 		if f.Component == "redpanda" && f.Class != Rejected {
 			t.Errorf("seedless redpanda finding %+v, want rejected", f)
 		}
+	}
+}
+
+// A top-level key outside the allowlist reaches no stream, so it is
+// PIPELINE_INVALID at its line, as Connect's lint reports it (E3 retro
+// R3); a *_resources section is carried and left to the engine's lint.
+func TestUnknownTopLevelKey(t *testing.T) {
+	src := "input:\n  generate: {mapping: 'root = 1'}\npipline:\n  processors:\n    - mapping: 'root = 2'\noutput:\n  drop: {}\n"
+	_, err := Rewrite([]byte(src), Options{})
+	var ce core.Error
+	if !errors.As(err, &ce) || ce.Code != core.CodePipelineInvalid || ce.Line != 3 || ce.UserPath != "pipline" ||
+		!strings.Contains(ce.Message, "field pipline not recognised") {
+		t.Fatalf("Rewrite = %#v, want PIPELINE_INVALID at pipline, line 3", err)
+	}
+	src = "input:\n  generate: {mapping: 'root = 1'}\nrate_limit_resources: []\noutput:\n  drop: {}\n"
+	if _, err := Rewrite([]byte(src), Options{}); err != nil {
+		t.Errorf("a *_resources section: %v", err)
 	}
 }

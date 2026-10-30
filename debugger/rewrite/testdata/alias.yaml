@@ -1,10 +1,11 @@
-x: &m 'root = 2'
-
+# An alias to an anchor in another subtree: the pipeline's mapping reuses
+# the input's (anchors live in valid sections; Connect's lint refuses an
+# unknown top-level key, and so does the debugger).
 input:
   generate:
     count: 1
     interval: ""
-    mapping: 'root = 1'
+    mapping: &m 'root = 2'
 
 pipeline:
   processors:

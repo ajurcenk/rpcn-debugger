@@ -1,37 +1,34 @@
-base_input: &bi
-  generate:
-    count: 1
-    interval: ""
-    mapping: 'root = {}'
-  processors:
-    - mapping: 'root.from_base = true'
-
-base_pipeline: &bp
-  processors:
-    - mapping: 'root.a = 1'
-    - branch:
-        processors:
-          - mapping: 'root = this'
-
-base_branch: &bb
-  request_map: 'root = this'
-  result_map: 'root.b = this'
-
-extra: &ex
-  threads: 1
-  processors:
-    - mapping: 'root.lost = true'
-
+# Merge keys from anchored mappings (anchors live in valid sections:
+# Connect's lint refuses an unknown top-level key, and so does the
+# debugger). The pipeline's second merge source loses its processors to the
+# first, so root.lost never appears.
 input:
-  <<: *bi
+  <<: &bi
+    generate:
+      count: 1
+      interval: ""
+      mapping: 'root = {}'
+    processors:
+      - mapping: 'root.from_base = true'
 
 pipeline:
-  <<: [*bp, *ex]
+  <<:
+    - &bp
+      processors:
+        - mapping: 'root.a = 1'
+        - branch:
+            processors:
+              - mapping: 'root = this'
+    - threads: 1
+      processors:
+        - mapping: 'root.lost = true'
 
 output:
   processors:
     - branch:
-        <<: *bb
+        <<: &bb
+          request_map: 'root = this'
+          result_map: 'root.b = this'
         processors:
           - mapping: 'root.c = 1'
   drop: {}

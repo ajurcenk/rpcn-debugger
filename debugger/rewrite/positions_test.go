@@ -26,15 +26,15 @@ const positionsSrc = `input:
     mapping: 'root = {}'
   processors:
     - mapping: 'root = "in"'
-base: &base
+http: &base # anchors live in dropped sections: an unknown key is refused
   mapping: 'root = "merged"'
-bad: &bad 'root = "aliased"'
+tests: &b 'root = "aliased"'
 pipeline:
   processors:
     - mapping: 'root = this'
     - branch:
         processors:
-          - mapping: *bad
+          - mapping: *b
     - <<: *base
     - mapping: |
         root = this

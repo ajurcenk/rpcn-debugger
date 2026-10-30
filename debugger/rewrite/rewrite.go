@@ -116,6 +116,13 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	// Aliases go first: a re-encoded subtree would lose the anchor they
 	// point to, and wrapping must not reach one node through two paths.
 	root := resolve(doc.Content[0])
+	// A key outside the allowlist would reach no stream, so the engine's
+	// lint never sees it; refuse it as Connect's lint does (E3 retro R3).
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if k := root.Content[i]; !knownSection(k.Value) {
+			return Plan{}, invalid(k.Line, k.Value, "field %s not recognised", k.Value)
+		}
+	}
 
 	input := value(root, "input")
 	if input == nil {
@@ -325,6 +332,13 @@ const (
 	used
 )
 
+// knownSection reports whether the top-level key is in topLevel or is a
+// *_resources section.
+func knownSection(key string) bool {
+	_, ok := topLevel[key]
+	return ok || strings.HasSuffix(key, "_resources")
+}
+
 // topLevelSection is one allowlist entry: what happens to the section,
 // and the launch warning given when it is dropped and set, or nil.
 type topLevelSection struct {
@@ -336,7 +350,7 @@ type topLevelSection struct {
 // Every section of the stock config schema is here or ends in _resources;
 // the *_resources sections are carried to the capture and step streams.
 // TestTopLevelAllowlist checks both, and that a dropped section reaches
-// neither stream. Any other key is left to the engine's lint.
+// neither stream. Any other key is PIPELINE_INVALID (knownSection).
 var topLevel = map[string]topLevelSection{
 	"input": {use: used}, "pipeline": {use: used}, "output": {use: used}, "error_handling": {use: used},
 	"buffer":   {use: dropped, warn: func(w *walker, k, v *yaml.Node) { w.warnBuffer(k, v) }},

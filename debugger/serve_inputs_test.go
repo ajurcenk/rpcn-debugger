@@ -427,3 +427,18 @@ func TestServeRuntimeResource(t *testing.T) {
 		}
 	}
 }
+
+// A misspelled top-level key fails the launch at its line instead of
+// being dropped, so its processors can't silently never run (E3 retro R3).
+func TestServeUnknownTopLevelKey(t *testing.T) {
+	src := "input:\n  generate: {mapping: 'root = 1'}\npipline:\n  processors:\n    - mapping: 'root = 2'\n"
+	resp, _, path := launchOnly(t, src, nil)
+	if resp.Success || errorID(resp) != core.Number(core.CodePipelineInvalid) {
+		t.Fatalf("launch = %+v, want PIPELINE_INVALID", resp)
+	}
+	for _, w := range []string{path, "field pipline not recognised", "line 3"} {
+		if !strings.Contains(resp.Message, w) {
+			t.Errorf("error %q does not name %q", resp.Message, w)
+		}
+	}
+}
