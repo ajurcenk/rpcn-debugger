@@ -193,3 +193,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
   summary: `debugger/logging.go` matches benthos log text (`strictRejection`, reusing the name 3.8 removed); the deferred Kafka-cancel and OUTPUT_FAILED log items would add more such filters. Rename it and keep the log-text filters in one table. For the next refactor sweep.
   evidence: E3 retro V6: `logging.go:106,118`; 3.8's verification `grep strictRejection` no longer finds nothing.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/plan-b1-never-ack-every-input-resource.md`
+  summary: An input whose `resource:` is resolved only at run time (or names no literal label) is classed Unknown, so `allowSideEffects` lets it through even when the input resources it may reach include a rejected one (stdin, which would read the DAP stream; http_server); roll the worst Rejected class of the reachable resources into the referring input — needs a user decision, since it changes refusals.
+  evidence: B1 review finding 2; `unreached()` walks those entries but drops their findings by design (B1's intent keeps refusals unchanged); `serve_inputs_test.go:225` shows a literal reference to a rejected resource is refused.

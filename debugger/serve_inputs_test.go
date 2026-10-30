@@ -405,3 +405,25 @@ func TestServeGroupOverride(t *testing.T) {
 		})
 	}
 }
+
+// An input resource named only at run time may reach any input resource,
+// so with allowSideEffects every one of them still reads under a debug
+// group and never acks (E3 retro R1).
+func TestServeRuntimeResource(t *testing.T) {
+	src := "input:\n  resource: ${IN:r}\ninput_resources:\n  - label: r\n" +
+		"    kafka_franz: {seed_brokers: [localhost:1], topics: [t], consumer_group: prod, auto_replay_nacks: false}\n"
+	resp, out, _ := launchOnly(t, src, map[string]any{"allowSideEffects": true})
+	if !resp.Success {
+		t.Fatalf("launch = %+v, want success", resp)
+	}
+	all := strings.Join(out, "")
+	for _, w := range []string{
+		`input_resources.r.kafka_franz.consumer_group (line 5): consumer group "prod" is replaced by the debug group "rpcn-debug-`,
+		"input_resources.r.kafka_franz.auto_replay_nacks (line 5): auto_replay_nacks is set to true for the capture",
+		"the input resource is only known at runtime",
+	} {
+		if !strings.Contains(all, w) {
+			t.Errorf("output %q does not name %q", out, w)
+		}
+	}
+}

@@ -1,0 +1,17 @@
+# An input resource named only at run time (E3 retro R1): the input is
+# Unknown, and every input resource the walk didn't reach gets the
+# capture's treatment, since the reference may reach any of them: here
+# auto_replay_nacks is forced to true (goldens run without a debug group).
+input:
+  resource: ${IN:r}
+
+input_resources:
+  - label: r
+    kafka_franz:
+      seed_brokers: [localhost:9092]
+      topics: [orders]
+      consumer_group: prod
+      auto_replay_nacks: false
+
+output:
+  drop: {}

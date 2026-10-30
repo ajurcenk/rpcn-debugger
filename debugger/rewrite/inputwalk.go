@@ -17,13 +17,19 @@ import (
 // auto_replay_nacks to true and warns about start offsets at latest.
 type inputWalker struct {
 	w *walker
-	// resources maps each input_resources label to its entry and path.
+	// resources maps each input_resources label to its entry and path;
+	// all holds every entry in file order, interpolated labels included.
 	resources map[string]inputResource
+	all       []inputResource
 	// classes holds the class and effect of each input resource, computed
-	// once per Rewrite (resourceClasses); emitted marks the resources whose
-	// findings the walk has recorded.
+	// once per Rewrite (resourceClasses); emitted marks the resources the
+	// walk has walked (unreached drops the findings of the ones it walks).
 	classes map[string]resClass
 	emitted map[string]bool
+	// dynamic records that the walk met a resource: it can't resolve at
+	// launch (interpolated, or naming no literal label), which may reach
+	// any input resource (unreached).
+	dynamic bool
 	// refs, when set, makes the walk local (resourceClasses): a resource:
 	// child is reported to refs and adds nothing, no finding is kept and
 	// nothing is forced.
@@ -61,8 +67,10 @@ func newInputWalker(w *walker, inputResources *yaml.Node, opts Options) *inputWa
 	}
 	if inputResources != nil && inputResources.Kind == yaml.SequenceNode {
 		for i, e := range inputResources.Content {
+			r := inputResource{e, resourcePath("input_resources", i, e)}
+			iw.all = append(iw.all, r)
 			if l := resourceLabel(e); l != nil && !isInterpolated(l) {
-				iw.resources[l.Value] = inputResource{e, resourcePath("input_resources", i, e)}
+				iw.resources[l.Value] = r
 			}
 		}
 	}
@@ -244,15 +252,22 @@ func (iw *inputWalker) nestedStdin(conf *yaml.Node, path string, worst func(c In
 
 // resource returns the class, effect and path of the input resource named
 // by the scalar ref, from iw.classes. The first time a resource is named,
-// the walk records its findings (and forces its auto_replay_nacks); the
-// resource's own finding takes its class from iw.classes. In a local walk
+// the walk walks it, recording its findings (and forcing its
+// auto_replay_nacks); the resource's own finding takes its class from
+// iw.classes. In a local walk
 // a defined resource adds nothing and is reported to iw.refs.
 func (iw *inputWalker) resource(ref *yaml.Node) (InputClass, string, string) {
 	if ref == nil || ref.Kind != yaml.ScalarNode || isInterpolated(ref) {
+		if iw.refs == nil {
+			iw.dynamic = true
+		}
 		return Unknown, "the input resource is only known at runtime, so it is treated as side-effecting", "input_resources"
 	}
 	r, ok := iw.resources[ref.Value]
 	if !ok {
+		if iw.refs == nil {
+			iw.dynamic = true // It may name an entry whose label is interpolated.
+		}
 		return Unknown, fmt.Sprintf("no input resource is labelled %q", ref.Value), "input_resources"
 	}
 	if iw.refs != nil {
@@ -270,6 +285,32 @@ func (iw *inputWalker) resource(ref *yaml.Node) (InputClass, string, string) {
 		}
 	}
 	return rc.class, rc.effect, r.path
+}
+
+// unreached gives every input resource the walk didn't reach the
+// capture's treatment, when the walk met a resource: it can't resolve at
+// launch (AD-5): that reference may reach any of them, those with an
+// interpolated label included, and never-ack holds
+// for every input. Each one's groups are overridden and its
+// auto_replay_nacks forced, with the usual warnings, in file order. The
+// referring input is already Unknown, so the entries add no findings.
+// Without such a reference an unreached entry is never built (benthos
+// builds input resources lazily) and stays as it is.
+func (iw *inputWalker) unreached() {
+	if !iw.dynamic {
+		return
+	}
+	for _, r := range iw.all {
+		if l := resourceLabel(r.body); l != nil && !isInterpolated(l) {
+			if iw.emitted[l.Value] {
+				continue
+			}
+			iw.emitted[l.Value] = true
+		}
+		n := len(iw.findings)
+		iw.block(r.body, r.path)
+		iw.findings = iw.findings[:n]
+	}
 }
 
 // overridable reports whether the capture replaces the group value n of an

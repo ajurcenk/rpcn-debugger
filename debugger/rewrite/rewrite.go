@@ -146,6 +146,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 	capture := without(input, "processors")
 	iw := newInputWalker(w, value(root, "input_resources"), opts)
 	iw.block(capture, "input")
+	iw.unreached()
 	plan.Inputs = iw.findings
 	w.procs[capture] = "input"
 	var err error

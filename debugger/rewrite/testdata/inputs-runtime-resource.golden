@@ -1,0 +1,17 @@
+# input
+resource: ${IN:r}
+# resources
+input_resources:
+    - label: r
+      kafka_franz:
+        seed_brokers: ['localhost:9092']
+        topics: [orders]
+        consumer_group: prod
+        auto_replay_nacks: true
+# warnings
+input_resources.r.kafka_franz.auto_replay_nacks (line 14): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints
+# inputs
+input (line 6) resource: unknown: through input_resources: the input resource is only known at runtime, so it is treated as side-effecting
+# delivery
+output line 16
+# lines

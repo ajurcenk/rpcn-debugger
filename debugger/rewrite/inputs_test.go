@@ -320,6 +320,36 @@ func TestGroupOverrideMatrix(t *testing.T) {
 		effect   string
 		warnings []string
 	}{
+		"runtime resource": {
+			src: "input:\n  resource: ${IN:r}\n" +
+				"input_resources:\n  - label: r\n    kafka_franz: {seed_brokers: [k:9092], topics: [t], consumer_group: prod, auto_replay_nacks: false}\n" +
+				"  - label: s\n    redpanda: " + fmt.Sprintf(rp, "other") + "\n",
+			resources: []string{"consumer_group: dbg-0", "auto_replay_nacks: true", "consumer_group: dbg-1"},
+			absent:    []string{"consumer_group: prod", "auto_replay_nacks: false", "consumer_group: other"},
+			classes:   []InputClass{Unknown},
+			warnings: []string{
+				replaced("input_resources.r.kafka_franz.consumer_group", "consumer group", "prod", "dbg-0", 5),
+				"input_resources.r.kafka_franz.auto_replay_nacks (line 5): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints",
+				replaced("input_resources.s.redpanda.consumer_group", "consumer group", "other", "dbg-1", 7),
+			},
+		},
+		"interpolated label": {
+			src: "input:\n  resource: a\n" +
+				"input_resources:\n  - label: ${L:a}\n    kafka_franz: {seed_brokers: [k:9092], topics: [t], consumer_group: prod, auto_replay_nacks: false}\n",
+			resources: []string{"consumer_group: dbg-0", "auto_replay_nacks: true"},
+			absent:    []string{"consumer_group: prod", "auto_replay_nacks: false"},
+			classes:   []InputClass{Unknown},
+			warnings: []string{
+				replaced("input_resources.${L:a}.kafka_franz.consumer_group", "consumer group", "prod", "dbg-0", 5),
+				"input_resources.${L:a}.kafka_franz.auto_replay_nacks (line 5): auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints",
+			},
+		},
+		"unreferenced resource": {
+			src:       "input:\n  generate: {mapping: 'root = 1'}\n" + franzRes,
+			resources: []string{"consumer_group: prod"},
+			absent:    []string{"dbg-0"},
+			classes:   []InputClass{ReplaySafe},
+		},
 		"nested": {
 			src:     broker("broker"),
 			capture: []string{"consumer_group: dbg-0", "consumer_group: dbg-1"}, absent: []string{"consumer_group: a", "consumer_group: b"},
