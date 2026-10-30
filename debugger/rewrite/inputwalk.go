@@ -61,7 +61,7 @@ func newInputWalker(w *walker, inputResources *yaml.Node, opts Options) *inputWa
 	}
 	if inputResources != nil && inputResources.Kind == yaml.SequenceNode {
 		for i, e := range inputResources.Content {
-			if l := value(e, "label"); l != nil && l.Kind == yaml.ScalarNode && !isInterpolated(l) {
+			if l := resourceLabel(e); l != nil && !isInterpolated(l) {
 				iw.resources[l.Value] = inputResource{e, resourcePath("input_resources", i, e)}
 			}
 		}

@@ -170,3 +170,32 @@ func TestLogAfterTerminate(t *testing.T) {
 		t.Errorf("outputs after terminate = %+v", out)
 	}
 }
+
+// Benthos's strict-mode rejection record names the internal sink: it stays
+// on stderr, and the Session's strict note is the one console line.
+// Similar records that aren't it still reach the frontend.
+func TestLogStrictRejection(t *testing.T) {
+	log, _, buf, fe := newTestLogging(t)
+	reject := "Rejecting 1 of 2 message(s) for output 'rpcn_debug_sink' because they failed a processing step " +
+		"and strict error handling is enabled (example error: failed assignment (line 1): x).\n"
+	log.With("path", "root.output").Warn(reject)
+	log.With("path", "root.output").Error(reject)
+	log.With("path", "root.output").Warn("Rejecting 1 of 2 message(s) for output 'kafka_franz' because …")
+	log.With("path", "root.output").Warn("rejected for output 'rpcn_debug_sink'")
+
+	if got := buf.String(); strings.Count(got, "for output 'rpcn_debug_sink' because") != 2 {
+		t.Errorf("stderr lacks the strict rejection:\n%s", got)
+	}
+	out := fe.all()
+	if len(out) != 3 {
+		t.Fatalf("outputs = %+v, want all but the strict Warn", out)
+	}
+	if out[0].Category != "stderr" || !strings.HasPrefix(out[0].Text, "level=ERROR") {
+		t.Errorf("output 0 = %+v, want the Error record", out[0])
+	}
+	for _, o := range out[1:] {
+		if strings.Contains(o.Text, "'rpcn_debug_sink' because") {
+			t.Errorf("strict Warn reached the frontend: %+v", o)
+		}
+	}
+}

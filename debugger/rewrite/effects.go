@@ -437,17 +437,12 @@ func labelRefs(n *yaml.Node, fn func(label string)) {
 // processor_resources entries in bodies that are named, to a fixed point.
 // A multilevel cache in caches names its levels too.
 func reached(roots []*yaml.Node, bodies, caches map[string]*yaml.Node) map[string]bool {
-	out := map[string]bool{}
-	var queue []string
-	var add func(l string)
-	add = func(l string) {
-		if out[l] {
-			return
+	seed := func(add func(string)) {
+		for _, r := range roots {
+			labelRefs(r, add)
 		}
-		out[l] = true
-		if _, ok := bodies[l]; ok {
-			queue = append(queue, l)
-		}
+	}
+	levels := func(l string, add func(string)) {
 		if k, v := component(caches[l]); k != nil && k.Value == "multilevel" && v != nil && v.Kind == yaml.SequenceNode {
 			for _, lv := range v.Content {
 				if lv.Kind == yaml.ScalarNode && !isInterpolated(lv) {
@@ -456,15 +451,7 @@ func reached(roots []*yaml.Node, bodies, caches map[string]*yaml.Node) map[strin
 			}
 		}
 	}
-	for _, r := range roots {
-		labelRefs(r, add)
-	}
-	for len(queue) > 0 {
-		l := queue[0]
-		queue = queue[1:]
-		labelRefs(bodies[l], add)
-	}
-	return out
+	return closure(bodies, seed, labelRefs, levels)
 }
 
 // effectSections are the parts of the pipeline the effect and state-split
@@ -519,7 +506,7 @@ func (w *walker) warnEffects(s effectSections) {
 	if s.procRes != nil && s.procRes.Kind == yaml.SequenceNode {
 		for i, entry := range s.procRes.Content {
 			label := ""
-			if l := value(entry, "label"); l != nil && l.Kind == yaml.ScalarNode {
+			if l := resourceLabel(entry); l != nil {
 				label = l.Value
 			}
 			// Only an entry reached from something that runs runs.
@@ -545,9 +532,9 @@ func (w *walker) warnEffects(s effectSections) {
 			return
 		}
 		for i, entry := range list.Content {
-			l := value(entry, "label")
+			l := resourceLabel(entry)
 			k, _ := component(entry)
-			if l == nil || l.Kind != yaml.ScalarNode || k == nil || !local[k.Value] || !capRefs[l.Value] || !stepRefs[l.Value] {
+			if l == nil || k == nil || !local[k.Value] || !capRefs[l.Value] || !stepRefs[l.Value] {
 				continue
 			}
 			w.warn(entry.Line, resourcePath(section, i, entry), "the %s %s %q is used both during capture and during stepping: its state isn't shared between capture and stepping, so the output may differ from production", k.Value, noun, l.Value)

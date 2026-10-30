@@ -347,6 +347,15 @@ func checkRun(e expect, ref Reference, res dapdrive.Result, log string, cmd dapd
 	if strings.Contains(output, "The debug run failed") {
 		errs = append(errs, fmt.Errorf("the Debug Console shows a run failure:\n%s", output))
 	}
+	// Benthos's strict rejection record names the internal sink: it stays
+	// on stderr, and the Session's strict note is the one console line.
+	const reject = "for output 'rpcn_debug_sink'"
+	if strings.Contains(output, reject) {
+		errs = append(errs, fmt.Errorf("the Debug Console shows benthos's strict rejection:\n%s", output))
+	}
+	if strings.Contains(output, "the output rejected the messages") && !strings.Contains(log, reject) {
+		errs = append(errs, fmt.Errorf("the log lacks benthos's strict rejection:\n%s", log))
+	}
 	if len(res.Stops) == 0 || res.Stops[0].Reason != "entry" {
 		errs = append(errs, fmt.Errorf("the first stop is not the entry stop: %+v", res.Stops))
 	}

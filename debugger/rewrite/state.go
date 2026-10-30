@@ -26,7 +26,7 @@ func resourceBodies(resources *yaml.Node) map[string]*yaml.Node {
 		return bodies
 	}
 	for _, e := range resources.Content {
-		if l := value(e, "label"); l != nil && l.Kind == yaml.ScalarNode {
+		if l := resourceLabel(e); l != nil {
 			bodies[l.Value] = e
 		}
 	}

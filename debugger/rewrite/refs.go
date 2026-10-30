@@ -24,11 +24,11 @@ func checkResourceRefs(lists []*yaml.Node, paths []string, resources, input, inp
 	c := &refChecker{labels: map[string]bool{}}
 	if !isNull(resources) {
 		for _, e := range resources.Content {
-			l := value(e, "label")
+			l := resourceLabel(e)
 			if isInterpolated(l) {
 				return nil // Some label is only known at runtime.
 			}
-			if l != nil && l.Kind == yaml.ScalarNode {
+			if l != nil {
 				c.labels[l.Value] = true
 			}
 		}
@@ -55,10 +55,50 @@ func checkResourceRefs(lists []*yaml.Node, paths []string, resources, input, inp
 // resourcePath is the user path of entry i of the resource list section,
 // as the walker names it: by its label, or by its index when it has none.
 func resourcePath(section string, i int, e *yaml.Node) string {
-	if l := value(e, "label"); l != nil && l.Kind == yaml.ScalarNode && l.Value != "" {
+	if l := resourceLabel(e); l != nil && l.Value != "" {
 		return section + "." + l.Value
 	}
 	return child(section, i)
+}
+
+// resourceLabel returns the label of resource entry e when it is a scalar,
+// as written (empty or interpolated alike), and nil otherwise.
+func resourceLabel(e *yaml.Node) *yaml.Node {
+	if l := value(e, "label"); l != nil && l.Kind == yaml.ScalarNode {
+		return l
+	}
+	return nil
+}
+
+// closure returns the resource labels reached from the labels seed adds,
+// following the processor_resources entries in bodies to a fixed point:
+// find adds the labels an entry names. also, when set, adds the labels a
+// reached label names itself (a multilevel cache's levels). Each entry is
+// read once, so a reference cycle ends. Which references count is the
+// caller's: find and seed decide it.
+func closure(bodies map[string]*yaml.Node, seed func(add func(string)), find func(*yaml.Node, func(string)), also func(label string, add func(string))) map[string]bool {
+	out := map[string]bool{}
+	var queue []string
+	var add func(string)
+	add = func(l string) {
+		if out[l] {
+			return
+		}
+		out[l] = true
+		if _, ok := bodies[l]; ok {
+			queue = append(queue, l)
+		}
+		if also != nil {
+			also(l, add)
+		}
+	}
+	seed(add)
+	for len(queue) > 0 {
+		l := queue[0]
+		queue = queue[1:]
+		find(bodies[l], add)
+	}
+	return out
 }
 
 func (c *refChecker) list(l *yaml.Node, path string) {

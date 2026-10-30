@@ -133,3 +133,31 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-output-real-and-none-plan.md`
   summary: When the step stream's Run fails (e.g. an output that fails to init under `output: real`), `engine.run.step` now returns at once, but the producer goroutine (`produce(context.Background(), batch)`) is left waiting and leaks for the life of the process. Bound or cancel it, for E3's refactor sweep or entry 8's write timeout.
   evidence: E3 entry 7 review fix (2026-10-23), noted by the implementer; harmless today (one goroutine per failed session).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Delivered — the strict decision by error text (from 2.14, the entry "STRICT_REJECTED is chosen when the producer's error text contains …" above) was delivered by 3.8: `STRICT_REJECTED` is decided from the errored messages the top-level steppers count on their way to the output, never from benthos's error text, so a real write failure in a mixed batch is no longer reported as the strict note.
+  evidence: debugger/engine/engine.go (`atOutput`, `erroredIn`, the outcome decision before `CodeStrictRejected`); commit 46ee1df (3.8).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Delivered — the Session-owned delivered-batch number (from the 2026-10-22 spine update, the entry "The Session owns the delivered-batch number (AD-3)" above) was delivered by 3.8: `core.Delivered.Batch` (1-based) is numbered by `Session.Deliver`, and debugger/dap displays it instead of counting.
+  evidence: debugger/core/protocol.go `Delivered.Batch`; debugger/core/session.go `Deliver`; debugger/dap/server.go; commit 46ee1df (3.8).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Delivered — the producer leak (from 3.7, the entry "the producer goroutine (`produce(context.Background(), batch)`) is left waiting" above) was delivered by 3.8: the producer runs on a cancellable context, so a failed step stream no longer leaves it waiting.
+  evidence: debugger/engine/engine.go `produce(prodCtx, batch)`; commit 46ee1df (3.8).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Delivered — benthos's strict-mode Warn (from 2.11, the entry "Benthos's own strict-mode Warn ('Rejecting N of M message(s) for output 'rpcn_debug_sink' …') reaches the Debug Console" above) was delivered by 3.10, the E3 refactor sweep, by a different route (user decision 2026-10-30): the AD-15 handler keeps that record off the Debug Console and writes it to stderr only; the Session's strict note stays the one console line. Its embedded `(line N)` belongs to the failing processor, which the record doesn't name, so it isn't shifted.
+  evidence: debugger/logging.go `strictRejection`; debugger/logging_test.go TestLogStrictRejection; test/equivalence/equivalence_test.go checkRun (no rejection record on the console, the record in the log when the strict note shows).
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Partly delivered — the stale debug-group member (from 3.5, the entry "A debug session killed abruptly … waits up to ~60 s") was delivered in the user docs by 3.10: the README's debug-group paragraph says so. The "Waiting for the input" note still doesn't name the group; that half stays open, for epic-local-release's user docs or a later note touch-up.
+  evidence: README.md, "What a debug session does to your input", the debug-group bullet.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: Delivered — CLAUDE.md's stale Layout (from 3.1 and 3.2, the entries "CLAUDE.md's Layout is stale after E3 entry 1" and "CLAUDE.md's Layout should list `testdata/tracer/kafka.yaml` …" above) was delivered by 3.10: Project state describes E3 as of 3.9, and Layout lists `core/debuggroup.go`, `core/inputs.go`, `core/output.go`, `rewrite.Options`/`Plan.Options`, `CheckResult.Prepared`, the new rewrite files, `dapdrive.Options.AfterLaunch`, the integration tests and the new tracer samples.
+  evidence: CLAUDE.md Project state and Layout.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/story-refactor-sweep-plan.md`
+  summary: The remaining half of the stale debug-group member item (from 3.5): the "Waiting for the input" note should mention the possible ~60 s wait after a killed session, or name the debug group, so a user waiting on a stale member knows why. The README half was delivered by 3.10.
+  evidence: debugger/core/session.go "Waiting for the input: nothing captured yet after %g s." names neither the group nor the stale-member wait.

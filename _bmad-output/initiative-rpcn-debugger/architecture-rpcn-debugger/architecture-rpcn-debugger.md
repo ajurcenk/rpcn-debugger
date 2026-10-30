@@ -277,7 +277,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 - **Prevents:** engine logs, stray prints or pipeline I/O corrupting the DAP stream.
 - **Rule:**
   - When `Serve` runs over stdio, only the DAP encoder writes to `out`.
-  - All logs go through one `log/slog` handler (after AD-6 translation). It writes Info and above to stderr, and sends engine records at Warn and above to DAP `Output` (console for warnings, stderr for errors). `Serve`'s `WithLogOutput` sets the stderr side.
+  - All logs go through one `log/slog` handler (after AD-6 translation). It writes Info and above to stderr, and sends engine records at Warn and above to DAP `Output` (console for warnings, stderr for errors), except benthos's strict-mode rejection record for `rpcn_debug_sink`, which stays on stderr because the Session's `STRICT_REJECTED` note covers it (user decision 2026-10-30). `Serve`'s `WithLogOutput` sets the stderr side.
   - The Session's own `Output` events (notes and warnings) go to the frontend directly, not through slog.
   - In stdio mode `stdin` is a rejected input class (AD-5), and `stdout`/`stderr` outputs never write: under `dry-run` and `none` the sink takes their place, and under `real` they are replaced by `drop: {}` (AD-21). Each gets a warning whose text follows the mode.
   - `golangci-lint` enforces this together with AD-2: `forbidigo` bans `fmt.Print*` and `os.Stdout` in `debugger/...`, and `depguard` bans `internal/` imports.

@@ -360,12 +360,11 @@ func (w *walker) processor(p *yaml.Node, path, eng string, parent int) error {
 // except those used inside a concurrent parent.
 func (w *walker) resources(list *yaml.Node) error {
 	for i, entry := range list.Content {
-		path := child("processor_resources", i)
+		path := resourcePath("processor_resources", i, entry)
 		eng := ResourcePath + "." + strconv.Itoa(i)
 		label := ""
-		if l := value(entry, "label"); l != nil && l.Kind == yaml.ScalarNode && l.Value != "" {
+		if l := resourceLabel(entry); l != nil && l.Value != "" {
 			label = l.Value
-			path = "processor_resources." + label
 			eng = QualifyResource(ResourcePath, label)
 		}
 		w.paths[eng] = path
@@ -413,46 +412,31 @@ func holdsProcessors(v *yaml.Node) bool {
 // in lists or in any processor resource.
 // bodies is resourceBodies(resources).
 func taintedResources(lists []*yaml.Node, resources *yaml.Node, bodies map[string]*yaml.Node) map[string]bool {
-	tainted := map[string]bool{}
-	for _, l := range lists {
-		scanList(l, tainted)
-	}
-	if resources != nil && resources.Kind == yaml.SequenceNode {
-		for _, e := range resources.Content {
-			scanProcessor(e, tainted)
+	seed := func(add func(string)) {
+		for _, l := range lists {
+			scanList(l, add)
 		}
-	}
-	queue := make([]string, 0, len(tainted))
-	for l := range tainted {
-		queue = append(queue, l)
-	}
-	for len(queue) > 0 {
-		l := queue[0]
-		queue = queue[1:]
-		found := map[string]bool{}
-		refs(bodies[l], found)
-		for r := range found {
-			if !tainted[r] {
-				tainted[r] = true
-				queue = append(queue, r)
+		if resources != nil && resources.Kind == yaml.SequenceNode {
+			for _, e := range resources.Content {
+				scanProcessor(e, add)
 			}
 		}
 	}
-	return tainted
+	return closure(bodies, seed, refs, nil)
 }
 
-// scanList adds to out the resources referenced inside the opaque parents
-// of the processor list l, following the parents the walk wraps.
-func scanList(l *yaml.Node, out map[string]bool) {
+// scanList calls add with each resource referenced inside the opaque
+// parents of the processor list l, following the parents the walk wraps.
+func scanList(l *yaml.Node, add func(string)) {
 	if l == nil || l.Kind != yaml.SequenceNode {
 		return
 	}
 	for _, p := range l.Content {
-		scanProcessor(p, out)
+		scanProcessor(p, add)
 	}
 }
 
-func scanProcessor(p *yaml.Node, out map[string]bool) {
+func scanProcessor(p *yaml.Node, add func(string)) {
 	if p == nil || p.Kind != yaml.MappingNode {
 		return
 	}
@@ -463,18 +447,18 @@ func scanProcessor(p *yaml.Node, out map[string]bool) {
 		}
 		switch kind, _ := classify(name, v); kind {
 		case concurrent, unknown:
-			refs(v, out)
+			refs(v, add)
 		case parent:
 			for cl := range childLists(p, i) {
-				scanList(cl.list, out)
+				scanList(cl.list, add)
 			}
 		}
 	}
 }
 
-// refs adds to out every resource label referenced in n: resource: <label>
-// and a workflow's branch_resources.
-func refs(n *yaml.Node, out map[string]bool) {
+// refs calls add with every resource label referenced in n: resource:
+// <label> and a workflow's branch_resources.
+func refs(n *yaml.Node, add func(string)) {
 	if n == nil {
 		return
 	}
@@ -483,17 +467,17 @@ func refs(n *yaml.Node, out map[string]bool) {
 			k, v := n.Content[i].Value, n.Content[i+1]
 			switch {
 			case k == "resource" && v.Kind == yaml.ScalarNode:
-				out[v.Value] = true
+				add(v.Value)
 			case k == "branch_resources" && v.Kind == yaml.SequenceNode:
 				for _, l := range v.Content {
 					if l.Kind == yaml.ScalarNode {
-						out[l.Value] = true
+						add(l.Value)
 					}
 				}
 			}
 		}
 	}
 	for _, c := range n.Content {
-		refs(c, out)
+		refs(c, add)
 	}
 }

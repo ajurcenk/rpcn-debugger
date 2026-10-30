@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -102,10 +103,21 @@ func (h *logHandler) Handle(_ context.Context, r slog.Record) error {
 	_, err := io.WriteString(h.sink.w, "time="+ts.Format("2006-01-02T15:04:05.000Z07:00")+" "+body)
 	h.sink.mu.Unlock()
 
-	if h.frontend && sess != nil && r.Level >= frontendLevel {
+	if h.frontend && sess != nil && r.Level >= frontendLevel && !strictRejection(r.Level, r.Message) {
 		sess.Log(r.Level, body)
 	}
 	return err
+}
+
+// strictRejection reports benthos's strict-mode record for the output
+// rejecting errored messages ("Rejecting N of M message(s) for output
+// 'rpcn_debug_sink' ..."). It stays on stderr: it names the internal sink,
+// and its (line N) belongs to the failing processor, which the record
+// doesn't name. The Session's strict note (STRICT_REJECTED) is the one
+// Debug Console line for it.
+func strictRejection(level slog.Level, msg string) bool {
+	return level == slog.LevelWarn && strings.HasPrefix(msg, "Rejecting ") &&
+		strings.Contains(msg, "for output '"+rewrite.SinkName+"'")
 }
 
 // lineRef finds a Bloblang error's own line reference, as in
