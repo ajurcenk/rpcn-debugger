@@ -201,3 +201,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
   summary: Add the A10 rules to CLAUDE.md: "stage explicit paths, never `git commit -a`" and "`deferred-work.md` is append-only (`task lint:deferred`)"; list `lint:deferred` among the Task single steps. For the next refactor sweep.
   evidence: E3 retro B8 (A10); initiative Notes decision 2026-11-02; `Taskfile.yml` `lint:deferred`.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-edit-restart-replay/story-split-core-session-go-plan.md`
+  summary: CLAUDE.md's Layout line for `core` still says `session.go` holds the stop predicate, step state, threads and delivered-batch numbers; after entry 7.1 they live in `threads.go`, `stop.go` and `delivery.go`. For the refactor sweep (entry 7.9).
+  evidence: 7.1 split; `debugger/core/{threads,stop,delivery}.go`.
