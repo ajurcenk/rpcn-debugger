@@ -22,10 +22,11 @@ A developer fixes the YAML and sees the result on the same batch at once; this i
 
 1. `SetMessage` edits apply downstream of the stop only (AD-19).
 2. Restart re-reads the YAML, re-resolves processor and statement breakpoints, and re-steps the identical batch without reading the input (AD-20).
-3. `SaveCapture` writes a `0600`, gitignored, lossless file. The `replay` launch key replays it byte-identically with no broker, including for inputs that epic-safe-against-real-systems rejects. The capture round-trip test is green, and the schema is regenerated.
-4. The `inputOverride` launch key replaces the pipeline's `input` for the capture with an input block, given inline or as a path to a YAML file holding one. This lets a pipeline whose input can't be captured (`http_server` and the other rejected server inputs) be debugged from sample data. A launch warning names the replaced input and its replacement. The replacement goes through the same input classes, group override, never-ack and `allowSideEffects` rules; only the original input's class is bypassed. Top-level `input.processors` stay and are stepped. The schema is regenerated.
-5. The equivalence corpus is still green.
-6. Merged, `task ci` green, and it works from the locally installed `.vsix`.
+3. Restart numbers delivered batches from 1 again: the Session's delivered-batch counter (`Session.delivered`) is reset per run, so the console's "Delivered batch N" and the nothing-delivered note describe the restarted run only (deferred from epic-tracer 2.8, retro A8).
+4. `SaveCapture` writes a `0600`, gitignored, lossless file. The `replay` launch key replays it byte-identically with no broker, including for inputs that epic-safe-against-real-systems rejects. The capture round-trip test is green, and the schema is regenerated.
+5. The `inputOverride` launch key replaces the pipeline's `input` for the capture with an input block, given inline or as a path to a YAML file holding one. This lets a pipeline whose input can't be captured (`http_server` and the other rejected server inputs) be debugged from sample data. A launch warning names the replaced input and its replacement. The replacement goes through the same input classes, group override, never-ack and `allowSideEffects` rules; only the original input's class is bypassed. Top-level `input.processors` stay and are stepped. The schema is regenerated.
+6. The equivalence corpus is still green.
+7. Merged, `task ci` green, and it works from the locally installed `.vsix`.
 
 ## Boundaries
 

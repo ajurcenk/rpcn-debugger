@@ -23,7 +23,8 @@ A developer debugging a `workflow` sees each branch as its own thread and steps 
 1. `workflow`, `parallel` and `retry parallel: true` step correctly. The rewrite marks them `concurrent: true`, and each entry forks a thread with a stable `threadId` (AD-16, AD-17).
 2. Step state is kept per thread. Next / StepIn / StepOut stop only the thread they were issued on (AD-9).
 3. Equivalence rows and CTX_LOST cases for these parents are green, both with no pauses and with Step Over at every stop.
-4. Merged, `task ci` green, and it works from the locally installed `.vsix`.
+4. With more than one thread, every resume is announced as process-wide (AD-9): the `continue` response carries `allThreadsContinued: true`, and Next / StepIn / StepOut send a `continued` event with `allThreadsContinued: true`, so VS Code shows every thread running again (deferred from epic-tracer 2.6, retro A8).
+5. Merged, `task ci` green, and it works from the locally installed `.vsix`.
 
 ## Boundaries
 
