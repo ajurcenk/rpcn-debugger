@@ -127,11 +127,11 @@ Unit IDs:
     | --- | --- | --- |
     | replay-safe | Kafka family with an overridden group, `file`, `generate`, `aws_s3` without `sqs` | allowed |
     | side-effecting | queues and durable consumers (SQS, AMQP, NATS JetStream, `redis_list`, …), and any group-consuming input whose group is kept | allowed only with `"allowSideEffects": true`, with a warning naming the effect |
-    | rejected | `stdin`, `http_server`, sockets | `INPUT_REJECTED`, with a replay hint |
+    | rejected | `stdin`, `http_server`, sockets | `INPUT_REJECTED`, with a replay hint; `replay` and `inputOverride` (epic-edit-restart-replay) are how such pipelines are debugged |
     | unknown | anything else | treated as side-effecting |
 
   - **Per-session overrides:** the `inputClasses` launch key maps a component name to a class for the session and is applied before the rollup; loosening warns. `stdin`, `dynamic`, `redpanda_migrator`, `redpanda_common` (`core.FixedInputs`) and `redpanda` without `seed_brokers` can't be loosened (they can't run in a debug session at all).
-  - **Who decides:** a composite input takes its worst child's class. The rewrite never refuses on class: it reports input findings (user path, line, component, class, effect) in the Plan, and the Session alone refuses, against `allowSideEffects` (`SIDE_EFFECTS_NOT_ALLOWED`) and, from epic-edit-restart-replay, `replay`, which skips the check.
+  - **Who decides:** a composite input takes its worst child's class. The rewrite never refuses on class: it reports input findings (user path, line, component, class, effect) in the Plan, and the Session alone refuses, against `allowSideEffects` (`SIDE_EFFECTS_NOT_ALLOWED`) and, from epic-edit-restart-replay, `replay`, which skips the check. The `inputOverride` launch key replaces `input` for the capture (an input block, inline or a YAML file path) with a launch warning; only the original input's class is bypassed, and the replacement goes through the same table, group override, never-ack and `allowSideEffects` rules. Top-level `input.processors` stay and are stepped. `replay` with `inputOverride` or `saveCapture` is `LAUNCH_INVALID`.
   - **Consumer groups:** the Session supplies the debug-group base `rpcn-debug-<os-user>`, from the process user, as a rewrite option; the rewrite stays pure. Each overridden field gets `<base>-<k>` (k counts the overridden inputs in walker order, from 0), so distinct groups stay distinct; there is no per-session suffix. Only the Kafka family's `consumer_group` (`kafka`, `kafka_franz`, `redpanda` with `seed_brokers`; `redpanda_common` is rejected) and `nats`' `queue` are overridden; other group-like fields (replication slots, Pulsar and Pub/Sub subscriptions, checkpoint tables, JetStream durables) are left as configured, because overriding them would create durable objects on the source, so their inputs stay side-effecting. `"keepConsumerGroup": true` keeps the groups. The class is computed after the override: a kept group, or a group field the table can't override (an interpolated one), makes the input side-effecting ("joins consumer group G; its members rebalance"). Start-offset fields stay as configured, with a launch warning when one resolves to latest.
   - **Output:** `output` is `dry-run` (the default; results go to VSCode only), `real`, or `none`. `real` is required to write to the user's output, and it logs a warning (AD-21).
   - **Side-effecting processors:** a processor effect table (component plus a field predicate: `sql_insert`, `sql_raw`, `redis` writes, a remote `cache` set or delete, `http` with a write method, `aws_lambda`, `command`, …) gives each match a launch warning naming the system it writes to, marked "runs during capture, not stepped" in the input tree. It is a warning only; no opt-in is required.
@@ -221,7 +221,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
   - **`value` is lossless:** bytes are base64, ints are decimal strings, timestamps are RFC 3339 with nanoseconds. `text` is for display only.
   - Keys starting with `__` have `internal: true`. U-DAP shows them in a collapsed "internal" node under the message's metadata, and the core never filters them.
   - The Session keeps **one Snapshot per live frame**.
-  - **Capture files:** only the capture Source writes them, and only on `SaveCapture`. A file holds the truncated batch plus `skipped` (reason `maxMessages`). Messages skipped by `try` are reported by `MessagesSkipped`, never in the file.
+  - **Capture files:** only the capture Source writes them, and only on `SaveCapture`, which the Session issues right after the capture when the launch sets `saveCapture` (no frontend request). A file holds the truncated batch plus `skipped` (reason `maxMessages`). Messages skipped by `try` are reported by `MessagesSkipped`, never in the file.
   - Readers reject a newer major `schemaVersion`. A round-trip test (capture → file → replay → Snapshot) must be byte-identical.
 
 ### AD-12: Thin extension; Go owns the launch contract [ADOPTED]
@@ -335,8 +335,10 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 - **Binds:** U-CORE, U-DAP, U-EXT, U-STEP
 - **Prevents:** the Restart button producing a different batch depending on which code path handles it.
 - **Rule:**
-  - `Restart` re-reads and re-rewrites the pipeline YAML (a new LineMap, with breakpoints resolved again), discards all threads and frames and the cloned env, and re-steps the **already captured batch** through an in-memory replay Source.
+  - `Restart` re-reads and re-rewrites the pipeline YAML (a new LineMap), discards all threads and frames and the cloned env, and re-steps the **already captured batch** through an in-memory replay Source, stopping where a launch stops. Breakpoints set so far are kept; they are resolved again against the new LineMap from epic-breakpoints-and-evaluation on, and statement lines from epic-bloblang-statement-stepping on.
+  - Only the pipeline file is re-read: launch keys stay as launched (a console note says launch.json changes need a new launch), and edits to the input block and the `inputOverride` file are ignored.
   - It never re-captures. A fresh capture is a new launch.
+  - Once a batch is captured, the session outlives the run: when the run ends (delivered, `STRICT_REJECTED`, `OUTPUT_FAILED` or a run failure) the root thread exits, a console note offers Restart or Stop, and `Terminated` comes only on `Terminate`. A launch that captures nothing or fails before capture still ends the session.
   - A Restart or `replay` session with `output: real` writes to the user's output only when the launch also sets `allowRepeatWrites: true`; otherwise it runs as `dry-run` with a console note.
   - U-DAP advertises `supportsRestartRequest: true`.
   - If the rewrite fails, the session stays alive and reports a `core.Error` with `UserPath`/`Line`.
@@ -362,7 +364,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
   - **Env resolution:** the engine resolves `${VAR}` in the pipeline through one lookup that the Session builds, in this order: process env, then `envFile`, then `env`. It is set with `StreamBuilder.SetEnvVarLookupFunc` (and used for an interpolated `error_handling.strict`, AD-6).
   - **`envFile`** holds `NAME=value` lines, with `#` comments, blank lines, an optional `export` prefix and quoted values. The file must exist.
   - **License** (not built yet; owned by epic-local-release, applied by U-STEP to every stream it builds): read from `license`, then `REDPANDA_LICENSE`, then `REDPANDA_LICENSE_FILEPATH`, then `/etc/redpanda/redpanda.license`. It is applied with `public/license.StoreCustomLicenseBytes(strm.Resources(), …)` after `Build()` and before `Run()`, on every stream the Session builds. A failure to obtain an enterprise `processor_resources` component is a session error `LICENSE_REQUIRED`, never a silent retry.
-  - **Capture files:** written only on `SaveCapture`, with mode `0600`. The first save creates `.rpcn-debug/.gitignore` containing `*`.
+  - **Capture files:** written only on `SaveCapture`, with mode `0600`, always into `<cwd>/.rpcn-debug/`: the `saveCapture` launch key takes a file name, and one that escapes that folder is `LAUNCH_INVALID`. The first save creates `.rpcn-debug/.gitignore` containing `*`. `replay` reads any path.
   - **Credentials for the input system:** only from the pipeline config. The debugger adds none.
   - **Evaluate** is unrestricted (it's a local development tool), and the docs say so.
   - **Telemetry:** none is collected by the binary or the extension.
@@ -387,7 +389,7 @@ Steppers accept and return several batches, because `group_by` splits and reorde
 | DAP handles | `threadId` stable per thread; `frameId` and `variablesReference` become invalid on every resume (AD-17). Limits: 32 frames, 64 batches and 1024 messages per stop; stop ids wrap modulo 64 |
 | Errors | Processor errors on messages are data (`Snapshot.error`). Session failures are `core.Error` (AD-3) |
 | Logging | `log/slog`, one handler, stderr plus DAP `Output` (AD-15) |
-| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `env`, `envFile`, `license`, `inputClasses` (component name to class, AD-5). Built so far: `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` (E2); `allowSideEffects`, `inputClasses`, `keepConsumerGroup`, `output` (E3) |
+| Launch keys | camelCase: `pipeline`, `cwd`, `resources[]`, `maxMessages`, `output` (`dry-run`, `real` or `none`), `keepConsumerGroup`, `allowSideEffects`, `rpcPlugins[]`, `replay`, `saveCapture`, `inputOverride`, `allowRepeatWrites`, `env`, `envFile`, `license`, `inputClasses` (component name to class, AD-5). Built so far: `pipeline`, `cwd`, `maxMessages`, `env`, `envFile` (E2); `allowSideEffects`, `inputClasses`, `keepConsumerGroup`, `output` (E3) |
 | Equivalence tests | `testdata/equivalence/<name>/{pipeline.yaml, expect.yaml, input files}`. `expect.yaml` declares the reference `batches` and `messages`, Step In `stops` (path, frame count), `no_stops_under` paths and required `output` lines (AD-8) |
 | CI lint | `golangci-lint` with `forbidigo` and `depguard` (AD-2, AD-15); a launch-schema check (AD-12) |
 

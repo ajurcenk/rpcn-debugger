@@ -24,7 +24,8 @@ A developer finds the exact faulty Bloblang line; this is the middle of the spec
 2. root, this, meta and vars are shown after each statement through the Snapshot `bloblang` field: root is unassigned for `mapping` and starts from the input for `mutation`. Values are labelled recomputed or environment-dependent. Tracing is capped at 200 statements.
 3. Statement breakpoints work, with LineMap statement lines filled by the rewrite. The trace-vs-real check flags any difference.
 4. The spike's 16-line mapping steps as 9 statements with correct state, and the equivalence corpus is still green.
-5. Merged, `task ci` green, and it works from the locally installed `.vsix`.
+5. Restart re-resolves statement breakpoints against the new statement lines. The Snapshot `bloblang` field is a minor `schemaVersion` change, so capture files saved before it still replay (AD-11). SetMessage at a statement-stepping stop is decided here.
+6. Merged, `task ci` green, and it works from the locally installed `.vsix`.
 
 ## Boundaries
 
@@ -39,3 +40,4 @@ Not a Bloblang interpreter. No upstream statement hook (spine Deferred).
 ## Notes
 
 - Waits on epic-breakpoints-and-evaluation because: it reuses the evaluator and extends the breakpoint resolver with statement lines.
+- Waits on epic-edit-restart-replay because: Restart and the capture file exist there; this epic re-resolves statement lines on Restart and owns SetMessage at a statement stop (decision, user, 2026-11-02).

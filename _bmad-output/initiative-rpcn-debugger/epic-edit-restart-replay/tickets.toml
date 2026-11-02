@@ -1,0 +1,111 @@
+# epic-edit-restart-replay: entries in build order. The table order is the build order; ids are permanent.
+
+[[entry]]
+id = 1
+type = "story"
+title = "Split core/session.go"
+description = "Opening refactor (E3 retro B7, E2 retro A13): split the 979-line `core/session.go` into files by concern (launch and run, threads, stop decision and resume, delivery and console notes) with no behaviour change, so Restart, SetMessage and the capture file land in small files. It delivers no requirement on its own."
+verify = "`task ci` is green with no test changed, and `session.go` no longer holds the thread, stop and delivery code."
+covers = []
+after = []
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 2
+type = "story"
+title = "Tracer bullet: Restart from a stop re-steps the captured batch"
+description = "The thinnest path through DAP, Session, rewrite and engine (AD-20): the Engine port splits into capture and step-from-a-batch (an in-memory source); the Session keeps an immutable copy of the captured batch (entries 3 and 6 rely on it); Restart from a stop (`supportsRestartRequest: true`) re-reads and re-rewrites only the pipeline YAML, with launch keys kept as launched and a console note that launch.json changes need a new launch (D4), ignores changes to the input block (no re-capture, no class check), discards threads, frames and the env clone, keeps the breakpoints set so far (epic-breakpoints-and-evaluation re-resolves them), resets the delivered-batch number, and re-steps the batch, stopping where F5 stops; a rewrite failure keeps the current run and reports a core.Error at its UserPath/Line; under `output: real` the restarted run is dry-run with a console note (the opt-in is entry 7). It adds Restart to dapdrive's Script (entries 5 and 7 reuse it) and an F5 sample. Restart after the run ends is entry 5."
+verify = "A dapdrive test pauses, edits the pipeline's mapping, restarts, and sees the new mapping's output on the same batch with the input read once and batches numbered from 1; a restart with broken YAML keeps the session and names the line."
+covers = ["CAP-10"]
+after = [1]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 5
+type = "story"
+title = "The session stays alive after the run ends"
+description = "D5: once a batch is captured, the end of the run (all batches delivered, STRICT_REJECTED, OUTPUT_FAILED, or a run failure) exits the root thread, shows \"Run finished: Restart re-steps the same batch with the edited pipeline; Stop ends the session.\" and waits for Restart (entry 2) or Stop; Terminated comes only on Stop/Terminate, and a launch that captures nothing or fails before capture still ends the session. dapdrive and the equivalence harness end the session after the note, which every later entry's tests rely on."
+verify = "A dapdrive test runs to the end, sees the note and no Terminated, restarts, and sees the batch delivered again as batch 1; a NOTHING_CAPTURED launch still ends with Terminated; `task test:equivalence` is green."
+covers = ["CAP-10"]
+after = [2]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Capture file and the saveCapture launch key"
+description = "The AD-11 capture file: the truncated batch plus `skipped` (reason maxMessages) in the versioned Snapshot model with lossless metadata; readers reject a newer major `schemaVersion`. The launch key `saveCapture: <file name>` (D2, D6) saves right after the capture into `<cwd>/.rpcn-debug/`, created with a `.gitignore` holding `*` on the first save, mode `0600` (AD-22); a name that escapes that folder is LAUNCH_INVALID. The engine's capture side encodes and writes the file from the batch entry 2 keeps, triggered by the Session issuing `core.SaveCapture` after Captured; DAP gets no SaveCapture request. Schema regenerated. Least certain entry: lossless metadata types through the public `service.Message` API."
+verify = "A unit test writes and reads back every metadata type (string, bytes, int, float, bool, timestamp, object, array, null) byte-identically; a dapdrive launch with `saveCapture` leaves a 0600 file and the gitignore; an escaping name is LAUNCH_INVALID."
+covers = ["CAP-10"]
+after = [2, 5]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 4
+type = "story"
+title = "replay launch key"
+description = "`replay: <path>` (any path, relative to cwd) feeds entry 3's capture file through entry 2's step-from-a-batch source instead of capturing: no broker is contacted and the input-class check is skipped (AD-5), so rejected inputs such as `http_server` replay. `replay` with `saveCapture` (or, once entry 8 lands, `inputOverride`) is LAUNCH_INVALID. Until entry 7, a replay under `output: real` runs as dry-run with the console note, as entry 2 does for Restart. Schema regenerated."
+verify = "The AD-11 round-trip test (capture → file → replay → Snapshot) is byte-identical; a replay of an `http_server` pipeline's saved capture steps with no listener opened; an integration test replays a Kafka capture with the container stopped."
+covers = ["CAP-10"]
+after = [3, "3.4"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 6
+type = "story"
+title = "SetMessage edits content and metadata at a stop"
+description = "DAP setVariable on a message's whole content, or on a metadata value, of the top frame of the stopped thread becomes `SetMessage` (D3): the Session validates it and returns it from Arrive (the Arriver port changes), and the stepper applies it to its own batch before releasing the gate (AD-19), so only processors downstream of the stop see it. A metadata value keeps its type and text that doesn't parse as it is refused; keys are changed, never added or deleted; an edit on any other frame is refused with a core.Error. Restart re-steps the original captured batch (entry 2). SetMessage at a statement-stepping stop is epic-bloblang-statement-stepping's."
+verify = "A dapdrive test edits a JSON content and an int metadata value at a mid-pipeline stop, and the delivered batch shows the edits passed through the later processors while earlier frames' Snapshots are unchanged; an edit on a non-top frame and an unparsable int are refused."
+covers = ["CAP-8"]
+after = [5]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 7
+type = "story"
+title = "allowRepeatWrites for Restart and replay"
+description = "D6 handoff from epic-safe-against-real-systems (AD-20): a restarted run (entry 2) or a replay (entry 4) under `output: real` writes to the user's output only with `allowRepeatWrites: true`; otherwise it runs as dry-run with the console note those entries added. Schema regenerated."
+verify = "dapdrive tests: restart and replay under `real` without the key deliver as dry-run with the note; with it, the integration test sees the records written to the topic."
+covers = ["CAP-10"]
+after = [4]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 8
+type = "story"
+title = "inputOverride launch key"
+description = "The epic's Done when 6: `inputOverride` replaces `input` for the capture with an input block, inline or a path to a YAML file holding one, with a launch warning naming the replaced input and the replacement; the replacement goes through the input classes, group override, never-ack and `allowSideEffects` rules, and only the original input's class is bypassed; top-level `input.processors` stay and are stepped, and the override may carry its own processors. Restart doesn't re-read it (no re-capture); `replay` with it is LAUNCH_INVALID. It waits on entry 7 because both edit `LaunchConfig`, the schema and the Session's input check. Schema regenerated."
+verify = "Rewrite goldens for inline and file overrides; a dapdrive test debugs an `http_server` pipeline from a `generate` override with the warning; an override that is itself rejected is refused (INPUT_REJECTED)."
+covers = ["CAP-10"]
+after = [7, "3.4"]
+hitl = false
+risk = "medium"
+
+[[entry]]
+id = 9
+type = "story"
+title = "Refactor sweep"
+description = "Cleanup only, scoped when it starts from this epic's plans and the review findings deferred during it; scope pushed out of another entry is a new entry."
+verify = "`task ci` is green and each swept item is recorded in its plan."
+covers = ["CAP-8", "CAP-10"]
+after = [1, 2, 3, 4, 5, 6, 7, 8]
+hitl = false
+risk = "low"
+
+[[entry]]
+id = 10
+type = "story"
+title = "VS Code acceptance run"
+description = "Samples in `testdata/tracer/` and a checklist the user ticks in VS Code from the installed `.vsix`: Restart after editing the YAML, the run-finished note, SetMessage, saveCapture then replay with the broker stopped, allowRepeatWrites, inputOverride on an `http_server` pipeline."
+verify = "The user ticks every checklist item."
+covers = ["CAP-8", "CAP-10"]
+after = [9]
+hitl = true
+risk = "low"

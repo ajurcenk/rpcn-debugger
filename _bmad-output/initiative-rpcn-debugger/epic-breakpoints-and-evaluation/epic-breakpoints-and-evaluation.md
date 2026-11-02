@@ -24,8 +24,9 @@ A developer stops only where a condition holds and checks Bloblang expressions a
 2. A conditional breakpoint stops when any message matches and focuses the first match. On-error stops right after a processor introduces an error.
 3. A breakpoint on one concurrent thread stops only that thread (the CAP-9 'except at breakpoints' clause).
 4. Watch and console evaluate via `MessageBatch.BloblangExecutor` with the pipeline's Bloblang environment. `batch_index()` and `batch_size()` are correct (AD-13 evaluator).
-5. The equivalence corpus is still green.
-6. Merged, `task ci` green, and it works from the locally installed `.vsix`.
+5. Restart re-resolves line breakpoints against the new LineMap and sends `BreakpointResolved` for each, verified or unverified (AD-18, AD-20), with a dapdrive case of a breakpoint plus Restart. After a Restart, Watch and console evaluate against the new run.
+6. The equivalence corpus is still green.
+7. Merged, `task ci` green, and it works from the locally installed `.vsix`.
 
 ## Boundaries
 
@@ -39,3 +40,4 @@ Not statement breakpoints or the tracer (epic-bloblang-statement-stepping). No l
 ## Notes
 
 - Waits on epic-concurrency because: it needs per-thread step state to prove that a breakpoint on one thread stops only that thread.
+- Waits on epic-edit-restart-replay because: Restart exists there and keeps the breakpoints set so far across a Restart (today `setBreakpoints` stores lines and answers them unverified); this epic re-resolves them (decision, user, 2026-11-02).

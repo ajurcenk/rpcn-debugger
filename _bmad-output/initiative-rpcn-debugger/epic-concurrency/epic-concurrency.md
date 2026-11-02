@@ -24,7 +24,8 @@ A developer debugging a `workflow` sees each branch as its own thread and steps 
 2. Step state is kept per thread. Next / StepIn / StepOut stop only the thread they were issued on (AD-9).
 3. Equivalence rows and CTX_LOST cases for these parents are green, both with no pauses and with Step Over at every stop.
 4. With more than one thread, every resume is announced as process-wide (AD-9): the `continue` response carries `allThreadsContinued: true`, and Next / StepIn / StepOut send a `continued` event with `allThreadsContinued: true`, so VS Code shows every thread running again (deferred from epic-tracer 2.6, retro A8).
-5. Merged, `task ci` green, and it works from the locally installed `.vsix`.
+5. Restart (epic-edit-restart-replay) discards every forked thread, each with `ThreadExited`, and re-steps; with several threads, `SetMessage` is valid only on the stopped thread's top frame (AD-19, AD-20).
+6. Merged, `task ci` green, and it works from the locally installed `.vsix`.
 
 ## Boundaries
 
@@ -40,3 +41,4 @@ The concurrent AD-7 rows only. The 'except at breakpoints' half of CAP-9 is prov
 - Waits on epic-tracer because: it needs Session.Arrive, frames in ctx and the gate.
 - Waits on epic-safe-against-real-systems because: both change the rewrite and the stepper, so they must not run in parallel.
 - Handoff from epic-tracer inception (2026-10-16): epic-tracer runs `workflow` branches, `parallel` and `retry` with `parallel: true` as opaque steps with nothing wrapped below them. It also leaves any `processor_resources` entry referenced from inside them unwrapped, with a warning. This epic wraps them and lifts both restrictions.
+- Waits on epic-edit-restart-replay because: both change the Session and the stepper (the Engine capture/step split, the SetMessage return from Arrive, the run lifecycle), so they must not run in parallel (decision, user, 2026-11-02).

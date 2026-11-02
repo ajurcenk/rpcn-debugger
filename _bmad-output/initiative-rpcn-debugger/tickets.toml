@@ -21,32 +21,32 @@ covers = ["CAP-2", "CAP-11"]
 after = [{ epic = 1, needs = "the Redpanda testcontainers job (package test/integration, build tag integration)" }, { epic = 2, needs = "the rewrite capture config, capture and rpcn_debug_sink" }]
 
 [[epic]]
+id = 7
+slug = "epic-edit-restart-replay"
+title = "Change the message, change the config, try again"
+covers = ["CAP-8", "CAP-10"]
+after = [{ epic = 3, needs = "input classes that replay must bypass" }]
+
+[[epic]]
 id = 4
 slug = "epic-concurrency"
 title = "Concurrent branches as threads"
 covers = ["CAP-9", "CAP-3", "CAP-12"]
-after = [{ epic = 2, needs = "Session.Arrive, frames in ctx and the pause gate" }, { epic = 3, needs = "no parallel edits to the rewrite and the stepper" }]
+after = [{ epic = 2, needs = "Session.Arrive, frames in ctx and the pause gate" }, { epic = 3, needs = "no parallel edits to the rewrite and the stepper" }, { epic = 7, needs = "no parallel edits to the Session and stepper (the Engine capture/step split, the SetMessage return from Arrive, the run lifecycle)" }]
 
 [[epic]]
 id = 5
 slug = "epic-breakpoints-and-evaluation"
 title = "Stop where it matters and ask Bloblang questions"
 covers = ["CAP-5", "CAP-6", "CAP-9"]
-after = [{ epic = 4, needs = "per-thread step state" }]
+after = [{ epic = 4, needs = "per-thread step state" }, { epic = 7, needs = "Restart, to re-resolve breakpoints on (it keeps the breakpoints set so far)" }]
 
 [[epic]]
 id = 6
 slug = "epic-bloblang-statement-stepping"
 title = "Step inside a mapping"
 covers = ["CAP-7"]
-after = [{ epic = 5, needs = "the evaluator and the breakpoint resolver" }]
-
-[[epic]]
-id = 7
-slug = "epic-edit-restart-replay"
-title = "Change the message, change the config, try again"
-covers = ["CAP-8", "CAP-10"]
-after = [{ epic = 3, needs = "input classes that replay must bypass" }, { epic = 5, needs = "the breakpoint resolver" }, { epic = 6, needs = "statement lines for re-resolution" }]
+after = [{ epic = 5, needs = "the evaluator and the breakpoint resolver" }, { epic = 7, needs = "Restart, to re-resolve statement lines on; the capture file whose schemaVersion the bloblang field bumps" }]
 
 [[epic]]
 id = 8
