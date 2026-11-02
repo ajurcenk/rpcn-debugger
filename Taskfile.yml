@@ -40,6 +40,11 @@ tasks:
     cmds:
       - go run ./cmd/gen-launch-schema
 
+  lint:deferred:
+    desc: Fail if deferred-work.md ever lost or changed a line (append-only)
+    cmds:
+      - scripts/check-append-only.sh
+
   lint:schema:
     desc: Fail if vscode/package.json's launch schema is stale against dap.LaunchConfig (AD-12)
     cmds:
@@ -99,6 +104,7 @@ tasks:
       - task: lint:go
       - task: lint:gomod
       - task: lint:schema
+      - task: lint:deferred
       - task: test:go
       - task: test:equivalence
       - task: test:integration

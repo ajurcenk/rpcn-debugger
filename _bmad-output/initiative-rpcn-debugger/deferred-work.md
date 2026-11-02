@@ -197,3 +197,7 @@
 - source_plan: `_bmad-output/initiative-rpcn-debugger/plan-b1-never-ack-every-input-resource.md`
   summary: An input whose `resource:` is resolved only at run time (or names no literal label) is classed Unknown, so `allowSideEffects` lets it through even when the input resources it may reach include a rejected one (stdin, which would read the DAP stream; http_server); roll the worst Rejected class of the reachable resources into the referring input — needs a user decision, since it changes refusals.
   evidence: B1 review finding 2; `unreached()` walks those entries but drops their findings by design (B1's intent keeps refusals unchanged); `serve_inputs_test.go:225` shows a literal reference to a rejected resource is refused.
+
+- source_plan: `_bmad-output/initiative-rpcn-debugger/epic-safe-against-real-systems/epic-safe-against-real-systems-retrospective.md`
+  summary: Add the A10 rules to CLAUDE.md: "stage explicit paths, never `git commit -a`" and "`deferred-work.md` is append-only (`task lint:deferred`)"; list `lint:deferred` among the Task single steps. For the next refactor sweep.
+  evidence: E3 retro B8 (A10); initiative Notes decision 2026-11-02; `Taskfile.yml` `lint:deferred`.

@@ -47,5 +47,7 @@ Split by outcome, one owner per epic (solo developer with agent lanes); units ar
 - Decision: CI is local only (`task ci`) (user, 2026-10-09).
 - Decision: E2 is split by outcome into tracer / safe against real systems / concurrency (user, 2026-10-09).
 - Decision: the 8-epic set and its order were approved (user, 2026-10-12).
+- Decision: plans have no word-count target. Split an entry instead when its plan would change frozen intent or name more than about 8 test cases, and plans probe engine behaviour for the cases they name (E2 retro A9, E3 retro B8; user, 2026-11-02).
+- Decision: `deferred-work.md` is append-only, enforced by `task lint:deferred` in `task ci` (`scripts/check-append-only.sh`, which checks every commit that touched the file and the working tree). "Stage explicit paths, never `git commit -a`" and the append-only rule go into CLAUDE.md at the next refactor sweep (E2 retro A10, E3 retro B8; user, 2026-11-02).
 - Parked: stable message identity across `group_by` reordering; it's needed only by the deferred message-diff feature (spine Open Questions).
 - Assumption: the default `maxMessages` is 10 (architect's choice).
