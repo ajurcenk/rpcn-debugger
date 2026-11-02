@@ -3,7 +3,7 @@ title: 'The loosening warning names the effect; input-class texts match the code
 type: 'bugfix'
 ticket: ''
 created: '2026-10-30'
-status: 'built'
+status: 'done'
 baseline_revision: '0a22a78268cd065c0da5ab469b8f2a6ce3463869'
 route: 'oneshot'
 route_source: 'auto'
@@ -35,6 +35,7 @@ The oneshot route was chosen because both are a few lines.
 - Tests: `TestInputClassesOverride` expects the kept effects, plus a row "kept group loosened keeps its effect"; `TestLaunchInputDecision` row "loosen keeps the effect" checks the full warning.
 - B5: `dap/launch.go` `allowSideEffects` desc, `task gen:schema` (`vscode/package.json`); AD-5 per-session overrides and README list `redpanda_common`; memlog entry 85; spine lint clean.
 - Review patches: the warning reads "…; the debugger can't prove it. Without the override: <effect>", since some effects end "so it is treated as side-effecting", which the loosened class contradicts (the Intent's example used ": "). The not-loosenable list names `redpanda` without `seed_brokers` too (`hardRejected`), in the schema text, AD-5 and the README; the README's rejected row now says `allowSideEffects` doesn't lift it and `inputClasses` can, except those five. Tests use the real kept-group effect text, and `TestServeInputClasses` gains "loosen a kept group" (`keepConsumerGroup` + `inputClasses: {kafka_franz: replay-safe}` through `debugger.Serve`).
+- 2026-11-02 acceptance (user): tested in VS Code from the installed .vsix against the local Redpanda, no issues: the `allowSideEffects` description, the kept-group refusal without the override, the one loosening warning naming the set-aside effect, and no offsets committed for `prod`.
 
 ## Review Triage Log
 
