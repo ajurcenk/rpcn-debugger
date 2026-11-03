@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -27,6 +28,38 @@ type restartEngine struct {
 	// torn, when set, is closed once a Step's stop was released with an
 	// error, and the Step then waits for release before it returns.
 	torn, release chan struct{}
+	// inputs are the input findings Check returns.
+	inputs []InputFinding
+	// The replay file (LoadCapture): fileMsgs messages (0: one), "f0",
+	// "f1", …, or loadErr.
+	fileMsgs int
+	loadErr  error
+	loads    []loadCall
+}
+
+// loadCall is one LoadCapture call.
+type loadCall struct {
+	path        string
+	maxMessages int
+}
+
+func (e *restartEngine) LoadCapture(path string, maxMessages int) (CapturedBatch, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.loads = append(e.loads, loadCall{path, maxMessages})
+	if e.loadErr != nil {
+		return CapturedBatch{}, e.loadErr
+	}
+	total := max(e.fileMsgs, 1)
+	kept := total
+	if maxMessages > 0 && kept > maxMessages {
+		kept = maxMessages
+	}
+	msgs := make([]Message, kept)
+	for i := range msgs {
+		msgs[i] = Message{Content: Content{Raw: fmt.Appendf(nil, "f%d", i)}}
+	}
+	return CapturedBatch{Batch: []Batch{{Messages: msgs}}, Kept: kept, Total: total}, nil
 }
 
 var restartLines = lines{
@@ -41,7 +74,7 @@ func (e *restartEngine) Check(opts StartOptions) (CheckResult, error) {
 	if e.checkErr != nil {
 		return CheckResult{}, e.checkErr
 	}
-	return CheckResult{Lines: restartLines, Prepared: e.mapping, Warnings: []string{"w " + e.mapping}}, nil
+	return CheckResult{Lines: restartLines, Prepared: e.mapping, Warnings: []string{"w " + e.mapping}, Inputs: e.inputs}, nil
 }
 
 func (e *restartEngine) Capture(ctx context.Context, _ StartOptions) (CapturedBatch, error) {
@@ -155,10 +188,10 @@ func TestRestartReStepsTheBatch(t *testing.T) {
 	if captures != 1 {
 		t.Errorf("captures = %d, want 1", captures)
 	}
-	if len(checks) != 2 || !checks[1].Restart || checks[1].Pipeline != "/p/pipeline.yaml" || checks[1].Lookup == nil {
+	if len(checks) != 2 || !checks[1].StepOnly || checks[1].Pipeline != "/p/pipeline.yaml" || checks[1].Lookup == nil {
 		t.Errorf("checks = %+v, want the launch's then a Restart's", checks)
 	}
-	if len(steps) != 2 || steps[1].Prepared != "v2" || steps[1].Restart {
+	if len(steps) != 2 || steps[1].Prepared != "v2" || steps[1].StepOnly {
 		t.Errorf("steps = %+v, want the second on the new Prepared", steps)
 	}
 	if got := string(st.Frames[0].Snapshot.Batches[0].Messages[0].Content.Raw); got != "in" {

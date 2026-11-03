@@ -2,6 +2,7 @@ package debugger
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -45,6 +46,9 @@ func (checkEngine) Capture(context.Context, core.StartOptions) (core.CapturedBat
 func (checkEngine) Step(context.Context, core.StartOptions, any, core.Arriver) error { return nil }
 
 func (checkEngine) SaveCapture(core.CapturedBatch, string, string) error { return nil }
+func (checkEngine) LoadCapture(string, int) (core.CapturedBatch, error) {
+	return core.CapturedBatch{}, errors.New("no capture file")
+}
 
 const logPipeline = `input:
   generate: {mapping: 'root = {}'}

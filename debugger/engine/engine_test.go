@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,7 +38,7 @@ func load(path string, opts engine.LoadOptions) (engine.Configs, core.LineMap, e
 	if err != nil {
 		return engine.Configs{}, nil, err
 	}
-	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Output: p.Output, Warnings: p.Warnings, Strict: p.Strict, StrictExpr: p.StrictExpr, StrictLine: p.StrictLine, Delivery: p.Delivery, Inputs: p.Inputs}, p, nil
+	return engine.Configs{Input: p.Input, Resources: p.Resources, Steppers: p.Steppers, Output: p.Output, Warnings: p.Warnings, InputWarnings: p.InputWarnings, Strict: p.Strict, StrictExpr: p.StrictExpr, StrictLine: p.StrictLine, Delivery: p.Delivery, Inputs: p.Inputs}, p, nil
 }
 
 func writePipeline(t *testing.T, src string) string {
@@ -953,12 +954,50 @@ func TestCheckRestartSkipsTheCapture(t *testing.T) {
 	if _, err := a.Check(core.StartOptions{Pipeline: path}); err == nil {
 		t.Fatal("Check of a bad input block succeeded")
 	}
-	if _, err := a.Check(core.StartOptions{Pipeline: path, Restart: true}); err != nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: path, StepOnly: true}); err != nil {
 		t.Errorf("Restart Check = %v, want the input block left unlinted", err)
 	}
 	bad := writePipeline(t, "input:\n  generate: {mapping: 'root = {}'}\npipeline:\n  processors:\n    - no_such_processor: {}\n")
-	if _, err := a.Check(core.StartOptions{Pipeline: bad, Restart: true}); err == nil {
+	if _, err := a.Check(core.StartOptions{Pipeline: bad, StepOnly: true}); err == nil {
 		t.Error("Restart Check of an unknown processor succeeded")
+	}
+}
+
+// The input walker's warnings concern only the capture: a normal Check
+// gives the group-override warning, and a StepOnly Check (Restart, replay)
+// doesn't.
+func TestCheckStepOnlyDropsInputWarnings(t *testing.T) {
+	// The test env has no Kafka components: a stub kafka_franz input lets
+	// the capture config lint.
+	env := service.NewEnvironment()
+	spec := service.NewConfigSpec().Fields(
+		service.NewStringListField("seed_brokers"), service.NewStringListField("topics"),
+		service.NewStringField("consumer_group").Optional(), service.NewBoolField("auto_replay_nacks").Optional(),
+	)
+	if err := env.RegisterBatchInput("kafka_franz", spec, func(*service.ParsedConfig, *service.Resources) (service.BatchInput, error) {
+		return nil, errors.New("stub")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := engine.New(env, testLogger(), load)
+	path := writePipeline(t, "input:\n  kafka_franz:\n    seed_brokers: [localhost:9092]\n    topics: [t]\n    consumer_group: prod\npipeline:\n  processors:\n    - mapping: 'root = this'\noutput:\n  drop: {}\n")
+	const want = `consumer group "prod" is replaced by the debug group "dbg-0"`
+	has := func(ws []string) bool {
+		return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, want) })
+	}
+	res, err := a.Check(core.StartOptions{Pipeline: path, DebugGroup: "dbg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(res.Warnings) {
+		t.Errorf("Check warnings = %q, want one containing %q", res.Warnings, want)
+	}
+	res, err = a.Check(core.StartOptions{Pipeline: path, DebugGroup: "dbg", StepOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(res.Warnings) {
+		t.Errorf("StepOnly Check warnings = %q, want no group override", res.Warnings)
 	}
 }
 
@@ -986,7 +1025,7 @@ func TestStepTwiceOnTheCapturedBatch(t *testing.T) {
 		if err := os.WriteFile(path, fmt.Appendf(nil, src, suffix), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		res, err := a.Check(core.StartOptions{Pipeline: path, Restart: true})
+		res, err := a.Check(core.StartOptions{Pipeline: path, StepOnly: true})
 		if err != nil {
 			t.Fatal(err)
 		}

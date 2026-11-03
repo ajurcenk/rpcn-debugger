@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -932,5 +934,137 @@ output:
 	}
 	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 10 {
 		t.Errorf("delivered = %d batches, want one of 10 messages", len(res.Delivered))
+	}
+}
+
+// replaySrc is a generate pipeline whose batch carries metadata of several
+// types, saved by the replay tests.
+const replaySrc = `
+input:
+  generate:
+    count: 4
+    batch_size: 4
+    interval: ""
+    mapping: |
+      root.n = counter()
+      root.bin = "ÿ"
+      meta source = "replay"
+      meta n = counter()
+      meta f = 1.5
+      meta ok = true
+      meta obj = {"a": [1, 2.5, "x"], "b": null}
+pipeline:
+  processors:
+    - mapping: 'root.doubled = this.n * 2'
+    - mutation: 'meta seen = true'
+output:
+  drop: {}
+`
+
+// saveForReplay runs replaySrc with saveCapture orders.json and returns
+// its run and its pipeline path; the file is <dir>/.rpcn-debug/orders.json.
+func saveForReplay(t *testing.T) (dapdrive.Result, string) {
+	t.Helper()
+	pipeline := writeYAML(t, replaySrc)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: pipeline, Script: dapdrive.Always(dapdrive.Continue),
+		Launch: map[string]any{"saveCapture": "orders.json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stops) == 0 || len(res.Delivered) != 1 {
+		t.Fatalf("saving run: %d stops, %d delivered batches", len(res.Stops), len(res.Delivered))
+	}
+	// The comparisons below see the messages, and in the delivered batch
+	// their raw bytes and lossless metadata.
+	if b := res.Stops[0].Batches; len(b) != 1 || len(b[0]) != 4 {
+		t.Fatalf("saving run's first stop = %+v, want one batch of 4 messages", b)
+	}
+	if d := res.Delivered[0]; len(d) != 4 || d[0].Raw == nil || d[0].Metadata["obj"].Lossless == "" {
+		t.Fatalf("saving run's delivered batch = %+v, want 4 messages with raw bytes and lossless metadata", d)
+	}
+	return res, pipeline
+}
+
+// A replay of a saved capture (AD-11) stops first on the saved batch and
+// delivers what the saving launch delivered, raw bytes and lossless
+// metadata included. The Debug Console names the file, and the session
+// ends like a captured run.
+func TestReplayRoundTrip(t *testing.T) {
+	saved, pipeline := saveForReplay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: pipeline, Script: dapdrive.Always(dapdrive.Continue),
+		Launch: map[string]any{"replay": ".rpcn-debug/orders.json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(filepath.Dir(pipeline), ".rpcn-debug", "orders.json")
+	if notes := outputs(res, "Replaying "); len(notes) != 1 || notes[0] != "Replaying "+path+": 4 messages; the input is not read.\n" {
+		t.Errorf("replay notes = %q", notes)
+	}
+	if notes := outputs(res, "Waiting for the input"); len(notes) != 0 {
+		t.Errorf("waiting notes = %q, want none", notes)
+	}
+	if len(res.Stops) == 0 || !reflect.DeepEqual(res.Stops[0].Batches, saved.Stops[0].Batches) {
+		t.Errorf("first stop batches differ:\n got  %+v\n want %+v", res.Stops[0].Batches, saved.Stops[0].Batches)
+	}
+	if !reflect.DeepEqual(res.Delivered, saved.Delivered) {
+		t.Errorf("delivered differs:\n got  %+v\n want %+v", res.Delivered, saved.Delivered)
+	}
+	if res.Terminated {
+		t.Error("the replay ended with terminated, want the session kept (D5)")
+	}
+}
+
+// A pipeline whose input is rejected (http_server) replays a saved file:
+// it steps, and its address is never bound.
+func TestReplayRejectedInput(t *testing.T) {
+	saved, pipeline := saveForReplay(t)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	server := filepath.Join(filepath.Dir(pipeline), "server.yaml")
+	_, processors, _ := strings.Cut(replaySrc, "pipeline:")
+	src := "input:\n  http_server:\n    address: " + addr + "\n    path: /post\npipeline:" + processors
+	if err := write(server, src); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var listenErrs []error
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: server,
+		Script: func([]dapdrive.Stop) dapdrive.Command {
+			l, err := net.Listen("tcp", addr)
+			if err == nil {
+				_ = l.Close()
+			}
+			listenErrs = append(listenErrs, err)
+			return dapdrive.Continue
+		},
+		Launch: map[string]any{"replay": ".rpcn-debug/orders.json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listenErrs) == 0 {
+		t.Fatal("no stop")
+	}
+	for _, err := range listenErrs {
+		if err != nil {
+			t.Errorf("listen on %s during a stop: %v, want the address free", addr, err)
+		}
+	}
+	if !reflect.DeepEqual(res.Delivered, saved.Delivered) {
+		t.Errorf("delivered differs:\n got  %+v\n want %+v", res.Delivered, saved.Delivered)
 	}
 }

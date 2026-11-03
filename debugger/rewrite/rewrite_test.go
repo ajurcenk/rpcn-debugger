@@ -31,7 +31,7 @@ func render(p Plan, err error) string {
 		fmt.Fprintf(&b, "# stepper %d\n%s", i, s)
 	}
 	b.WriteString("# warnings\n")
-	for _, w := range p.Warnings {
+	for _, w := range slices.Concat(p.Warnings, p.InputWarnings) {
 		fmt.Fprintf(&b, "%s\n", w)
 	}
 	b.WriteString("# inputs\n")
@@ -283,8 +283,8 @@ func TestDebugGroupOverride(t *testing.T) {
 			if p.Input != want {
 				t.Errorf("capture config:\n%s\nwant:\n%s", p.Input, want)
 			}
-			if w := fmt.Sprintf(warn, c.input); !slices.Equal(p.Warnings, append(slices.Clone(base.Warnings), w)) {
-				t.Errorf("warnings = %q, want %q plus %q", p.Warnings, base.Warnings, w)
+			if w := fmt.Sprintf(warn, c.input); !slices.Equal(p.Warnings, base.Warnings) || !slices.Equal(p.InputWarnings, []string{w}) {
+				t.Errorf("warnings = %q and input warnings %q, want %q and %q", p.Warnings, p.InputWarnings, base.Warnings, w)
 			}
 			if !slices.Equal(p.Steppers, base.Steppers) || p.Resources != base.Resources {
 				t.Error("the override changed the step config")

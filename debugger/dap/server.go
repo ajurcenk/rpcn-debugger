@@ -141,6 +141,7 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 			KeepConsumerGroup: cfg.KeepConsumerGroup,
 			Output:            core.OutputMode(cfg.Output),
 			SaveCapture:       cfg.SaveCapture,
+			Replay:            cfg.Replay,
 		}
 		if cfg.InputClasses != nil {
 			launch.InputClasses = make(map[string]core.InputClass, len(cfg.InputClasses))

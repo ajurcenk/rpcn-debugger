@@ -504,8 +504,8 @@ func TestGroupOverrideMatrix(t *testing.T) {
 			if !strings.Contains(effect, c.effect) {
 				t.Errorf("effect %q, want %q", effect, c.effect)
 			}
-			if !slices.Equal(p.Warnings, c.warnings) {
-				t.Errorf("warnings:\n%q\nwant:\n%q", p.Warnings, c.warnings)
+			if got := slices.Concat(p.Warnings, p.InputWarnings); !slices.Equal(got, c.warnings) {
+				t.Errorf("warnings:\n%q\nwant:\n%q", got, c.warnings)
 			}
 		})
 	}

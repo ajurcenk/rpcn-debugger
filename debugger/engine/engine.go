@@ -36,6 +36,10 @@ type Configs struct {
 	Output string
 	// Warnings are the launch warnings for the user.
 	Warnings []string
+	// InputWarnings are the input walker's launch warnings (the group
+	// override, start-at-latest, auto_replay_nacks). They concern only the
+	// capture, so Check adds them after Warnings only without StepOnly.
+	InputWarnings []string
 	// Strict is error_handling.strict, applied to the step stream (AD-4(b)).
 	// StrictExpr overrides it when set.
 	Strict bool
@@ -107,7 +111,7 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 func (a *Adapter) SetWriteTimeout(d time.Duration) { a.writeTimeout = d }
 
 // Check loads the pipeline and parses and lints both stream configs, so
-// config errors fail the launch; with opts.Restart it lints only the step
+// config errors fail the launch; with opts.StepOnly it lints only the step
 // stream (AD-20). ${VAR} resolves through opts.Lookup, as in Capture and
 // Step (AD-22). It never calls Build: Build opens every *_resources entry
 // (caches, connection pools), which would leak. The loaded Configs come
@@ -130,9 +134,10 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	// A failed Check still carries the translator, so the Session can name
 	// user paths in its error (AD-6).
 	failed := core.CheckResult{Translator: conf.Translator}
-	// A Restart re-steps the batch already captured: the capture config
-	// does not run, so it is not linted (AD-20).
-	if !opts.Restart {
+	// A Restart re-steps the batch already captured, and a replay steps a
+	// capture file's: the capture config does not run, so it is not linted
+	// (AD-11, AD-20).
+	if !opts.StepOnly {
 		if _, err := r.configureCapture(nil); err != nil {
 			return failed, fmt.Errorf("%s: %w", pipeline, err)
 		}
@@ -140,8 +145,12 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	if _, _, err := r.configureStep(); err != nil {
 		return failed, fmt.Errorf("%s: %w", pipeline, err)
 	}
+	warnings := conf.Warnings
+	if !opts.StepOnly {
+		warnings = slices.Concat(conf.Warnings, conf.InputWarnings)
+	}
 	return core.CheckResult{
-		Lines: lines, Translator: conf.Translator, Warnings: conf.Warnings, Delivery: conf.Delivery,
+		Lines: lines, Translator: conf.Translator, Warnings: warnings, Delivery: conf.Delivery,
 		Inputs: conf.Inputs, Prepared: conf,
 	}, nil
 }

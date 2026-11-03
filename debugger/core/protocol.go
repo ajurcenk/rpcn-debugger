@@ -53,6 +53,14 @@ type Launch struct {
 	// local relative path (filepath.IsLocal), or the launch is
 	// LAUNCH_INVALID. "" means no capture file.
 	SaveCapture string
+	// Replay, when set, names a capture file (one SaveCapture wrote) whose
+	// batch the run steps instead of capturing one (AD-11): any path, a
+	// relative one resolved against Cwd. The input is never read, and the
+	// input-class decision is skipped, so a rejected input replays. Output
+	// real runs as dry-run. A missing, unreadable or undecodable file, a
+	// newer major schemaVersion, and Replay with SaveCapture are
+	// LAUNCH_INVALID. "" means capture from the input.
+	Replay string
 }
 
 // ConfigurationDone starts the debuggee.

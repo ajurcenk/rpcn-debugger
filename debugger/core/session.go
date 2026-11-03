@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"maps"
@@ -51,6 +52,8 @@ type Session struct {
 	keepGroup    bool                  // the keepConsumerGroup rewrite option (AD-5)
 	output       OutputMode            // the output rewrite option (AD-21)
 	saveName     string                // the saveCapture file name under <cwd>/.rpcn-debug/, or "" (AD-11, AD-22)
+	replay       *CapturedBatch        // the replay file's batch, stepped instead of a capture (AD-11); nil without replay
+	replayNotes  []string              // the replay's start notes, sent by its run
 	prepared     any                   // Check's configs, run by Capture and Step (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
 	delivered    int                   // batches delivered in this run, numbering them (AD-3); Restart resets it
@@ -165,6 +168,9 @@ func (s *Session) launch(c Launch) error {
 		return err
 	}
 	if c.SaveCapture != "" {
+		if c.Replay != "" {
+			return NewError(CodeLaunchInvalid, `"replay" and "saveCapture" can't be set together: a replay steps a capture file, and nothing is captured to save`)
+		}
 		if err := checkCaptureName(`"saveCapture"`, c.SaveCapture); err != nil {
 			return err
 		}
@@ -176,19 +182,19 @@ func (s *Session) launch(c Launch) error {
 		return NewError(CodeLaunchInvalid, `resolve "cwd" %q: %v`, c.Cwd, err)
 	}
 	pipeline := resolve(cwd, c.Pipeline)
+	replayPath := ""
+	if c.Replay != "" {
+		replayPath = resolve(cwd, c.Replay)
+		if err := checkFile(`"replay"`, replayPath); err != nil {
+			return err
+		}
+	}
 	envFile := ""
 	var fileEnv map[string]string
 	if c.EnvFile != "" {
 		envFile = resolve(cwd, c.EnvFile)
-		fi, err := os.Stat(envFile)
-		if errors.Is(err, fs.ErrNotExist) {
-			return NewError(CodeLaunchInvalid, `"envFile" %s does not exist`, envFile)
-		}
-		if err != nil {
-			return NewError(CodeLaunchInvalid, `"envFile": %v`, err)
-		}
-		if fi.IsDir() {
-			return NewError(CodeLaunchInvalid, `"envFile" %s is a directory, not a file`, envFile)
+		if err := checkFile(`"envFile"`, envFile); err != nil {
+			return err
 		}
 		raw, err := os.ReadFile(envFile)
 		if err != nil {
@@ -224,25 +230,48 @@ func (s *Session) launch(c Launch) error {
 	if c.InputClasses != nil {
 		classes = maps.Clone(c.InputClasses)
 	}
+	// A replay runs as dry-run: its batch was already delivered once.
+	output := c.Output.Effective()
+	replayReal := replayPath != "" && output == OutputReal
+	if replayReal {
+		output = OutputDryRun
+	}
 	res, err := s.engine.Check(StartOptions{
 		Pipeline: pipeline, Cwd: cwd, Lookup: lookup, DebugGroup: group, InputClasses: classes,
-		KeepConsumerGroup: c.KeepConsumerGroup, Output: c.Output.Effective(),
+		KeepConsumerGroup: c.KeepConsumerGroup, Output: output, StepOnly: replayPath != "",
 	})
 	if err != nil {
 		ce, _ := AsError(err, CodePipelineInvalid).(Error)
 		ce.Message = TranslateText(res.Translator, ce.Message)
 		return ce
 	}
-	// The Session alone refuses on the input findings (AD-5, D1).
-	inputWarnings, err := inputDecision(pipeline, res.Inputs, c.AllowSideEffects)
-	if err != nil {
-		return err
+	var inputWarnings, replayNotes []string
+	var replay *CapturedBatch
+	if replayPath == "" {
+		// The Session alone refuses on the input findings (AD-5, D1).
+		if inputWarnings, err = inputDecision(pipeline, res.Inputs, c.AllowSideEffects); err != nil {
+			return err
+		}
+	} else {
+		// A replay never reads the input, so its classes are not decided
+		// (AD-11): a rejected input replays.
+		b, err := s.engine.LoadCapture(replayPath, c.MaxMessages)
+		if err != nil {
+			// The engine's error names the file.
+			return NewError(CodeLaunchInvalid, `"replay": %v`, err)
+		}
+		replay = &b
+		replayNotes = append(replayNotes, fmt.Sprintf("Replaying %s: %d messages; the input is not read.\n", replayPath, b.Kept))
+		if replayReal {
+			replayNotes = append(replayNotes, replayDryRunNote)
+		}
 	}
 
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
 	s.delivery, s.debugGroup, s.prepared, s.inputClasses = res.Delivery, group, res.Prepared, classes
-	s.keepGroup, s.output, s.saveName = c.KeepConsumerGroup, c.Output.Effective(), c.SaveCapture
+	s.keepGroup, s.output, s.saveName = c.KeepConsumerGroup, output, c.SaveCapture
+	s.replay, s.replayNotes = replay, replayNotes
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -275,7 +304,27 @@ func (s *Session) configurationDone() error {
 	// after launch never desyncs them from s.lines (AD-6).
 	opts := s.optionsLocked()
 	opts.Prepared = s.prepared
-	go s.run(ctx, opts, nil, s.gen, s.done)
+	go s.run(ctx, opts, s.replay, s.gen, s.done)
+	return nil
+}
+
+// replayDryRunNote is the console note of a replay launched with output:
+// real.
+const replayDryRunNote = "Replay runs as output: dry-run, so the batch is not written to the output again.\n"
+
+// checkFile checks that path, the absolute path of the launch setting key,
+// is an existing file.
+func checkFile(key, path string) error {
+	fi, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return NewError(CodeLaunchInvalid, `%s %s does not exist`, key, path)
+	}
+	if err != nil {
+		return NewError(CodeLaunchInvalid, `%s: %v`, key, err)
+	}
+	if fi.IsDir() {
+		return NewError(CodeLaunchInvalid, `%s %s is a directory, not a file`, key, path)
+	}
 	return nil
 }
 
@@ -326,7 +375,7 @@ func (s *Session) restart() error {
 	if wasReal {
 		opts.Output = OutputDryRun
 	}
-	opts.Restart = true
+	opts.StepOnly = true
 	kept := *s.kept
 	s.mu.Unlock()
 
@@ -382,7 +431,7 @@ func (s *Session) restart() error {
 	}
 	ctx, cancelRun := context.WithCancel(context.Background())
 	s.cancel, s.done, s.replaced = cancelRun, make(chan struct{}), make(chan struct{})
-	opts.Prepared, opts.Restart = res.Prepared, false
+	opts.Prepared, opts.StepOnly = res.Prepared, false
 	gen, runDone := s.gen, s.done
 	s.mu.Unlock()
 
@@ -415,8 +464,9 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 }
 
 // run is one debug run of generation gen: it captures the batch, unless
-// kept is the batch a Restart re-steps, saves it when the launch sets
-// saveCapture, then steps it. It closes done when
+// kept is the batch a Restart re-steps or the launch's replay batch (which
+// it keeps as captured, after the replay notes), saves it when the launch
+// sets saveCapture, then steps it. It closes done when
 // it returns. A run that a Restart replaced (its gen is stale) ends without
 // a word: no note, ThreadExited or Terminated.
 //
@@ -433,6 +483,21 @@ func (s *Session) run(ctx context.Context, opts StartOptions, kept *CapturedBatc
 		s.fe.Emit(ThreadStarted{ThreadID: ThreadID, Name: rootThreadName})
 	}
 	var err error
+	s.mu.Lock()
+	replay := kept != nil && kept == s.replay
+	notes := s.replayNotes
+	ended = s.ended
+	s.mu.Unlock()
+	if replay {
+		// The launch's replay: its batch is kept as if captured, after the
+		// replay's notes (AD-11). No capture runs, so no waiting note.
+		if !ended {
+			for _, n := range notes {
+				s.fe.Emit(Output{Category: "console", Text: n})
+			}
+		}
+		s.keepCaptured(*kept)
+	}
 	if kept == nil {
 		var b CapturedBatch
 		if b, err = s.capture(ctx, opts); err == nil {

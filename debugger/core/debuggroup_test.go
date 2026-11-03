@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -88,3 +89,6 @@ func (e *prepEngine) Capture(_ context.Context, o StartOptions) (CapturedBatch, 
 func (e *prepEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }
 
 func (e *prepEngine) SaveCapture(CapturedBatch, string, string) error { return nil }
+func (e *prepEngine) LoadCapture(string, int) (CapturedBatch, error) {
+	return CapturedBatch{}, errors.New("no capture file")
+}

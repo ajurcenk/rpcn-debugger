@@ -30,8 +30,8 @@ func TestDecodeLaunch(t *testing.T) {
 		"every key": {
 			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env",
 				"keepConsumerGroup":true,"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"},
-				"output":"real","saveCapture":"orders.json"}`,
-			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3, Output: "real", SaveCapture: "orders.json",
+				"output":"real","saveCapture":"orders.json","replay":".rpcn-debug/old.json"}`,
+			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3, Output: "real", SaveCapture: "orders.json", Replay: ".rpcn-debug/old.json",
 				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", KeepConsumerGroup: true, AllowSideEffects: true,
 				InputClasses: map[string]string{"aws_sqs": "replay-safe", "generate": "rejected", "nats": "side-effecting"}},
 		},
@@ -77,6 +77,7 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		"class number":      {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":1}}`, []string{`"inputClasses.aws_sqs"`, "a string"}},
 		"classes array":     {`{"pipeline":"p.yaml","inputClasses":["aws_sqs"]}`, []string{`"inputClasses"`, "an array"}},
 		"empty saveCapture": {`{"pipeline":"p.yaml","saveCapture":""}`, []string{`"saveCapture"`, "non-empty"}},
+		"empty replay":      {`{"pipeline":"p.yaml","replay":""}`, []string{`"replay"`, "non-empty"}},
 		"allow string":      {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
 		"allow null":        {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
 		"keep string":       {`{"pipeline":"p.yaml","keepConsumerGroup":"yes"}`, []string{`"keepConsumerGroup"`, "a boolean", "a string"}},
@@ -126,7 +127,7 @@ func TestSchema(t *testing.T) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses", "output", "saveCapture"} {
+	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses", "output", "saveCapture", "replay"} {
 		p, ok := props[k].(map[string]any)
 		if !ok {
 			t.Errorf("schema has no %q (has %v)", k, keys)
@@ -136,8 +137,8 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%q has no description", k)
 		}
 	}
-	if len(props) != 10 {
-		t.Errorf("schema keys = %v, want exactly the ten launch keys", keys)
+	if len(props) != 11 {
+		t.Errorf("schema keys = %v, want exactly the eleven launch keys", keys)
 	}
 	if out := props["output"].(map[string]any); out["type"] != "string" || out["default"] != "dry-run" ||
 		!reflect.DeepEqual(out["enum"], []string{"dry-run", "real", "none"}) {

@@ -35,6 +35,21 @@ func (a *Adapter) SaveCapture(b core.CapturedBatch, pipeline, path string) error
 	return writeCapture(path, pipeline, batch, b.Total)
 }
 
+// LoadCapture reads the capture file at path with ReadCapture, for a
+// replay (AD-11): its Batch is a service.MessageBatch for Step, holding the
+// first maxMessages of the file's messages (all of them when maxMessages is
+// 0), and Total counts the file's messages, its skipped ones included.
+func (a *Adapter) LoadCapture(path string, maxMessages int) (core.CapturedBatch, error) {
+	batch, total, err := ReadCapture(path)
+	if err != nil {
+		return core.CapturedBatch{}, err
+	}
+	if maxMessages > 0 && len(batch) > maxMessages {
+		batch = batch[:maxMessages:maxMessages]
+	}
+	return core.CapturedBatch{Batch: batch, Kept: len(batch), Total: total}, nil
+}
+
 // captureSnapshot is the capture file's Snapshot of batch, the kept
 // messages of a captured batch of total messages.
 func captureSnapshot(pipeline string, batch service.MessageBatch, total int) core.Snapshot {

@@ -92,6 +92,9 @@ func (e *fakeEngine) Step(ctx context.Context, _ core.StartOptions, _ any, a cor
 }
 
 func (e *fakeEngine) SaveCapture(core.CapturedBatch, string, string) error { return nil }
+func (e *fakeEngine) LoadCapture(string, int) (core.CapturedBatch, error) {
+	return core.CapturedBatch{}, errors.New("no capture file")
+}
 
 func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	if e.nested {

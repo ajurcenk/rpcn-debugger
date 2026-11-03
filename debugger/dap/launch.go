@@ -30,13 +30,15 @@ import (
 type LaunchConfig struct {
 	Pipeline string `json:"pipeline" min:"1" desc:"The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged."`
 
-	Cwd string `json:"cwd" desc:"The directory that relative paths (pipeline, envFile) resolve against. A relative cwd resolves against the debugger's working directory. When unset, the workspace folder is used."`
+	Cwd string `json:"cwd" desc:"The directory that relative paths (pipeline, envFile, replay) resolve against. A relative cwd resolves against the debugger's working directory. When unset, the workspace folder is used."`
 
 	MaxMessages int `json:"maxMessages" default:"10" min:"1" max:"1024" desc:"The most messages of the captured batch to step through, at most 1024. The rest of the batch is dropped, never acknowledged, and the Debug Console says how many messages were kept."`
 
 	Output string `json:"output" default:"dry-run" enum:"dry-run,real,none" desc:"Where each delivered batch goes, after output.processors. dry-run (the default) shows it in the Debug Console and writes nothing. real also writes it to the pipeline's output, as in production (its batching and per-output processors included; stdout and stderr outputs are replaced by drop), with a launch warning. none shows it and writes nothing."`
 
-	SaveCapture string `json:"saveCapture" min:"1" desc:"Save the captured batch (the messages maxMessages kept, with the dropped ones listed as skipped) to a capture file, right after the capture and before stepping. The value is a file name inside the .rpcn-debug folder under cwd, e.g. orders.json; a path that leaves that folder (.. or an absolute path) fails the launch. The folder is created, with a .gitignore that ignores it, and the file is written with mode 0600, replacing an existing one. The file holds message contents and metadata as captured: keep it private. Restart doesn't save again."`
+	SaveCapture string `json:"saveCapture" min:"1" desc:"Save the captured batch (the messages maxMessages kept, with the dropped ones listed as skipped) to a capture file, right after the capture and before stepping. The value is a file name inside the .rpcn-debug folder under cwd, e.g. orders.json; a path that leaves that folder (.. or an absolute path) fails the launch. The folder is created, with a .gitignore that ignores it, and the file is written with mode 0600, replacing an existing one. The file holds message contents and metadata as captured: keep it private. Restart doesn't save again. Can't be set with replay."`
+
+	Replay string `json:"replay" min:"1" desc:"Step the batch of a capture file saved with saveCapture instead of capturing one, e.g. .rpcn-debug/orders.json. Any path; a relative one resolves against cwd. The input is never read (no broker or listener is contacted) and the input-class check is skipped, so pipelines whose input is rejected, such as http_server, can be debugged too. maxMessages applies to the file's batch. output: real runs as dry-run, so the batch is not written again. Can't be set with saveCapture."`
 
 	Env map[string]string `json:"env" desc:"Environment variables for the pipeline's ${VAR} interpolations. Values accept ${env:NAME}, which VS Code substitutes from its own environment: reference secrets that way and never put literal secrets in launch.json. Applied last: env overrides envFile, which overrides the debugger's own environment."`
 

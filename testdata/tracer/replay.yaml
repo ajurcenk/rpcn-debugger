@@ -1,0 +1,20 @@
+# Replay sample (AD-11): an http_server pipeline, whose input the debugger
+# rejects, stepped from a saved capture instead. First F5 restart.yaml with
+# "saveCapture": "restart.json" in launch.json; then F5 this file with
+#   "replay": ".rpcn-debug/restart.json"
+# (and without saveCapture). The debugger says "Replaying ...", stops
+# before the mapping on the saved message (its captured_at is the time of
+# the save), and never opens port 4195: the input is not read.
+input:
+  http_server:
+    address: 127.0.0.1:4195
+    path: /post
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.upper = this.greeting.uppercase()
+
+output:
+  drop: {}

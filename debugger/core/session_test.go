@@ -124,6 +124,10 @@ func (e *fakeEngine) SaveCapture(b CapturedBatch, pipeline, path string) error {
 	return os.WriteFile(path, []byte("capture"), 0o600)
 }
 
+func (e *fakeEngine) LoadCapture(string, int) (CapturedBatch, error) {
+	return CapturedBatch{}, errors.New("no capture file")
+}
+
 func (e *fakeEngine) savedCaptures() []savedCapture {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -457,6 +461,9 @@ func (e *pathEngine) Capture(context.Context, StartOptions) (CapturedBatch, erro
 func (e *pathEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }
 
 func (e *pathEngine) SaveCapture(CapturedBatch, string, string) error { return nil }
+func (e *pathEngine) LoadCapture(string, int) (CapturedBatch, error) {
+	return CapturedBatch{}, errors.New("no capture file")
+}
 
 func TestNothingCaptured(t *testing.T) {
 	e := newEngine()

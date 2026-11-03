@@ -214,3 +214,39 @@ func TestAdapterSaveCapture(t *testing.T) {
 		t.Error("SaveCapture of a string succeeded")
 	}
 }
+
+// LoadCapture keeps the first maxMessages of the file's messages, and
+// Total counts the file's skipped ones too (AD-11).
+func TestLoadCaptureMaxMessages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := writeCapture(path, "/p.yaml", captureBatch(), 5); err != nil {
+		t.Fatal(err)
+	}
+	a := &Adapter{}
+	for _, tc := range []struct{ max, kept int }{{0, 3}, {2, 2}, {3, 3}, {10, 3}} {
+		b, err := a.LoadCapture(path, tc.max)
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch, ok := b.Batch.(service.MessageBatch)
+		if !ok || len(batch) != tc.kept || b.Kept != tc.kept || b.Total != 5 {
+			t.Errorf("maxMessages %d: %T of %d, Kept %d, Total %d; want %d of 5", tc.max, b.Batch, len(batch), b.Kept, b.Total, tc.kept)
+		}
+	}
+	if _, err := a.LoadCapture(filepath.Join(t.TempDir(), "none.json"), 0); err == nil {
+		t.Error("LoadCapture of a missing file succeeded")
+	}
+	dir := t.TempDir()
+	for name, tc := range map[string]struct{ content, reason string }{
+		"bad JSON": {"{not json", "invalid character"},
+		"newer":    {`{"schemaVersion":"2.0","position":{},"batches":[{"messages":[]}]}`, "is newer than this rpcn-debug reads"},
+	} {
+		bad := filepath.Join(dir, name+".json")
+		if err := os.WriteFile(bad, []byte(tc.content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.LoadCapture(bad, 0); err == nil || !strings.Contains(err.Error(), tc.reason) {
+			t.Errorf("%s: LoadCapture = %v, want an error containing %q", name, err, tc.reason)
+		}
+	}
+}

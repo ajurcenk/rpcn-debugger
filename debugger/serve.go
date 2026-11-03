@@ -96,17 +96,19 @@ func loadPipeline(path string, opts engine.LoadOptions) (engine.Configs, core.Li
 		return engine.Configs{}, nil, core.NewError(core.CodePipelineInvalid, "%s: %v", path, err)
 	}
 	return engine.Configs{
-		Input:      plan.Input,
-		Resources:  plan.Resources,
-		Steppers:   plan.Steppers,
-		Output:     plan.Output,
-		Warnings:   plan.Warnings,
-		Strict:     plan.Strict,
-		StrictExpr: plan.StrictExpr,
-		StrictLine: plan.StrictLine,
-		Translator: plan,
-		Delivery:   plan.Delivery,
-		Positions:  plan.FilePosition,
-		Inputs:     plan.Inputs,
+		Input:     plan.Input,
+		Resources: plan.Resources,
+		Steppers:  plan.Steppers,
+		Output:    plan.Output,
+		Warnings:  plan.Warnings,
+		// The input walker's warnings concern only the capture.
+		InputWarnings: plan.InputWarnings,
+		Strict:        plan.Strict,
+		StrictExpr:    plan.StrictExpr,
+		StrictLine:    plan.StrictLine,
+		Translator:    plan,
+		Delivery:      plan.Delivery,
+		Positions:     plan.FilePosition,
+		Inputs:        plan.Inputs,
 	}, plan, nil
 }

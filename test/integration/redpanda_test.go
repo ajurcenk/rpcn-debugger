@@ -27,6 +27,14 @@ const startTimeout = 3 * time.Minute
 // test ends, and returns its seed broker address.
 func startRedpanda(t *testing.T) string {
 	t.Helper()
+	_, broker := startRedpandaContainer(t)
+	return broker
+}
+
+// startRedpandaContainer is startRedpanda that also returns the container,
+// for a test that stops it.
+func startRedpandaContainer(t *testing.T) (*tcredpanda.Container, string) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(t.Context(), startTimeout)
 	defer cancel()
@@ -44,7 +52,7 @@ func startRedpanda(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("seed broker: %v", err)
 	}
-	return broker
+	return ctr, broker
 }
 
 func TestRedpandaSmoke(t *testing.T) {

@@ -31,6 +31,11 @@ type Plan struct {
 	Steppers []string
 	// Warnings are the launch warnings for the user, in rewrite order.
 	Warnings []string
+	// InputWarnings are the input walker's warnings (the group override,
+	// start-at-latest, auto_replay_nacks), in rewrite order. They concern
+	// only the capture, so a run that doesn't capture (Restart, replay)
+	// doesn't show them.
+	InputWarnings []string
 	// Inputs are the findings of the input-tree walk (AD-5), one per
 	// input in walker order (pre-order, resources where first named). The
 	// rewrite refuses nothing on them; the Session decides.
@@ -314,7 +319,7 @@ func Rewrite(src []byte, opts Options) (Plan, error) {
 		return Plan{}, err
 	}
 	w.warnings = append(w.warnings, effectWarn.warnings...)
-	plan.Warnings, plan.stops, plan.paths, plan.bases = w.warnings, w.stops, w.paths, w.bases
+	plan.Warnings, plan.InputWarnings, plan.stops, plan.paths, plan.bases = w.warnings, w.inputWarnings, w.stops, w.paths, w.bases
 	return plan, nil
 }
 

@@ -181,6 +181,8 @@ type walker struct {
 	paths    map[string]string
 	bases    map[string]int
 	warnings []string
+	// inputWarnings are the input walker's capture-only warnings.
+	inputWarnings []string
 	// tainted holds the processor_resources labels used inside a
 	// concurrent parent; they stay unwrapped.
 	tainted map[string]bool
@@ -384,6 +386,12 @@ func (w *walker) resources(list *yaml.Node) error {
 
 func (w *walker) warn(line int, path, format string, args ...any) {
 	w.warnings = append(w.warnings, fmt.Sprintf("%s (line %d): ", path, line)+fmt.Sprintf(format, args...))
+}
+
+// inputWarn is warn for the input walker's capture-only warnings, which go
+// to Plan.InputWarnings.
+func (w *walker) inputWarn(line int, path, format string, args ...any) {
+	w.inputWarnings = append(w.inputWarnings, fmt.Sprintf("%s (line %d): ", path, line)+fmt.Sprintf(format, args...))
 }
 
 // holdsProcessors reports whether config v holds a processors list at any

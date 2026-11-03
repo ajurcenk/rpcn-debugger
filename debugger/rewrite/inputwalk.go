@@ -344,7 +344,7 @@ func (iw *inputWalker) overrideGroups(row inputRow, conf *yaml.Node, path string
 		ng := *gv
 		ng.Value, ng.Tag, ng.Style = group, "!!str", 0
 		conf.Content[slices.Index(conf.Content, gk)+1] = &ng
-		iw.w.warn(gk.Line, path+"."+g, "%s %q is replaced by the debug group %q for the capture", groupNoun(row), gv.Value, group)
+		iw.w.inputWarn(gk.Line, path+"."+g, "%s %q is replaced by the debug group %q for the capture", groupNoun(row), gv.Value, group)
 	}
 }
 
@@ -413,9 +413,9 @@ func (iw *inputWalker) warnLatest(row inputRow, conf *yaml.Node, path string) {
 			continue
 		}
 		if _, kept := iw.keptGroup(row, conf); kept {
-			iw.w.warn(k.Line, path+"."+s, "%s: %s starts at the latest offset unless the kept group has committed offsets, so the capture may wait for new records and the \"Waiting for the input\" note may follow", last, v.Value)
+			iw.w.inputWarn(k.Line, path+"."+s, "%s: %s starts at the latest offset unless the kept group has committed offsets, so the capture may wait for new records and the \"Waiting for the input\" note may follow", last, v.Value)
 		} else {
-			iw.w.warn(k.Line, path+"."+s, "%s: %s starts at the latest offset, so the capture waits for new records and the \"Waiting for the input\" note may follow", last, v.Value)
+			iw.w.inputWarn(k.Line, path+"."+s, "%s: %s starts at the latest offset, so the capture waits for new records and the \"Waiting for the input\" note may follow", last, v.Value)
 		}
 		return
 	}
@@ -438,5 +438,5 @@ func (iw *inputWalker) forceReplayNacks(conf *yaml.Node, path string) {
 	nv.Kind, nv.Value, nv.Tag, nv.Style, nv.Content = yaml.ScalarNode, "true", "!!bool", 0, nil
 	i := slices.Index(conf.Content, k)
 	conf.Content[i+1] = &nv
-	iw.w.warn(k.Line, path+".auto_replay_nacks", "auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints")
+	iw.w.inputWarn(k.Line, path+".auto_replay_nacks", "auto_replay_nacks is set to true for the capture: otherwise the capture's nack would be treated as an ack, committing offsets or advancing checkpoints")
 }

@@ -90,7 +90,7 @@ type Engine interface {
 	// rewrite options in opts (DebugGroup, InputClasses, KeepConsumerGroup,
 	// Output), and parses and lints it without running anything, resolving
 	// ${VAR} through opts.Lookup as Capture and Step do (AD-22). With
-	// opts.Restart it lints only what Step runs, not the capture config. It ignores opts.MaxMessages and
+	// opts.StepOnly it lints only what Step runs, not the capture config. It ignores opts.MaxMessages and
 	// opts.Prepared. It returns the rewritten configs in
 	// CheckResult.Prepared and the input findings in CheckResult.Inputs.
 	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
@@ -117,6 +117,12 @@ type Engine interface {
 	// atomically, with mode 0600; the Session owns the path rules and the
 	// folder.
 	SaveCapture(b CapturedBatch, pipeline, path string) error
+	// LoadCapture reads the capture file at path (AD-11), one SaveCapture
+	// wrote, as a CapturedBatch for Step, keeping at most maxMessages of its
+	// messages (0: all of them). Total counts the file's messages, its
+	// skipped ones included. A file that can't be read or decoded, or has a
+	// newer major schemaVersion, is an error naming the reason.
+	LoadCapture(path string, maxMessages int) (CapturedBatch, error)
 }
 
 // CapturedBatch is the batch a Capture took from the input (AD-4, AD-20).
@@ -161,9 +167,10 @@ type StartOptions struct {
 	// back to Capture and Step unchanged. nil makes them load the pipeline
 	// themselves.
 	Prepared any
-	// Restart marks the Check of a Restart (AD-20): the batch is already
-	// captured, so Check skips the capture config's lint.
-	Restart bool
+	// StepOnly marks a Check whose batch doesn't come from a capture:
+	// Restart (AD-20) and replay (AD-11). Check lints only what Step runs
+	// and skips the capture config's lint.
+	StepOnly bool
 }
 
 // Frontend receives the Session's events. Emit may be called from any

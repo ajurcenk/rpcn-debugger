@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -347,6 +348,9 @@ func (e funcEngine) Step(ctx context.Context, _ StartOptions, _ any, a Arriver) 
 }
 
 func (funcEngine) SaveCapture(CapturedBatch, string, string) error { return nil }
+func (funcEngine) LoadCapture(string, int) (CapturedBatch, error) {
+	return CapturedBatch{}, errors.New("no capture file")
+}
 
 func messages(n int) []Batch {
 	b := Batch{}
