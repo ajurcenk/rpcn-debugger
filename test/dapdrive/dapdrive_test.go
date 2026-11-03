@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ajurcenk/rpcn-debugger/debugger/engine"
 	"github.com/ajurcenk/rpcn-debugger/test/dapdrive"
 	"github.com/ajurcenk/rpcn-debugger/test/equivalence"
 )
@@ -866,5 +867,70 @@ func TestNothingCapturedEnds(t *testing.T) {
 	}
 	if asked != 0 || len(res.RestartErrors) != 0 {
 		t.Errorf("AfterRun asked %d times, restart errors = %q; want neither", asked, res.RestartErrors)
+	}
+}
+
+// saveCapture with maxMessages below the batch size writes the kept batch
+// to <cwd>/.rpcn-debug/ (AD-11, AD-22): the file is 0600, the folder's
+// .gitignore holds *, the Debug Console names the file, and ReadCapture
+// returns the kept messages with the batch's total.
+func TestSaveCapture(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 12
+    batch_size: 12
+    interval: ""
+    mapping: |
+      root.n = counter()
+      meta source = "save"
+pipeline:
+  processors:
+    - mapping: 'root.doubled = this.n * 2'
+output:
+  drop: {}
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: pipeline, Script: dapdrive.Always(dapdrive.Continue),
+		Launch: map[string]any{"maxMessages": 10, "saveCapture": "orders.json"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(filepath.Dir(pipeline), ".rpcn-debug")
+	path := filepath.Join(dir, "orders.json")
+	if notes := outputs(res, "Saved the capture to "); len(notes) != 1 || notes[0] != "Saved the capture to "+path+".\n" {
+		t.Errorf("save notes = %q, want one naming %s", notes, path)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("capture file mode = %v, want 0600", fi.Mode().Perm())
+	}
+	if gi, err := os.ReadFile(filepath.Join(dir, ".gitignore")); err != nil || string(gi) != "*\n" {
+		t.Errorf(".gitignore = %q, %v; want *", gi, err)
+	}
+	batch, total, err := engine.ReadCapture(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch) != 10 || total != 12 {
+		t.Fatalf("ReadCapture = %d of %d messages, want 10 of 12", len(batch), total)
+	}
+	for i, m := range batch {
+		raw, _ := m.AsBytes()
+		if want := fmt.Sprintf(`{"n":%d}`, i+1); string(raw) != want {
+			t.Errorf("message %d = %s, want %s", i, raw, want)
+		}
+		if v, ok := m.MetaGetMut("source"); !ok || v != "save" {
+			t.Errorf("message %d source = %v, %v", i, v, ok)
+		}
+	}
+	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 10 {
+		t.Errorf("delivered = %d batches, want one of 10 messages", len(res.Delivered))
 	}
 }

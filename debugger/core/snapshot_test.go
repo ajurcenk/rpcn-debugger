@@ -70,3 +70,16 @@ func TestSnapshotJSONRoundTrip(t *testing.T) {
 		t.Errorf("re-encoding differs:\n%s\n%s", again, raw)
 	}
 }
+
+// CheckSchemaVersion reads an older or equal major and refuses a newer
+// major and a missing or unparseable version.
+func TestCheckSchemaVersion(t *testing.T) {
+	for v, ok := range map[string]bool{
+		"1.0": true, "1.9": true, "0.1": true,
+		"2.0": false, "10.0": false, "": false, "1": false, "x.0": false, "1.x": false, "+1.0": false, "-1.0": false,
+	} {
+		if err := CheckSchemaVersion(v); (err == nil) != ok {
+			t.Errorf("CheckSchemaVersion(%q) = %v, want ok %v", v, err, ok)
+		}
+	}
+}

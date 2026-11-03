@@ -30,8 +30,8 @@ func TestDecodeLaunch(t *testing.T) {
 		"every key": {
 			args: `{"pipeline":"p.yaml","cwd":"/w","maxMessages":3,"env":{"A":"x","B":"${env:B}"},"envFile":".env",
 				"keepConsumerGroup":true,"allowSideEffects":true,"inputClasses":{"aws_sqs":"replay-safe","generate":"rejected","nats":"side-effecting"},
-				"output":"real"}`,
-			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3, Output: "real",
+				"output":"real","saveCapture":"orders.json"}`,
+			want: LaunchConfig{Pipeline: "p.yaml", Cwd: "/w", MaxMessages: 3, Output: "real", SaveCapture: "orders.json",
 				Env: map[string]string{"A": "x", "B": "${env:B}"}, EnvFile: ".env", KeepConsumerGroup: true, AllowSideEffects: true,
 				InputClasses: map[string]string{"aws_sqs": "replay-safe", "generate": "rejected", "nats": "side-effecting"}},
 		},
@@ -57,31 +57,32 @@ func TestDecodeLaunchInvalid(t *testing.T) {
 		args string
 		want []string
 	}{
-		"unknown key":     {`{"pipeline":"p.yaml","maxMesages":5}`, []string{`"maxMesages"`, "unknown key"}},
-		"unknown keys":    {`{"pipeline":"p.yaml","zz":1,"aa":2}`, []string{`"aa", "zz"`, "unknown keys"}},
-		"max zero":        {`{"pipeline":"p.yaml","maxMessages":0}`, []string{`"maxMessages"`, "at least 1"}},
-		"max too big":     {`{"pipeline":"p.yaml","maxMessages":1025}`, []string{`"maxMessages"`, "at most 1024"}},
-		"max string":      {`{"pipeline":"p.yaml","maxMessages":"5"}`, []string{`"maxMessages"`, "an integer", "not a string"}},
-		"max fraction":    {`{"pipeline":"p.yaml","maxMessages":2.5}`, []string{`"maxMessages"`, "an integer"}},
-		"max null":        {`{"pipeline":"p.yaml","maxMessages":null}`, []string{`"maxMessages"`, "null"}},
-		"env number":      {`{"pipeline":"p.yaml","env":{"A":1}}`, []string{`"env.A"`, "a string", "a number"}},
-		"env not object":  {`{"pipeline":"p.yaml","env":["A"]}`, []string{`"env"`, "an array"}},
-		"empty envFile":   {`{"pipeline":"p.yaml","envFile":""}`, []string{`"envFile"`, "non-empty"}},
-		"empty pipeline":  {`{"pipeline":""}`, []string{`"pipeline"`, "non-empty"}},
-		"pipeline number": {`{"pipeline":3}`, []string{`"pipeline"`, "a string"}},
-		"cwd number":      {`{"pipeline":"p.yaml","cwd":1}`, []string{`"cwd"`, "a string"}},
-		"envFile bool":    {`{"pipeline":"p.yaml","envFile":true}`, []string{`"envFile"`, "a string"}},
-		"not an object":   {`"not an object"`, []string{"launch arguments"}},
-		"class maybe":     {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"maybe"}}`, []string{`"inputClasses.aws_sqs"`, "one of replay-safe, side-effecting, rejected"}},
-		"class unknown":   {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"unknown"}}`, []string{`"inputClasses.aws_sqs"`, "one of"}},
-		"class number":    {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":1}}`, []string{`"inputClasses.aws_sqs"`, "a string"}},
-		"classes array":   {`{"pipeline":"p.yaml","inputClasses":["aws_sqs"]}`, []string{`"inputClasses"`, "an array"}},
-		"allow string":    {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
-		"allow null":      {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
-		"keep string":     {`{"pipeline":"p.yaml","keepConsumerGroup":"yes"}`, []string{`"keepConsumerGroup"`, "a boolean", "a string"}},
-		"output maybe":    {`{"pipeline":"p.yaml","output":"maybe"}`, []string{`"output"`, "one of dry-run, real, none"}},
-		"output bool":     {`{"pipeline":"p.yaml","output":true}`, []string{`"output"`, "a string"}},
-		"output null":     {`{"pipeline":"p.yaml","output":null}`, []string{`"output"`, "null"}},
+		"unknown key":       {`{"pipeline":"p.yaml","maxMesages":5}`, []string{`"maxMesages"`, "unknown key"}},
+		"unknown keys":      {`{"pipeline":"p.yaml","zz":1,"aa":2}`, []string{`"aa", "zz"`, "unknown keys"}},
+		"max zero":          {`{"pipeline":"p.yaml","maxMessages":0}`, []string{`"maxMessages"`, "at least 1"}},
+		"max too big":       {`{"pipeline":"p.yaml","maxMessages":1025}`, []string{`"maxMessages"`, "at most 1024"}},
+		"max string":        {`{"pipeline":"p.yaml","maxMessages":"5"}`, []string{`"maxMessages"`, "an integer", "not a string"}},
+		"max fraction":      {`{"pipeline":"p.yaml","maxMessages":2.5}`, []string{`"maxMessages"`, "an integer"}},
+		"max null":          {`{"pipeline":"p.yaml","maxMessages":null}`, []string{`"maxMessages"`, "null"}},
+		"env number":        {`{"pipeline":"p.yaml","env":{"A":1}}`, []string{`"env.A"`, "a string", "a number"}},
+		"env not object":    {`{"pipeline":"p.yaml","env":["A"]}`, []string{`"env"`, "an array"}},
+		"empty envFile":     {`{"pipeline":"p.yaml","envFile":""}`, []string{`"envFile"`, "non-empty"}},
+		"empty pipeline":    {`{"pipeline":""}`, []string{`"pipeline"`, "non-empty"}},
+		"pipeline number":   {`{"pipeline":3}`, []string{`"pipeline"`, "a string"}},
+		"cwd number":        {`{"pipeline":"p.yaml","cwd":1}`, []string{`"cwd"`, "a string"}},
+		"envFile bool":      {`{"pipeline":"p.yaml","envFile":true}`, []string{`"envFile"`, "a string"}},
+		"not an object":     {`"not an object"`, []string{"launch arguments"}},
+		"class maybe":       {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"maybe"}}`, []string{`"inputClasses.aws_sqs"`, "one of replay-safe, side-effecting, rejected"}},
+		"class unknown":     {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":"unknown"}}`, []string{`"inputClasses.aws_sqs"`, "one of"}},
+		"class number":      {`{"pipeline":"p.yaml","inputClasses":{"aws_sqs":1}}`, []string{`"inputClasses.aws_sqs"`, "a string"}},
+		"classes array":     {`{"pipeline":"p.yaml","inputClasses":["aws_sqs"]}`, []string{`"inputClasses"`, "an array"}},
+		"empty saveCapture": {`{"pipeline":"p.yaml","saveCapture":""}`, []string{`"saveCapture"`, "non-empty"}},
+		"allow string":      {`{"pipeline":"p.yaml","allowSideEffects":"yes"}`, []string{`"allowSideEffects"`, "a boolean", "a string"}},
+		"allow null":        {`{"pipeline":"p.yaml","allowSideEffects":null}`, []string{`"allowSideEffects"`, "null"}},
+		"keep string":       {`{"pipeline":"p.yaml","keepConsumerGroup":"yes"}`, []string{`"keepConsumerGroup"`, "a boolean", "a string"}},
+		"output maybe":      {`{"pipeline":"p.yaml","output":"maybe"}`, []string{`"output"`, "one of dry-run, real, none"}},
+		"output bool":       {`{"pipeline":"p.yaml","output":true}`, []string{`"output"`, "a string"}},
+		"output null":       {`{"pipeline":"p.yaml","output":null}`, []string{`"output"`, "null"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -125,7 +126,7 @@ func TestSchema(t *testing.T) {
 	for k := range props {
 		keys = append(keys, k)
 	}
-	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses", "output"} {
+	for _, k := range []string{"pipeline", "cwd", "maxMessages", "env", "envFile", "keepConsumerGroup", "allowSideEffects", "inputClasses", "output", "saveCapture"} {
 		p, ok := props[k].(map[string]any)
 		if !ok {
 			t.Errorf("schema has no %q (has %v)", k, keys)
@@ -135,8 +136,8 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%q has no description", k)
 		}
 	}
-	if len(props) != 9 {
-		t.Errorf("schema keys = %v, want exactly the nine launch keys", keys)
+	if len(props) != 10 {
+		t.Errorf("schema keys = %v, want exactly the ten launch keys", keys)
 	}
 	if out := props["output"].(map[string]any); out["type"] != "string" || out["default"] != "dry-run" ||
 		!reflect.DeepEqual(out["enum"], []string{"dry-run", "real", "none"}) {

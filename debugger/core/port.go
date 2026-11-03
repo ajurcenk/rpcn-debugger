@@ -110,6 +110,13 @@ type Engine interface {
 	// (Restart, AD-20) sees it as captured. It returns nil once the batch is
 	// delivered, or an error when ctx ends or the run fails.
 	Step(ctx context.Context, opts StartOptions, batch any, a Arriver) error
+	// SaveCapture writes b, a CapturedBatch that Capture returned, as a
+	// capture file at path (AD-11): a Snapshot of its kept messages, with
+	// the dropped ones in skipped, positioned at the pipeline file
+	// pipeline. The engine owns the encoding and replaces an existing file
+	// atomically, with mode 0600; the Session owns the path rules and the
+	// folder.
+	SaveCapture(b CapturedBatch, pipeline, path string) error
 }
 
 // CapturedBatch is the batch a Capture took from the input (AD-4, AD-20).

@@ -47,6 +47,12 @@ type Launch struct {
 	// Output is where delivered batches go (AD-5, AD-21): one of
 	// OutputModes, with "" read as OutputDryRun.
 	Output OutputMode
+	// SaveCapture, when set, names the capture file the Session writes the
+	// kept batch to, right after the capture and before stepping (AD-11,
+	// AD-22): <Cwd>/.rpcn-debug/<SaveCapture>, mode 0600. It must be a
+	// local relative path (filepath.IsLocal), or the launch is
+	// LAUNCH_INVALID. "" means no capture file.
+	SaveCapture string
 }
 
 // ConfigurationDone starts the debuggee.
@@ -109,8 +115,10 @@ type SetMessage struct {
 	Metadata []Meta
 }
 
-// SaveCapture writes the captured batch to a capture file (AD-11, AD-22).
-// Not supported yet: epic-edit-restart-replay implements it.
+// SaveCapture writes the kept batch to a capture file (AD-11, AD-22):
+// <cwd>/.rpcn-debug/<Path>, mode 0600, by the rules of Launch.SaveCapture.
+// Path is a local relative path, or the command is LAUNCH_INVALID. It is
+// NOT_SUPPORTED before the batch is captured. No DAP request maps to it.
 type SaveCapture struct{ Path string }
 
 // Restart re-steps the captured batch from the entry stop, after

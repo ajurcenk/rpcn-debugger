@@ -50,6 +50,7 @@ type Session struct {
 	inputClasses map[string]InputClass // the inputClasses rewrite option (AD-5)
 	keepGroup    bool                  // the keepConsumerGroup rewrite option (AD-5)
 	output       OutputMode            // the output rewrite option (AD-21)
+	saveName     string                // the saveCapture file name under <cwd>/.rpcn-debug/, or "" (AD-11, AD-22)
 	prepared     any                   // Check's configs, run by Capture and Step (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
 	delivered    int                   // batches delivered in this run, numbering them (AD-3); Restart resets it
@@ -135,7 +136,7 @@ func (s *Session) Do(_ context.Context, cmd Command) (Result, error) {
 	case SetMessage:
 		return nil, notSupported("Editing a message", "epic-edit-restart-replay")
 	case SaveCapture:
-		return nil, notSupported("Saving a capture", "epic-edit-restart-replay")
+		return nil, s.saveCaptureCmd(c.Path)
 	case Restart:
 		return nil, s.restart()
 	default:
@@ -162,6 +163,11 @@ func (s *Session) launch(c Launch) error {
 	}
 	if err := checkOutputMode(c.Output); err != nil {
 		return err
+	}
+	if c.SaveCapture != "" {
+		if err := checkCaptureName(`"saveCapture"`, c.SaveCapture); err != nil {
+			return err
+		}
 	}
 	// Every path ends up absolute: frontends open and highlight the frame's
 	// file by it.
@@ -236,7 +242,7 @@ func (s *Session) launch(c Launch) error {
 	s.mu.Lock()
 	s.pipeline, s.cwd, s.lines, s.translate, s.launched = pipeline, cwd, res.Lines, res.Translator, true
 	s.delivery, s.debugGroup, s.prepared, s.inputClasses = res.Delivery, group, res.Prepared, classes
-	s.keepGroup, s.output = c.KeepConsumerGroup, c.Output.Effective()
+	s.keepGroup, s.output, s.saveName = c.KeepConsumerGroup, c.Output.Effective(), c.SaveCapture
 	s.maxMessages, s.env, s.envFile, s.lookup = c.MaxMessages, env, envFile, lookup
 	s.mu.Unlock()
 	// Outside the lock: Emit is never called while it is held.
@@ -409,7 +415,8 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 }
 
 // run is one debug run of generation gen: it captures the batch, unless
-// kept is the batch a Restart re-steps, then steps it. It closes done when
+// kept is the batch a Restart re-steps, saves it when the launch sets
+// saveCapture, then steps it. It closes done when
 // it returns. A run that a Restart replaced (its gen is stale) ends without
 // a word: no note, ThreadExited or Terminated.
 //
@@ -430,6 +437,9 @@ func (s *Session) run(ctx context.Context, opts StartOptions, kept *CapturedBatc
 		var b CapturedBatch
 		if b, err = s.capture(ctx, opts); err == nil {
 			kept = &b
+			// Only the launch's own capture is saved: a Restart re-steps
+			// the batch already saved.
+			s.autoSave(b)
 		}
 	}
 	if err == nil {

@@ -44,6 +44,8 @@ func (checkEngine) Capture(context.Context, core.StartOptions) (core.CapturedBat
 
 func (checkEngine) Step(context.Context, core.StartOptions, any, core.Arriver) error { return nil }
 
+func (checkEngine) SaveCapture(core.CapturedBatch, string, string) error { return nil }
+
 const logPipeline = `input:
   generate: {mapping: 'root = {}'}
 pipeline:

@@ -98,8 +98,36 @@ type fakeEngine struct {
 	// stepOpts receives the options of each Step, when set.
 	stepOpts chan StartOptions
 
+	// saveErr is what SaveCapture returns; nil: it writes "capture" at
+	// the path, mode 0600.
+	saveErr error
+
 	mu       sync.Mutex
 	captures int // Capture calls that returned a batch
+	saves    []savedCapture
+}
+
+// savedCapture is one SaveCapture call.
+type savedCapture struct {
+	b              CapturedBatch
+	pipeline, path string
+}
+
+func (e *fakeEngine) SaveCapture(b CapturedBatch, pipeline, path string) error {
+	e.mu.Lock()
+	e.saves = append(e.saves, savedCapture{b, pipeline, path})
+	saveErr := e.saveErr
+	e.mu.Unlock()
+	if saveErr != nil {
+		return saveErr
+	}
+	return os.WriteFile(path, []byte("capture"), 0o600)
+}
+
+func (e *fakeEngine) savedCaptures() []savedCapture {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]savedCapture(nil), e.saves...)
 }
 
 func (e *fakeEngine) Check(opts StartOptions) (CheckResult, error) {
@@ -428,6 +456,8 @@ func (e *pathEngine) Capture(context.Context, StartOptions) (CapturedBatch, erro
 
 func (e *pathEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }
 
+func (e *pathEngine) SaveCapture(CapturedBatch, string, string) error { return nil }
+
 func TestNothingCaptured(t *testing.T) {
 	e := newEngine()
 	e.startErr = NewError(CodeNothingCaptured, "no batch was captured: the input closed")
@@ -517,7 +547,7 @@ func TestNotSupported(t *testing.T) {
 	}
 	before, _ := s.Stopped()
 	for _, cmd := range []Command{
-		Evaluate{Expression: "this"}, SetMessage{}, SaveCapture{},
+		Evaluate{Expression: "this"}, SetMessage{},
 	} {
 		res, err := s.Do(context.Background(), cmd)
 		var ce Error

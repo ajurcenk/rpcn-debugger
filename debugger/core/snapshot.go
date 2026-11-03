@@ -1,10 +1,50 @@
 package core
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // SchemaVersion is the Snapshot schema version this build writes. Readers
 // reject a newer major version (AD-11).
 const SchemaVersion = "1.0"
+
+// CheckSchemaVersion is the major-version gate of a Snapshot reader
+// (AD-11): v, a Snapshot's schemaVersion "<major>.<minor>", is readable
+// when its major is at most SchemaVersion's. A newer major, and a missing
+// or unparseable version, is an error naming it.
+func CheckSchemaVersion(v string) error {
+	if v == "" {
+		return errors.New("the snapshot has no schemaVersion")
+	}
+	have, ok := majorVersion(v)
+	if !ok {
+		return fmt.Errorf("the snapshot's schemaVersion %q is not a <major>.<minor> version", v)
+	}
+	if want, _ := majorVersion(SchemaVersion); have > want {
+		return fmt.Errorf("the snapshot's schemaVersion %s is newer than this rpcn-debug reads (%s): update rpcn-debug", v, SchemaVersion)
+	}
+	return nil
+}
+
+// majorVersion returns the major of a "<major>.<minor>" version.
+func majorVersion(v string) (int, bool) {
+	major, minor, ok := strings.Cut(v, ".")
+	if !ok {
+		return 0, false
+	}
+	m, err := strconv.Atoi(major)
+	if err != nil || m < 0 || strings.HasPrefix(major, "+") {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(minor); err != nil || n < 0 || strings.HasPrefix(minor, "+") {
+		return 0, false
+	}
+	return m, true
+}
 
 // Snapshot is the only representation of message state (AD-11): the DAP
 // Variables, capture files and tests all use it. It never references engine

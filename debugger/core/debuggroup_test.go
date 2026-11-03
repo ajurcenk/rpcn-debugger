@@ -86,3 +86,5 @@ func (e *prepEngine) Capture(_ context.Context, o StartOptions) (CapturedBatch, 
 }
 
 func (e *prepEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }
+
+func (e *prepEngine) SaveCapture(CapturedBatch, string, string) error { return nil }

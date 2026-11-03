@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ type restartEngine struct {
 	checks   []StartOptions
 	steps    []StartOptions
 	captures int
+	saves    []string // the paths of SaveCapture calls
 	// hold, when set, makes Capture wait for it: a quiet input.
 	hold chan struct{}
 	// torn, when set, is closed once a Step's stop was released with an
@@ -74,6 +76,13 @@ func (e *restartEngine) Step(ctx context.Context, opts StartOptions, batch any, 
 		return err
 	}
 	return a.Arrive(ctx, 0, 1, b)
+}
+
+func (e *restartEngine) SaveCapture(_ CapturedBatch, _, path string) error {
+	e.mu.Lock()
+	e.saves = append(e.saves, path)
+	e.mu.Unlock()
+	return os.WriteFile(path, []byte("capture"), 0o600)
 }
 
 func (e *restartEngine) set(mapping string, checkErr error) {

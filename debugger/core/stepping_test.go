@@ -346,6 +346,8 @@ func (e funcEngine) Step(ctx context.Context, _ StartOptions, _ any, a Arriver) 
 	return e.start(ctx, a)
 }
 
+func (funcEngine) SaveCapture(CapturedBatch, string, string) error { return nil }
+
 func messages(n int) []Batch {
 	b := Batch{}
 	for i := range n {

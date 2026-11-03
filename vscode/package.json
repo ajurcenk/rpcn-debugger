@@ -113,6 +113,11 @@
                 "description": "The pipeline YAML file to debug. A relative path resolves against cwd. When unset, the file in the active editor is debugged.",
                 "minLength": 1,
                 "type": "string"
+              },
+              "saveCapture": {
+                "description": "Save the captured batch (the messages maxMessages kept, with the dropped ones listed as skipped) to a capture file, right after the capture and before stepping. The value is a file name inside the .rpcn-debug folder under cwd, e.g. orders.json; a path that leaves that folder (.. or an absolute path) fails the launch. The folder is created, with a .gitignore that ignores it, and the file is written with mode 0600, replacing an existing one. The file holds message contents and metadata as captured: keep it private. Restart doesn't save again.",
+                "minLength": 1,
+                "type": "string"
               }
             }
           }

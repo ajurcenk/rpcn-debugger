@@ -91,6 +91,8 @@ func (e *fakeEngine) Step(ctx context.Context, _ core.StartOptions, _ any, a cor
 	return err
 }
 
+func (e *fakeEngine) SaveCapture(core.CapturedBatch, string, string) error { return nil }
+
 func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	if e.nested {
 		return e.startNested(ctx, a)
