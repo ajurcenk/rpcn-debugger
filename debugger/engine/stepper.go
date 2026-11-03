@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/redpanda-data/benthos/v4/public/service"
@@ -240,9 +241,18 @@ func (s *stepper) run(ctx context.Context, batch service.MessageBatch) ([]servic
 		}
 		s.arriver.Skip(ctx, s.id, i, skipped, of)
 		if runs {
-			if err := s.arriver.Arrive(ctx, s.id, i, snap); err != nil {
+			edits, err := s.arriver.Arrive(ctx, s.id, i, snap)
+			if err != nil {
 				// The session ended: deliver nothing.
 				return nil, nil
+			}
+			if len(edits) > 0 {
+				// The stop's edits reach this child and every later one
+				// (AD-19); snap's batch b is items[b].
+				batches := applyEdits(batchesOf(items), edits, s.log)
+				for b := range items {
+					items[b].batch = batches[b]
+				}
 			}
 		}
 		var next []item
@@ -266,13 +276,53 @@ func (s *stepper) run(ctx context.Context, batch service.MessageBatch) ([]servic
 		items = next
 	}
 	out = batchesOf(items)
-	// The end-of-entry stop only observes: it runs even when a child left
-	// no batches, and changes nothing (AD-8).
-	if err := s.arriver.Arrive(ctx, s.id, len(s.procs), snapshotBatches(out)); err != nil {
+	// The end-of-entry stop runs even when a child left no batches, and
+	// changes nothing (AD-8) but the edits made at it (AD-19), which go to
+	// the batches the entry hands back.
+	edits, err := s.arriver.Arrive(ctx, s.id, len(s.procs), snapshotBatches(out))
+	if err != nil {
 		return nil, nil
+	}
+	if len(edits) > 0 {
+		out = applyEdits(out, edits, s.log)
 	}
 	done = true
 	return out, nil
+}
+
+// applyEdits applies the edits made at a stop (AD-19) to batches, the
+// batches the stop's Snapshot was built from, in order, and returns them.
+// An edited message is replaced by a copy in a copy of its batch before it
+// changes, so a message or batch shared with another batch (or with the
+// captured batch, AD-20) is never edited. The Session checked every edit
+// against the Snapshot; one that doesn't fit anyway is logged and dropped.
+func applyEdits(batches []service.MessageBatch, edits []core.SetMessage, log *service.Logger) []service.MessageBatch {
+	out := slices.Clone(batches)
+	cloned := map[int]bool{}
+	for _, e := range edits {
+		if e.Batch < 0 || e.Batch >= len(out) || e.Index < 0 || e.Index >= len(out[e.Batch]) {
+			log.Warnf("dropping an edit of message %d of batch %d: the stop has no such message", e.Index, e.Batch)
+			continue
+		}
+		if !cloned[e.Batch] {
+			out[e.Batch] = slices.Clone(out[e.Batch])
+			cloned[e.Batch] = true
+		}
+		m := out[e.Batch][e.Index].Copy()
+		if e.Content != nil {
+			m.SetBytes(slices.Clone(e.Content))
+		}
+		for _, md := range e.Metadata {
+			v, err := metaValue(md)
+			if err != nil {
+				log.Warnf("dropping the edit of metadata %q: %v", md.Key, err)
+				continue
+			}
+			m.MetaSetMut(md.Key, v)
+		}
+		out[e.Batch][e.Index] = m
+	}
+	return out
 }
 
 // skips reports whether b passes the next child without running it (AD-7).

@@ -67,8 +67,8 @@ test('rpcn-debug answers initialize and exits 0 on disconnect', async () => {
     assert.equal(init.command, 'initialize');
     assert.deepEqual(
       init.body ?? {},
-      { supportsConfigurationDoneRequest: true, supportsRestartRequest: true },
-      'initialize must advertise only configurationDone and restart',
+      { supportsConfigurationDoneRequest: true, supportsRestartRequest: true, supportsSetVariable: true },
+      'initialize must advertise only configurationDone, restart and setVariable',
     );
 
     const disc = await dc.disconnectRequest();

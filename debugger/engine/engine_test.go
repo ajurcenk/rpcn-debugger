@@ -106,7 +106,7 @@ func (a *arriver) Enter(ctx context.Context, e core.Entry) (context.Context, fun
 
 func (a *arriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 
-func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
+func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) ([]core.SetMessage, error) {
 	a.mu.Lock()
 	a.got = append(a.got, arrival{stepperID, childIndex, batches, core.FrameStack(ctx)})
 	a.mu.Unlock()
@@ -119,12 +119,12 @@ func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches
 	if a.block != nil {
 		select {
 		case <-a.block:
-			return core.NewError(core.CodeSessionEnded, "ended")
+			return nil, core.NewError(core.CodeSessionEnded, "ended")
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func standard() *service.Environment { return service.NewEnvironment() }

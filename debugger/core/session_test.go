@@ -47,7 +47,7 @@ func (st *fakeStepper) run(ctx context.Context, a Arriver, batch []Batch) error 
 		if b == nil {
 			b = batchAt(st.id, i)
 		}
-		if err := a.Arrive(ctx, st.id, i, b); err != nil {
+		if _, err := a.Arrive(ctx, st.id, i, b); err != nil {
 			return err
 		}
 		if c.sub != nil {
@@ -61,7 +61,8 @@ func (st *fakeStepper) run(ctx context.Context, a Arriver, batch []Batch) error 
 	if b == nil {
 		b = batchAt(st.id, len(st.children))
 	}
-	return a.Arrive(ctx, st.id, len(st.children), b)
+	_, err := a.Arrive(ctx, st.id, len(st.children), b)
+	return err
 }
 
 // fakeEngine runs its top-level steppers in order on one batch, then
@@ -524,12 +525,12 @@ func TestGateHeldWhilePaused(t *testing.T) {
 	s.mu.Unlock()
 
 	first := make(chan error, 1)
-	go func() { first <- s.Arrive(context.Background(), 0, 0, nil) }()
+	go func() { _, err := s.Arrive(context.Background(), 0, 0, nil); first <- err }()
 	if ev := rec.next(t); ev.kind != "stopped" {
 		t.Fatalf("event = %+v", ev)
 	}
 	second := make(chan error, 1)
-	go func() { second <- s.Arrive(context.Background(), 0, 1, nil) }()
+	go func() { _, err := s.Arrive(context.Background(), 0, 1, nil); second <- err }()
 	select {
 	case <-second:
 		t.Fatal("second Arrive passed the gate while the first was paused")
@@ -554,7 +555,7 @@ func TestNotSupported(t *testing.T) {
 	}
 	before, _ := s.Stopped()
 	for _, cmd := range []Command{
-		Evaluate{Expression: "this"}, SetMessage{},
+		Evaluate{Expression: "this"},
 	} {
 		res, err := s.Do(context.Background(), cmd)
 		var ce Error

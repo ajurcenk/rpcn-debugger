@@ -137,7 +137,7 @@ func (s *Session) Do(_ context.Context, cmd Command) (Result, error) {
 	case Evaluate:
 		return nil, notSupported("Evaluate", "epic-breakpoints-and-evaluation")
 	case SetMessage:
-		return nil, notSupported("Editing a message", "epic-edit-restart-replay")
+		return nil, s.setMessage(c)
 	case SaveCapture:
 		return nil, s.saveCaptureCmd(c.Path)
 	case Restart:

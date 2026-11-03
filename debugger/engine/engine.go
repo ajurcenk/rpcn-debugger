@@ -477,6 +477,8 @@ func (nopArriver) Enter(ctx context.Context, _ core.Entry) (context.Context, fun
 
 func (nopArriver) Skip(context.Context, int, int, []core.Skipped, int) {}
 
-func (nopArriver) Arrive(context.Context, int, int, []core.Batch) error { return nil }
+func (nopArriver) Arrive(context.Context, int, int, []core.Batch) ([]core.SetMessage, error) {
+	return nil, nil
+}
 
 func (nopArriver) Deliver(context.Context, core.Batch, core.Outcome, error) {}

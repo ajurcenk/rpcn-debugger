@@ -1068,3 +1068,210 @@ func TestReplayRejectedInput(t *testing.T) {
 		t.Errorf("delivered differs:\n got  %+v\n want %+v", res.Delivered, saved.Delivered)
 	}
 }
+
+const editSample = "../../testdata/tracer/edit.yaml"
+
+func strp(s string) *string { return &s }
+
+// runEdits runs pipeline with Always(script), making edits(stops) at each
+// stop.
+func runEdits(t *testing.T, pipeline string, script dapdrive.Command, edits func([]dapdrive.Stop) []dapdrive.Edit) dapdrive.Result {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline, Script: dapdrive.Always(script), Edits: edits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// atStop returns the Edits func that makes edit at stop n (1-based) only.
+func atStop(n int, edit ...dapdrive.Edit) func([]dapdrive.Stop) []dapdrive.Edit {
+	return func(stops []dapdrive.Stop) []dapdrive.Edit {
+		if len(stops) == n {
+			return edit
+		}
+		return nil
+	}
+}
+
+// deliveredOne returns the one message of the one delivered batch.
+func deliveredOne(t *testing.T, res dapdrive.Result) dapdrive.Message {
+	t.Helper()
+	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 1 {
+		t.Fatalf("delivered = %+v, want one batch of one message", res.Delivered)
+	}
+	return res.Delivered[0][0]
+}
+
+// Edits at the stop before the second mapping (AD-19): the JSON content
+// and an int metadata value reach the second mapping, which reads both;
+// the first never saw them, and the stop's view shows them.
+func TestEditContentAndMetadata(t *testing.T) {
+	res := runEdits(t, editSample, dapdrive.Next, atStop(2, dapdrive.Edit{
+		Content: strp(`{"first":1,"n":5}`), Meta: map[string]string{"count": "42"},
+	}))
+	if len(res.EditErrors) != 0 {
+		t.Fatalf("edit errors = %q", res.EditErrors)
+	}
+	if len(res.Stops) < 2 || res.Stops[1].UserPath != "pipeline.processors[1]" {
+		t.Fatalf("stops = %q, want the second stop before pipeline.processors[1]", trace(res))
+	}
+	if got := res.Stops[0].Batches[0][0]; got.Content != `{"n":1}` || got.Metadata["count"] != (dapdrive.Meta{Type: "int", Value: "7"}) {
+		t.Errorf("first stop = %+v, want the message as captured", got)
+	}
+	if got := res.Stops[1].Batches[0][0]; got.Content != `{"first":1,"n":1}` {
+		t.Errorf("second stop before the edit = %+v", got)
+	}
+	edited := res.Stops[1].Edited
+	if len(edited) != 1 || edited[0][0].Content != `{"first":1,"n":5}` || edited[0][0].Metadata["count"] != (dapdrive.Meta{Type: "int", Value: "42"}) {
+		t.Errorf("second stop after the edit = %+v, want the edits", edited)
+	}
+	m := deliveredOne(t, res)
+	if m.Content != `{"count":42,"first":1,"n":5,"second":50}` {
+		t.Errorf("delivered content = %s, want the edits passed through the second mapping", m.Content)
+	}
+	if got := m.Metadata["count"]; got.Type != "int" || got.Value != "42" {
+		t.Errorf("delivered count = %+v, want int 42", got)
+	}
+	if got := m.Metadata["seen"]; got.Type != "int" || got.Value != "43" {
+		t.Errorf("delivered seen = %+v, want int 43 (the edited count + 1)", got)
+	}
+}
+
+// Refused edits (EDIT_INVALID) change nothing: a value that doesn't parse
+// as the key's type and an unknown key.
+func TestEditRefused(t *testing.T) {
+	res := runEdits(t, editSample, dapdrive.Next, atStop(2,
+		dapdrive.Edit{Meta: map[string]string{"count": "4x"}},
+		dapdrive.Edit{Meta: map[string]string{"nope": "1"}},
+		dapdrive.Edit{Batch: 3, Content: strp("x")},
+	))
+	if len(res.EditErrors) != 3 || !strings.Contains(res.EditErrors[0], `"count"`) ||
+		!strings.Contains(res.EditErrors[1], `"nope"`) || !strings.Contains(res.EditErrors[2], "batch 3") {
+		t.Errorf("edit errors = %q, want the bad int, the unknown key and the unknown batch", res.EditErrors)
+	}
+	if res.Stops[1].Edited != nil {
+		t.Errorf("a stop with only refused edits re-read its batches: %+v", res.Stops[1].Edited)
+	}
+	if m := deliveredOne(t, res); m.Content != `{"count":7,"first":1,"n":1,"second":10}` {
+		t.Errorf("delivered = %s, want the batch unedited", m.Content)
+	}
+}
+
+// A parent frame of a nested stop can't be edited; its top frame can.
+func TestEditNonTopFrame(t *testing.T) {
+	pipeline := filepath.Join(parents, "branch.yaml")
+	edits := func(stops []dapdrive.Stop) []dapdrive.Edit {
+		if st := stops[len(stops)-1]; len(st.Frames) == 2 && !st.End {
+			return []dapdrive.Edit{{Frame: 1, Content: strp(`{"n":2}`)}}
+		}
+		return nil
+	}
+	res := runEdits(t, pipeline, dapdrive.StepIn, edits)
+	if len(res.EditErrors) != 1 || !strings.Contains(res.EditErrors[0], "top frame") {
+		t.Errorf("edit errors = %q, want the parent frame refused", res.EditErrors)
+	}
+	sameAsReference(t, pipeline, res.Delivered)
+}
+
+// Content shown as base64 (not UTF-8) takes base64 text, and refuses text
+// that isn't.
+func TestEditBinaryContent(t *testing.T) {
+	pipeline := writeYAML(t, `
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = "/wA=".decode("base64")'
+pipeline:
+  processors:
+    - mutation: 'meta seen = "yes"'
+output:
+  drop: {}
+`)
+	for name, tc := range map[string]struct {
+		content, want string
+		refused       bool
+	}{
+		"valid":   {content: "aGk=", want: "hi"},
+		"invalid": {content: "not base64!", want: "/wA=", refused: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := runEdits(t, pipeline, dapdrive.Continue, atStop(1, dapdrive.Edit{Content: strp(tc.content)}))
+			if tc.refused != (len(res.EditErrors) == 1) {
+				t.Errorf("edit errors = %q, refused %v", res.EditErrors, tc.refused)
+			}
+			if got := res.Stops[0].Batches[0][0].Content; got != "/wA=" {
+				t.Errorf("stop content = %q, want base64", got)
+			}
+			if m := deliveredOne(t, res); m.Content != tc.want {
+				t.Errorf("delivered content = %q, want %q", m.Content, tc.want)
+			}
+		})
+	}
+}
+
+// An edit at the end stop of a branch's list goes to the batches the list
+// hands back: the branch's result_map sees it.
+func TestEditAtEndStop(t *testing.T) {
+	pipeline := filepath.Join(parents, "branch.yaml")
+	done := false
+	edits := func(stops []dapdrive.Stop) []dapdrive.Edit {
+		st := stops[len(stops)-1]
+		if done || !st.End || st.UserPath != "pipeline.processors[0].branch.processors" {
+			return nil
+		}
+		done = true
+		return []dapdrive.Edit{{Content: strp("99")}}
+	}
+	res := runEdits(t, pipeline, dapdrive.StepIn, edits)
+	if !done || len(res.EditErrors) != 0 {
+		t.Fatalf("edited %v, edit errors = %q; stops %q", done, res.EditErrors, trace(res))
+	}
+	if m := deliveredOne(t, res); m.Content != `{"branched":99,"n":1}` {
+		t.Errorf("delivered = %s, want the end-stop edit in result_map", m.Content)
+	}
+}
+
+// Restart re-steps the batch as captured, without the first run's edits
+// (AD-20).
+func TestEditThenRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	edited, restarts := false, 0
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: editSample,
+		Script:   dapdrive.Always(dapdrive.Next),
+		Edits: func(stops []dapdrive.Stop) []dapdrive.Edit {
+			if edited || len(stops) != 2 {
+				return nil
+			}
+			edited = true
+			return []dapdrive.Edit{{Content: strp(`{"first":1,"n":5}`), Meta: map[string]string{"count": "42"}}}
+		},
+		AfterRun: func(dapdrive.Result) dapdrive.Command {
+			restarts++
+			if restarts == 1 {
+				return dapdrive.Restart
+			}
+			return ""
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.EditErrors) != 0 || len(res.RestartErrors) != 0 {
+		t.Fatalf("edit errors = %q, restart errors = %q", res.EditErrors, res.RestartErrors)
+	}
+	if len(res.Delivered) != 2 {
+		t.Fatalf("delivered = %+v, want one batch per run", res.Delivered)
+	}
+	if got := res.Delivered[0][0].Content; got != `{"count":42,"first":1,"n":5,"second":50}` {
+		t.Errorf("first run delivered %s, want the edits", got)
+	}
+	if got := res.Delivered[1][0].Content; got != `{"count":7,"first":1,"n":1,"second":10}` {
+		t.Errorf("restarted run delivered %s, want the batch as captured", got)
+	}
+}

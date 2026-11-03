@@ -1,0 +1,26 @@
+# Edit demo (SetMessage, AD-19). Press F5, then Step Over once: the stop is
+# before the second mapping. In Variables, use "Set Value" on content (e.g.
+# {"n":5}) and on metadata › count (e.g. 42), then Continue. The second
+# mapping reads both, so the delivered batch in the Debug Console shows the
+# edits; the first mapping never sees them.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.n = 1
+      meta count = 7
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.first = this.n
+    - mapping: |
+        root = this
+        root.second = this.n * 10
+        root.count = @count
+        meta seen = @count + 1
+
+output:
+  drop: {}

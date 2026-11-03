@@ -62,8 +62,12 @@ type server struct {
 	log  *slog.Logger
 	sess *core.Session
 
-	mu  sync.Mutex // guards seq, holding, held, terminated and every write to w
+	mu  sync.Mutex // guards seq, invalidated, holding, held, terminated and every write to w
 	seq int
+	// invalidated is set when the client supports the invalidated event:
+	// an edit then tells it to refresh the Variables view, so a message's
+	// summary shows the edit too.
+	invalidated bool
 	// terminated is set once a terminated event was written: a terminate
 	// request sends one only when the run hasn't.
 	terminated bool
@@ -121,9 +125,13 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	r := req.GetRequest()
 	switch q := req.(type) {
 	case *dap.InitializeRequest:
+		s.mu.Lock()
+		s.invalidated = q.Arguments.SupportsInvalidatedEvent
+		s.mu.Unlock()
 		resp := &dap.InitializeResponse{Response: s.response(r)}
 		resp.Body.SupportsConfigurationDoneRequest = true
 		resp.Body.SupportsRestartRequest = true
+		resp.Body.SupportsSetVariable = true
 		return false, s.send(resp)
 
 	case *dap.LaunchRequest:
@@ -249,6 +257,9 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 			return &dap.EvaluateResponse{Response: s.response(r)}
 		})
 
+	case *dap.SetVariableRequest:
+		return false, s.setVariable(q)
+
 	case *dap.RestartRequest:
 		return false, s.restart(r)
 
@@ -312,6 +323,44 @@ func (s *server) setBreakpoints(q *dap.SetBreakpointsRequest) error {
 		}
 	}
 	return s.send(resp)
+}
+
+// setVariable edits a message at the current stop (AD-19): it maps the
+// request to a SetMessage and answers with the edited variable's new value
+// and type, as the stop now shows it. When the client supports it, an
+// invalidated event follows, so the rest of the Variables view (the
+// message's summary) refreshes.
+func (s *server) setVariable(q *dap.SetVariableRequest) error {
+	r := &q.Request
+	st, ok := s.sess.Stopped()
+	if !ok {
+		return s.sendFailure(r, core.NewError(core.CodeEditInvalid, "a message can be edited only while the session is stopped"))
+	}
+	cmd, at, err := setMessageOf(st, q.Arguments)
+	if err != nil {
+		return s.sendFailure(r, err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.do(cmd); err != nil {
+		return s.writeLocked(s.failure(r, err))
+	}
+	resp := &dap.SetVariableResponse{Response: s.response(r)}
+	if now, ok := s.sess.Stopped(); ok {
+		if v, ok := editedVar(now, at, q.Arguments.Name); ok {
+			resp.Body.Value, resp.Body.Type = v.Value, v.Type
+		}
+	}
+	if err := s.writeLocked(resp); err != nil {
+		return err
+	}
+	if !s.invalidated {
+		return nil
+	}
+	ev := &dap.InvalidatedEvent{Event: s.event("invalidated")}
+	ev.Body.Areas = []dap.InvalidatedAreas{"variables"}
+	ev.Body.ThreadId = st.ThreadID
+	return s.writeLocked(ev)
 }
 
 // respondLocked runs cmd and writes its response while holding the write

@@ -101,7 +101,7 @@ func (a *spyArriver) Skip(ctx context.Context, stepperID, childIndex int, skippe
 	a.mu.Unlock()
 }
 
-func (a *spyArriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
+func (a *spyArriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) ([]core.SetMessage, error) {
 	f, _, _ := core.TopFrame(ctx)
 	a.mu.Lock()
 	a.arrives = append(a.arrives, childIndex)
@@ -110,7 +110,7 @@ func (a *spyArriver) Arrive(ctx context.Context, stepperID, childIndex int, batc
 	if a.inner != nil {
 		return a.inner.Arrive(ctx, stepperID, childIndex, batches)
 	}
-	return nil
+	return nil, nil
 }
 
 // newTestStepper builds a stepper from its config fields and children.
@@ -371,9 +371,9 @@ type recordArriver struct {
 	arrive func([]core.Batch)
 }
 
-func (a *recordArriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) error {
+func (a *recordArriver) Arrive(ctx context.Context, stepperID, childIndex int, batches []core.Batch) ([]core.SetMessage, error) {
 	a.arrive(batches)
-	return nil
+	return nil, nil
 }
 
 func TestRepeatLabels(t *testing.T) {
@@ -475,3 +475,78 @@ func TestCtxLost(t *testing.T) {
 type nopFrontend struct{}
 
 func (nopFrontend) Emit(core.Event) {}
+
+// editArriver hands the stepper the edits of at[childIndex] when it
+// arrives there (AD-19).
+type editArriver struct {
+	spyArriver
+	at map[int][]core.SetMessage
+}
+
+func (a *editArriver) Arrive(_ context.Context, _, childIndex int, _ []core.Batch) ([]core.SetMessage, error) {
+	return a.at[childIndex], nil
+}
+
+// The edits of a stop reach the children after it, never the one before
+// or the batch the stepper was given; the end stop's edits reach the
+// batches the entry hands back.
+func TestStepperAppliesEdits(t *testing.T) {
+	children := `
+  - mapping: 'root = this.merge({"a": this.n})'
+  - mapping: 'root = this.merge({"b": this.n, "c": @count})'
+`
+	in := func() service.MessageBatch {
+		m := service.NewMessage([]byte(`{"n":1}`))
+		m.MetaSetMut("count", int64(1))
+		m.MetaSetMut("keep", "k")
+		other := service.NewMessage([]byte(`{"n":2}`))
+		other.MetaSetMut("count", int64(2))
+		return service.MessageBatch{m, other}
+	}
+	edit := core.SetMessage{Index: 0, Content: []byte(`{"n":5}`), Metadata: []core.Meta{{Key: "count", Type: core.MetaInt, Value: "42"}}}
+
+	t.Run("before child", func(t *testing.T) {
+		a := &editArriver{at: map[int][]core.SetMessage{1: {edit}}}
+		s := newTestStepper(t, "mode: all", children, a, nil)
+		batch := in()
+		out, err := s.ProcessBatch(context.Background(), batch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := out[0][0].AsBytes()
+		if string(got) != `{"b":5,"c":42,"n":5}` {
+			t.Errorf("edited message = %s, want the edit seen by the second child only", got)
+		}
+		if v, _ := out[0][0].MetaGetMut("count"); v != int64(42) {
+			t.Errorf("count = %#v, want int64 42", v)
+		}
+		if v, _ := out[0][0].MetaGetMut("keep"); v != "k" {
+			t.Errorf("keep = %#v, want the key unchanged", v)
+		}
+		if got, _ := out[0][1].AsBytes(); string(got) != `{"a":2,"b":2,"c":2,"n":2}` {
+			t.Errorf("unedited message = %s", got)
+		}
+		if raw, _ := batch[0].AsBytes(); string(raw) != `{"n":1}` {
+			t.Errorf("the stepper's input = %s, want it unedited", raw)
+		}
+	})
+
+	t.Run("end stop", func(t *testing.T) {
+		end := core.SetMessage{Index: 1, Content: []byte("end"), Metadata: []core.Meta{{Key: "count", Type: core.MetaString, Value: "s"}}}
+		a := &editArriver{at: map[int][]core.SetMessage{2: {end}}}
+		s := newTestStepper(t, "mode: all", children, a, nil)
+		out, err := s.ProcessBatch(context.Background(), in())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := out[0][1].AsBytes(); string(got) != "end" {
+			t.Errorf("end-stop edit = %s, want end", got)
+		}
+		if v, _ := out[0][1].MetaGetMut("count"); v != "s" {
+			t.Errorf("count = %#v, want s", v)
+		}
+		if got, _ := out[0][0].AsBytes(); string(got) != `{"a":1,"b":1,"c":1,"n":1}` {
+			t.Errorf("unedited message = %s", got)
+		}
+	})
+}

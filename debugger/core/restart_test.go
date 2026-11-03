@@ -101,14 +101,15 @@ func (e *restartEngine) Step(ctx context.Context, opts StartOptions, batch any, 
 	defer exit(nil)
 	content := string(b[0].Messages[0].Content.Raw) + "/" + mapping
 	a.Deliver(ctx, Batch{Messages: []Message{{Content: Content{Raw: []byte(content)}}}}, OutcomeRecorded, nil)
-	if err := a.Arrive(ctx, 0, 0, b); err != nil {
+	if _, err := a.Arrive(ctx, 0, 0, b); err != nil {
 		if e.torn != nil {
 			close(e.torn)
 			<-e.release
 		}
 		return err
 	}
-	return a.Arrive(ctx, 0, 1, b)
+	_, err := a.Arrive(ctx, 0, 1, b)
+	return err
 }
 
 func (e *restartEngine) SaveCapture(_ CapturedBatch, _, path string) error {

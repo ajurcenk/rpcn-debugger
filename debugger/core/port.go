@@ -23,9 +23,13 @@ type Arriver interface {
 	// top of ctx: before child childIndex runs, and after the last child
 	// (childIndex = children, AD-10). batches are the stepper's batches,
 	// built from its deep copy (AD-19). It blocks while the session is
-	// stopped there. A non-nil error (code SESSION_ENDED, or ctx's error)
-	// means the session ended and the stepper must deliver nothing.
-	Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error
+	// stopped there. On resume it returns the edits made at that stop
+	// (SetMessage, AD-19), in order, which the stepper applies to its own
+	// batches before the next child runs: before child childIndex, batch b
+	// of the edits is batches[b]; at the end stop, the batches the entry
+	// returns. A non-nil error (code SESSION_ENDED, or ctx's error) means
+	// the session ended and the stepper must deliver nothing.
+	Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) ([]SetMessage, error)
 	// Deliver reports one batch rpcn_debug_sink received, after
 	// output.processors, built from its deep copy (AD-19, AD-21), with what
 	// became of it: outcome, and under OutcomeFailed the write error err

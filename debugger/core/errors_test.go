@@ -23,6 +23,7 @@ func TestRegistryNumbersArePinned(t *testing.T) {
 		"INPUT_REJECTED":           1011,
 		"SIDE_EFFECTS_NOT_ALLOWED": 1012,
 		"OUTPUT_FAILED":            1013,
+		"EDIT_INVALID":             1014,
 	}
 	if len(numbers) != len(want) {
 		t.Errorf("registry has %d codes, want %d: a new code needs a pinned number here", len(numbers), len(want))

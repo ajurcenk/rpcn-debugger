@@ -40,6 +40,9 @@ type Stop struct {
 	depth   int
 	frameID int
 	atEnd   bool
+	// edits are the SetMessages made at this stop, in order, parsed. Arrive
+	// hands them to the stepper on resume (AD-19).
+	edits []SetMessage
 }
 
 // stepMode is what a thread's last resume asked for.
@@ -209,16 +212,17 @@ func (s *Session) frameName(stepperID, children int) string {
 // Arrive implements Arriver. It takes the gate and, while holding it,
 // records batches as the Snapshot of the frame on top of ctx and decides
 // whether to stop (AD-9, AD-10). If it stops, it emits Paused and blocks
-// under the gate until a resume, Terminate or ctx's end. It emits nothing
-// when it doesn't stop.
-func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) error {
+// under the gate until a resume, Terminate or ctx's end, and on resume
+// returns the edits made at the stop (AD-19). It emits nothing when it
+// doesn't stop.
+func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches []Batch) ([]SetMessage, error) {
 	s.gate.lock()
 	defer s.gate.unlock()
 
 	s.mu.Lock()
 	if s.ended {
 		s.mu.Unlock()
-		return NewError(CodeSessionEnded, "the debug session ended")
+		return nil, NewError(CodeSessionEnded, "the debug session ended")
 	}
 	// The run's own channel: a Restart closes it, and swaps in the next
 	// run's only after this run has returned.
@@ -226,7 +230,7 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 	select {
 	case <-replaced:
 		s.mu.Unlock()
-		return errReplaced()
+		return nil, errReplaced()
 	default:
 	}
 	if batches == nil {
@@ -245,14 +249,14 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 
 	if !s.configured {
 		s.mu.Unlock()
-		return nil
+		return nil, nil
 	}
 	t := s.threadLocked(ref.ThreadID)
 	atEnd := lf.children >= 0 && childIndex == lf.children
 	reason, stop := s.shouldStop(t.step, ref, depth, atEnd)
 	if !stop {
 		s.mu.Unlock()
-		return nil
+		return nil, nil
 	}
 	t.step = stepState{}
 
@@ -287,23 +291,27 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 
 	select {
 	case <-resume:
-		return nil
+		// The resume closed resume under s.mu, after the stop's last edit.
+		s.mu.Lock()
+		edits := st.edits
+		s.mu.Unlock()
+		return edits, nil
 	case <-s.endedCh:
-		return NewError(CodeSessionEnded, "the debug session ended")
+		return nil, NewError(CodeSessionEnded, "the debug session ended")
 	case <-replaced:
 		s.mu.Lock()
 		if s.resume == resume {
 			s.stop, s.resume = nil, nil
 		}
 		s.mu.Unlock()
-		return errReplaced()
+		return nil, errReplaced()
 	case <-ctx.Done():
 		s.mu.Lock()
 		if s.resume == resume {
 			s.stop, s.resume = nil, nil
 		}
 		s.mu.Unlock()
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 
@@ -397,6 +405,98 @@ func (s *Session) resumeRun(threadID int, mode stepMode) error {
 	close(s.resume)
 	s.stop, s.resume = nil, nil
 	return nil
+}
+
+// setMessage edits a message of the current stop's top frame (AD-19). It
+// checks c and parses every value first, so a refused edit changes
+// nothing. It then replaces the stop's top-frame Snapshot with an edited
+// copy (earlier stops and other frames keep theirs) and records the parsed
+// edit, which Arrive hands to the stepper on resume.
+func (s *Session) setMessage(c SetMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return NewError(CodeSessionEnded, "the debug session ended")
+	}
+	st := s.stop
+	if st == nil || s.resume == nil || len(st.Frames) == 0 {
+		return NewError(CodeEditInvalid, "a message can be edited only while the session is stopped")
+	}
+	if c.StopID != st.ID {
+		return NewError(CodeEditInvalid, "the edit is for stop %d, but the session is now at stop %d: only the current stop's messages can be edited", c.StopID, st.ID)
+	}
+	top := st.Frames[0]
+	if c.FrameID != top.ID {
+		for _, f := range st.Frames[1:] {
+			if f.ID == c.FrameID {
+				return NewError(CodeEditInvalid, "only the messages of the top frame (%s) can be edited, not those of %s", top.Name, f.Name)
+			}
+		}
+		return NewError(CodeEditInvalid, "frame %d is not a frame of the current stop", c.FrameID)
+	}
+	batches := top.Snapshot.Batches
+	if c.Batch < 0 || c.Batch >= len(batches) {
+		return NewError(CodeEditInvalid, "the top frame has no batch %d (it has %s)", c.Batch, plural(len(batches), "batch", "batches"))
+	}
+	msgs := batches[c.Batch].Messages
+	if c.Index < 0 || c.Index >= len(msgs) {
+		return NewError(CodeEditInvalid, "batch %d has no message %d (it has %s)", c.Batch, c.Index, plural(len(msgs), "message", "messages"))
+	}
+	if c.Content == nil && len(c.Metadata) == 0 {
+		return NewError(CodeEditInvalid, "the edit changes nothing: set the content or a metadata value")
+	}
+
+	msg := msgs[c.Index]
+	msg.Metadata = slices.Clone(msg.Metadata)
+	edit := SetMessage{StopID: c.StopID, FrameID: c.FrameID, Batch: c.Batch, Index: c.Index}
+	if c.Content != nil {
+		raw, err := editContent(msg.Content, c.Content)
+		if err != nil {
+			return NewError(CodeEditInvalid, "%v", err)
+		}
+		msg.Content, edit.Content = contentOf(raw), raw
+	}
+	for _, m := range c.Metadata {
+		i := slices.IndexFunc(msg.Metadata, func(e Meta) bool { return e.Key == m.Key })
+		if i < 0 {
+			return NewError(CodeEditInvalid, "message %d has no metadata key %q: keys can't be added", c.Index, m.Key)
+		}
+		cur := msg.Metadata[i]
+		if m.Type != "" && m.Type != cur.Type {
+			return NewError(CodeEditInvalid, "metadata %q is %s, not %s: a key's type can't change", m.Key, cur.Type, m.Type)
+		}
+		parsed, err := editMeta(cur, m.Value)
+		if err != nil {
+			return NewError(CodeEditInvalid, "%v", err)
+		}
+		msg.Metadata[i] = parsed
+		edit.Metadata = append(edit.Metadata, parsed)
+	}
+
+	// Copy on write: the old slices stay as earlier stops and frames see
+	// them.
+	newMsgs := slices.Clone(msgs)
+	newMsgs[c.Index] = msg
+	newBatches := slices.Clone(batches)
+	newBatches[c.Batch] = Batch{Messages: newMsgs}
+	snap := top.Snapshot
+	snap.Batches = newBatches
+	frames := slices.Clone(st.Frames)
+	frames[0].Snapshot = snap
+	st.Frames = frames
+	if lf := s.frames[top.ID]; lf != nil {
+		lf.snap = snap
+	}
+	st.edits = append(st.edits, edit)
+	return nil
+}
+
+// plural is "1 <one>" or "n <many>".
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }
 
 // pause makes the next Arrive on any thread stop with reason pause. While

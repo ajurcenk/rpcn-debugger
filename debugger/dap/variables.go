@@ -280,3 +280,73 @@ func countText(n int, noun string) string {
 	}
 	return fmt.Sprintf("%d %ss", n, strings.TrimSuffix(noun, "s"))
 }
+
+// setMessageOf maps a setVariable request at stop st to a SetMessage
+// (AD-19): name content under a message node is a content edit, and a key
+// under a metadata or internal node is a metadata edit carrying the key's
+// type as the stop shows it. The DAP frame index maps to the core frame
+// through st; whether that frame may be edited is the Session's call. A
+// reference of an earlier stop, and any other variable (a batch, a
+// message's summary, its error, the internal group), is EDIT_INVALID.
+func setMessageOf(st core.Stop, a dap.SetVariableArguments) (core.SetMessage, ref, error) {
+	r, ok := decodeRef(a.VariablesReference)
+	if !ok {
+		return core.SetMessage{}, r, core.NewError(core.CodeEditInvalid, "%q can't be edited: only a message's content and its metadata values can", a.Name)
+	}
+	f, ok := frameOf(st, r.at)
+	if !ok {
+		return core.SetMessage{}, r, core.NewError(core.CodeEditInvalid, "%q is from an earlier stop: only the current stop's messages can be edited", a.Name)
+	}
+	cmd := core.SetMessage{StopID: st.ID, FrameID: f.ID, Batch: r.batch, Index: r.msg}
+	switch {
+	case r.kind == kindMessage && a.Name == "content":
+		cmd.Content = []byte(a.Value)
+		return cmd, r, nil
+	case r.kind == kindMetadata || r.kind == kindInternal:
+		e, found := metaOf(f.Snapshot, r, a.Name)
+		if !found && r.kind == kindMetadata && a.Name == "internal" {
+			break // the internal group
+		}
+		if found && e.Internal != (r.kind == kindInternal) {
+			// The node doesn't list the key: internal keys sit only under
+			// internal, the others only under metadata.
+			return core.SetMessage{}, r, core.NewError(core.CodeEditInvalid, "%q is not a key of this metadata node", a.Name)
+		}
+		// An unknown key goes to the Session with no type: it refuses it.
+		cmd.Metadata = []core.Meta{{Key: a.Name, Type: e.Type, Value: a.Value}}
+		return cmd, r, nil
+	}
+	return core.SetMessage{}, r, core.NewError(core.CodeEditInvalid,
+		"%q can't be edited: only a message's content and its metadata values can", a.Name)
+}
+
+// metaOf returns key of message r.msg of batch r.batch of snap, if the
+// message has it.
+func metaOf(snap core.Snapshot, r ref, key string) (core.Meta, bool) {
+	if r.batch >= len(snap.Batches) || r.msg >= len(snap.Batches[r.batch].Messages) {
+		return core.Meta{}, false
+	}
+	for _, e := range snap.Batches[r.batch].Messages[r.msg].Metadata {
+		if e.Key == key {
+			return e, true
+		}
+	}
+	return core.Meta{}, false
+}
+
+// editedVar renders variable name of the message r names, as stop st now
+// shows it: the setVariable response's value and type.
+func editedVar(st core.Stop, r ref, name string) (dap.Variable, bool) {
+	f, ok := frameOf(st, r.at)
+	if !ok || r.batch >= len(f.Snapshot.Batches) || r.msg >= len(f.Snapshot.Batches[r.batch].Messages) {
+		return dap.Variable{}, false
+	}
+	if r.kind == kindMessage {
+		return contentVar(f.Snapshot.Batches[r.batch].Messages[r.msg].Content), true
+	}
+	e, ok := metaOf(f.Snapshot, r, name)
+	if !ok {
+		return dap.Variable{}, false
+	}
+	return metaVar(e), true
+}

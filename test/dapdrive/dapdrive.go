@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,26 @@ type Options struct {
 	// end: a failed restart is recorded in Result.RestartErrors and ends
 	// Run. Any other answer ("" included) ends Run. nil ends Run.
 	AfterRun func(Result) Command
+	// Edits, when set, runs at each stop before the Script and returns the
+	// edits to make there (AD-19), in order. Each is sent as setVariable
+	// requests through the stop's variable references; a refused one is
+	// recorded in Result.EditErrors.
+	Edits func(stops []Stop) []Edit
+}
+
+// Edit is one message edit at a stop: its content, its metadata values, or
+// both. Each is one setVariable request: the content first, then the keys
+// in key order.
+type Edit struct {
+	// Frame is the frame whose messages are edited: 0 is the top frame.
+	Frame int
+	// Batch and Index name the message in the frame's batches.
+	Batch, Index int
+	// Content, when set, is the new content as entered: text, or base64
+	// when the content is shown as base64.
+	Content *string
+	// Meta maps each key to set to its new value as entered.
+	Meta map[string]string
 }
 
 // Frame is one stack frame of a stop, innermost first.
@@ -141,6 +162,9 @@ type Stop struct {
 	Frames []Frame
 	// Batches are the innermost frame's batches.
 	Batches []Batch
+	// Edited are the innermost frame's batches read again after the stop's
+	// edits (Options.Edits), or nil when no edit was made there.
+	Edited []Batch
 }
 
 // Result is what a run showed.
@@ -155,6 +179,10 @@ type Result struct {
 	// RestartErrors are the messages of the restart requests that failed,
 	// in order.
 	RestartErrors []string
+	// EditErrors are the messages of the setVariable requests that failed,
+	// and of the edits the driver couldn't address (no such frame, batch or
+	// message), in order.
+	EditErrors []string
 	// Terminated is true when a terminated event ended the run (a launch
 	// that captured nothing), not the root thread's exit after the
 	// run-finished note (D5).
@@ -214,6 +242,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		<-served
 	}()
 
+	c.edits = opts.Edits
 	res, err := c.run(pipeline, opts.Launch, script, paths, maxStops, opts.AfterLaunch, opts.AfterRun)
 	if err != nil {
 		return res, err
@@ -244,6 +273,7 @@ type client struct {
 	readErr error
 	seq     int
 	events  []message // events read while waiting for a response
+	edits   func([]Stop) []Edit
 }
 
 func (c *client) read(r io.Reader) {
@@ -415,12 +445,17 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			if err := json.Unmarshal(ev.Body, &b); err != nil {
 				return res, err
 			}
-			st, err := c.stop(b.ThreadID, paths)
+			st, frameIDs, err := c.stop(b.ThreadID, paths)
 			if err != nil {
 				return res, err
 			}
 			st.Reason = b.Reason
 			res.Stops = append(res.Stops, st)
+			if c.edits != nil {
+				if err := c.edit(&res, frameIDs); err != nil {
+					return res, err
+				}
+			}
 			ok, err := c.answer(&res, script, b.ThreadID, maxStops)
 			if err != nil {
 				return res, err
@@ -536,12 +571,184 @@ func deliveredBatches(body json.RawMessage, n int) ([]Batch, error) {
 	return out, nil
 }
 
+// edit makes the edits Options.Edits asks for at the current stop, the
+// last of res.Stops, whose DAP frame ids are frameIDs (innermost first).
+// When one was made, the stop's Edited holds the top frame's batches as
+// they now are.
+func (c *client) edit(res *Result, frameIDs []int) error {
+	edits := c.edits(res.Stops)
+	if len(edits) == 0 {
+		return nil
+	}
+	made := false
+	for _, e := range edits {
+		ok, err := c.editOne(res, frameIDs, e)
+		if err != nil {
+			return err
+		}
+		made = made || ok
+	}
+	if !made {
+		return nil
+	}
+	st := &res.Stops[len(res.Stops)-1]
+	var err error
+	st.Edited, err = c.batches(frameIDs[0])
+	return err
+}
+
+// editOne sends e's setVariable requests. A failed request, or an edit the
+// driver can't address, goes to res.EditErrors. It reports whether one
+// request succeeded.
+func (c *client) editOne(res *Result, frameIDs []int, e Edit) (bool, error) {
+	fail := func(format string, args ...any) (bool, error) {
+		res.EditErrors = append(res.EditErrors, fmt.Sprintf(format, args...))
+		return false, nil
+	}
+	if e.Frame < 0 || e.Frame >= len(frameIDs) {
+		return fail("edit: the stop has no frame %d", e.Frame)
+	}
+	msgRef, err := c.messageRef(frameIDs[e.Frame], e.Batch, e.Index)
+	if err != nil {
+		return false, err
+	}
+	if msgRef == 0 {
+		return fail("edit: frame %d has no message %d of batch %d", e.Frame, e.Index, e.Batch)
+	}
+	made := false
+	set := func(ref int, name, value string) error {
+		_, err := c.request("setVariable", map[string]any{"variablesReference": ref, "name": name, "value": value})
+		var fe *failedError
+		if errors.As(err, &fe) {
+			res.EditErrors = append(res.EditErrors, fe.message)
+			return nil
+		}
+		if err == nil {
+			made = true
+		}
+		return err
+	}
+	if e.Content != nil {
+		if err := set(msgRef, "content", *e.Content); err != nil {
+			return made, err
+		}
+	}
+	if len(e.Meta) == 0 {
+		return made, nil
+	}
+	keyRefs, metaRef, err := c.metadataRefs(msgRef)
+	if err != nil {
+		return made, err
+	}
+	keys := make([]string, 0, len(e.Meta))
+	for k := range e.Meta {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		ref, ok := keyRefs[k]
+		if !ok {
+			// An unknown key: the server refuses it. A message with no
+			// metadata node is addressed through the message itself.
+			ref = metaRef
+			if ref == 0 {
+				ref = msgRef
+			}
+		}
+		if err := set(ref, k, e.Meta[k]); err != nil {
+			return made, err
+		}
+	}
+	return made, nil
+}
+
+// messageRef returns the variablesReference of message index of batch b
+// in DAP frame frameID, or 0 when it has none.
+func (c *client) messageRef(frameID, b, index int) (int, error) {
+	raw, err := c.request("scopes", map[string]any{"frameId": frameID})
+	if err != nil {
+		return 0, err
+	}
+	var scopes struct {
+		Scopes []struct {
+			Name               string `json:"name"`
+			VariablesReference int    `json:"variablesReference"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal(raw, &scopes); err != nil {
+		return 0, err
+	}
+	for _, sc := range scopes.Scopes {
+		if sc.Name != "Batches" {
+			continue
+		}
+		bvs, err := c.variables(sc.VariablesReference)
+		if err != nil {
+			return 0, err
+		}
+		for _, bv := range bvs {
+			if bv.Name != fmt.Sprintf("batch %d", b) {
+				continue
+			}
+			mvs, err := c.variables(bv.VariablesReference)
+			if err != nil {
+				return 0, err
+			}
+			for _, mv := range mvs {
+				if mv.Name == fmt.Sprintf("message %d", index) {
+					return mv.VariablesReference, nil
+				}
+			}
+		}
+	}
+	return 0, nil
+}
+
+// metadataRefs returns, for each metadata key of the message at msgRef,
+// the reference of the node it sits under (metadata, or its internal
+// group), and the metadata node's reference (0 when the message has no
+// keys).
+func (c *client) metadataRefs(msgRef int) (map[string]int, int, error) {
+	out := map[string]int{}
+	vs, err := c.variables(msgRef)
+	if err != nil {
+		return nil, 0, err
+	}
+	metaRef := 0
+	for _, v := range vs {
+		if v.Name == "metadata" {
+			metaRef = v.VariablesReference
+		}
+	}
+	if metaRef == 0 {
+		return out, 0, nil
+	}
+	var walk func(ref int) error
+	walk = func(ref int) error {
+		vs, err := c.variables(ref)
+		if err != nil {
+			return err
+		}
+		for _, v := range vs {
+			if v.Name == "internal" && v.VariablesReference != 0 {
+				if err := walk(v.VariablesReference); err != nil {
+					return err
+				}
+				continue
+			}
+			out[v.Name] = ref
+		}
+		return nil
+	}
+	return out, metaRef, walk(metaRef)
+}
+
 // stop reads the stack and the innermost frame's batches of the stop on
-// thread tid.
-func (c *client) stop(tid int, paths map[pathKey]string) (Stop, error) {
+// thread tid, and returns the stop's DAP frame ids, innermost first.
+func (c *client) stop(tid int, paths map[pathKey]string) (Stop, []int, error) {
 	raw, err := c.request("stackTrace", map[string]any{"threadId": tid})
 	if err != nil {
-		return Stop{}, err
+		return Stop{}, nil, err
 	}
 	var trace struct {
 		StackFrames []struct {
@@ -551,13 +758,15 @@ func (c *client) stop(tid int, paths map[pathKey]string) (Stop, error) {
 		} `json:"stackFrames"`
 	}
 	if err := json.Unmarshal(raw, &trace); err != nil {
-		return Stop{}, err
+		return Stop{}, nil, err
 	}
 	if len(trace.StackFrames) == 0 {
-		return Stop{}, errors.New("a stop with no stack frames")
+		return Stop{}, nil, errors.New("a stop with no stack frames")
 	}
 	var st Stop
+	var ids []int
 	for _, f := range trace.StackFrames {
+		ids = append(ids, f.ID)
 		name, label := f.Name, ""
 		if i := strings.LastIndex(f.Name, " ["); i >= 0 && strings.HasSuffix(f.Name, "]") {
 			name, label = f.Name[:i], f.Name[i+1:]
@@ -572,7 +781,7 @@ func (c *client) stop(tid int, paths map[pathKey]string) (Stop, error) {
 		st.UserPath, st.End = top.Name, true
 	}
 	st.Batches, err = c.batches(trace.StackFrames[0].ID)
-	return st, err
+	return st, ids, err
 }
 
 // variable is one DAP variable.

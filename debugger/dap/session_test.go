@@ -106,10 +106,10 @@ func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
 	}
 	ctx, exit := a.Enter(ctx, core.Entry{StepperID: 0, Children: 1})
 	defer exit(nil)
-	if err := a.Arrive(ctx, 0, 0, batches); err != nil {
+	if _, err := a.Arrive(ctx, 0, 0, batches); err != nil {
 		return err
 	}
-	if err := a.Arrive(ctx, 0, 1, batches); err != nil {
+	if _, err := a.Arrive(ctx, 0, 1, batches); err != nil {
 		return err
 	}
 	e.deliverAll(ctx, a, batches)
@@ -152,22 +152,22 @@ func atBatch(stepper, child int) []core.Batch {
 func (e *fakeEngine) startNested(ctx context.Context, a core.Arriver) error {
 	ctx, exit := a.Enter(ctx, core.Entry{StepperID: 0, Children: 2})
 	defer exit(nil)
-	if err := a.Arrive(ctx, 0, 0, atBatch(0, 0)); err != nil {
+	if _, err := a.Arrive(ctx, 0, 0, atBatch(0, 0)); err != nil {
 		return err
 	}
 	time.Sleep(e.slow)
-	if err := a.Arrive(ctx, 0, 1, atBatch(0, 1)); err != nil {
+	if _, err := a.Arrive(ctx, 0, 1, atBatch(0, 1)); err != nil {
 		return err
 	}
 	inner, exitInner := a.Enter(ctx, core.Entry{StepperID: 1, Children: 1})
 	for i := range 2 {
-		if err := a.Arrive(inner, 1, i, atBatch(1, i)); err != nil {
+		if _, err := a.Arrive(inner, 1, i, atBatch(1, i)); err != nil {
 			exitInner(nil)
 			return err
 		}
 	}
 	exitInner(nil)
-	if err := a.Arrive(ctx, 0, 2, atBatch(0, 2)); err != nil {
+	if _, err := a.Arrive(ctx, 0, 2, atBatch(0, 2)); err != nil {
 		return err
 	}
 	e.deliverAll(ctx, a, atBatch(0, 2))
@@ -890,7 +890,6 @@ func TestUnsupportedCommands(t *testing.T) {
 		args    map[string]any
 	}{
 		{"evaluate", map[string]any{"expression": "this", "frameId": frame}},
-		{"setVariable", map[string]any{"variablesReference": 1, "name": "x", "value": "1"}},
 	} {
 		c.send(req.command, req.args)
 		resp := c.response(req.command, false).(*dap.ErrorResponse)

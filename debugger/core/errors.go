@@ -59,6 +59,11 @@ const (
 	// (AD-21). UserPath and Line are the output's where known, and Message
 	// names the write error.
 	CodeOutputFailed Code = "OUTPUT_FAILED"
+	// CodeEditInvalid: a SetMessage was refused (AD-19): not stopped, a
+	// frame other than the stop's top frame, an unknown batch, message or
+	// key, a variable that can't be edited, or a value that doesn't parse
+	// as the key's type. Message says why; nothing changed.
+	CodeEditInvalid Code = "EDIT_INVALID"
 )
 
 // numbers is the registry: code → stable DAP error id.
@@ -76,6 +81,7 @@ var numbers = map[Code]int{
 	CodeInputRejected:         1011,
 	CodeSideEffectsNotAllowed: 1012,
 	CodeOutputFailed:          1013,
+	CodeEditInvalid:           1014,
 }
 
 // Codes returns every registry code, in number order.

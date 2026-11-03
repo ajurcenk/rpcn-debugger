@@ -111,15 +111,38 @@ type Evaluate struct {
 	Context string
 }
 
-// SetMessage edits a message of the top frame of the stopped thread
-// (AD-19). Not supported yet: epic-edit-restart-replay implements it.
+// SetMessage edits message Index of batch Batch of the top frame of the
+// current stop (AD-19). FrameID is the core frame id (Frame.ID) of that
+// frame: an edit of any other frame is EDIT_INVALID. The edit shows in the
+// stop's top-frame Snapshot at once, and the stepper applies it to its own
+// batch on resume, so only the processors after the stop see it. Earlier
+// stops' Snapshots and the captured batch never change.
+//
+// Values are as the user entered them; the Session parses them against the
+// message as the stop shows it. A value that doesn't parse, an unknown
+// batch, message or key, and a change of a key's type are EDIT_INVALID,
+// and nothing changes.
 type SetMessage struct {
+	// StopID is the ID of the stop the frontend saw (Stop.ID): an edit
+	// against any other stop is EDIT_INVALID, even when the frame lives on.
+	StopID  int
 	FrameID int
 	Batch   int
 	Index   int
-	// Content replaces the content when non-nil.
+	// Content, when non-nil, replaces the whole content: the bytes of the
+	// entered text, or, when the stop shows the content as base64 (not
+	// UTF-8), base64 text that is decoded.
 	Content []byte
-	// Metadata replaces the metadata when non-nil.
+	// Metadata are the keys to set, in order. Each Key must exist; Type is
+	// the type the frontend showed ("" for the key's own), and it never
+	// changes. Value is the entered text for Type: a string as is, bytes as
+	// text when the key is shown as text and otherwise base64, an int in
+	// decimal, a float in Go syntax, a bool as true or false, a timestamp
+	// in RFC 3339, an object or array as JSON, and null only as null. Keys
+	// are never added or deleted.
+	//
+	// The edits Arriver.Arrive hands back carry the parsed Content bytes
+	// and each key with its lossless Value (see Meta).
 	Metadata []Meta
 }
 

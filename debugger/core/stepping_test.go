@@ -279,7 +279,7 @@ func TestDisconnectWhileNested(t *testing.T) {
 	}
 	rec.none(t)
 	// The gate is free: an Arrive returns at once.
-	if err := s.Arrive(context.Background(), 0, 0, nil); !HasCode(err, CodeSessionEnded) {
+	if _, err := s.Arrive(context.Background(), 0, 0, nil); !HasCode(err, CodeSessionEnded) {
 		t.Errorf("Arrive after terminate = %v, want SESSION_ENDED", err)
 	}
 	s.mu.Lock()
@@ -318,7 +318,7 @@ func TestFrameStack(t *testing.T) {
 	}
 	ctx, exit := s.Enter(root, Entry{StepperID: 0, Children: 3})
 	defer exit(nil)
-	if err := s.Arrive(ctx, 0, 1, nil); err != nil {
+	if _, err := s.Arrive(ctx, 0, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	inner, exitInner := s.Enter(ctx, Entry{StepperID: 1, Children: 2})
@@ -378,7 +378,7 @@ func TestEntryCounters(t *testing.T) {
 	}
 	for entry := range 2 {
 		ctx, exit := s.Enter(context.Background(), Entry{StepperID: 0, Children: 2})
-		if err := s.Arrive(ctx, 0, 1, messages(3)); err != nil {
+		if _, err := s.Arrive(ctx, 0, 1, messages(3)); err != nil {
 			t.Fatal(err)
 		}
 		var got []string
@@ -391,7 +391,7 @@ func TestEntryCounters(t *testing.T) {
 		got = append(got, enter(ctx, Entry{StepperID: 3, Children: 1, Label: label, Site: "group"}, nil))
 		got = append(got, enter(ctx, Entry{StepperID: 4, Children: 1, Label: label, Site: "group"}, nil))
 		// Another stop of the parent is another call site.
-		if err := s.Arrive(ctx, 0, 0, messages(1)); err != nil {
+		if _, err := s.Arrive(ctx, 0, 0, messages(1)); err != nil {
 			t.Fatal(err)
 		}
 		got = append(got, enter(ctx, Entry{StepperID: 1, Children: 1, Label: label}, nil))
@@ -431,24 +431,25 @@ func TestAttemptsAndTimeBudget(t *testing.T) {
 		start: func(ctx context.Context, a Arriver) error {
 			ctx, exit := a.Enter(ctx, Entry{StepperID: 0, Children: 1})
 			defer exit(nil)
-			if err := a.Arrive(ctx, 0, 0, messages(1)); err != nil {
+			if _, err := a.Arrive(ctx, 0, 0, messages(1)); err != nil {
 				return err
 			}
 			for i := range 2 {
 				in, exitIn := a.Enter(ctx, Entry{StepperID: 1, Children: 1, Attempt: true, Label: func(Site) string { return fmt.Sprintf("[attempt %d/2]", i+1) }})
-				if err := a.Arrive(in, 1, 0, messages(1)); err != nil {
+				if _, err := a.Arrive(in, 1, 0, messages(1)); err != nil {
 					return err
 				}
 				// A try inside the attempt is inside the retry too.
 				try, exitTry := a.Enter(in, Entry{StepperID: 2, Children: 1})
 				a.Skip(try, 2, 0, []Skipped{{Index: 0, Reason: SkipTry}}, 0)
-				if err := a.Arrive(try, 2, 1, messages(1)); err != nil {
+				if _, err := a.Arrive(try, 2, 1, messages(1)); err != nil {
 					return err
 				}
 				exitTry(nil)
 				exitIn(nil)
 			}
-			return a.Arrive(ctx, 0, 1, messages(1))
+			_, err := a.Arrive(ctx, 0, 1, messages(1))
+			return err
 		},
 	}
 	rec := &recorder{events: make(chan event, 64)}
