@@ -2,6 +2,7 @@ package dapdrive_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -652,6 +653,134 @@ func TestOneRewritePerLaunch(t *testing.T) {
 			}
 			if len(got.Delivered) != 1 || len(got.Delivered[0]) != 1 || got.Delivered[0][0].Content != "a12" {
 				t.Errorf("delivered = %+v, want one batch holding a12", got.Delivered)
+			}
+		})
+	}
+}
+
+// restartPipeline is a file-input pipeline for the restart tests; %s is
+// the data file's path. The mapping is at line 9.
+const restartPipeline = `input:
+  file:
+    paths: [ "%s" ]
+    scanner:
+      lines: {}
+
+pipeline:
+  processors:
+    - mapping: |
+        root.line = content().string()
+        root.upper = content().string().uppercase()
+
+output:
+  drop: {}
+`
+
+// restartCopy writes restartPipeline and its data file into a temp dir,
+// returning the pipeline's path, its source and the data file's path.
+func restartCopy(t *testing.T) (pipeline, src, data string) {
+	t.Helper()
+	dir := t.TempDir()
+	pipeline, data = filepath.Join(dir, "restart.yaml"), filepath.Join(dir, "restart-data.txt")
+	src = fmt.Sprintf(restartPipeline, data)
+	if err := os.WriteFile(pipeline, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(data, []byte("hello restart\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return pipeline, src, data
+}
+
+func write(path, content string) error { return os.WriteFile(path, []byte(content), 0o600) }
+
+// Restart at the mapping re-steps the captured batch (AD-20): the data
+// file's edit is not read, nor is the input block (its path now names a
+// missing file), the mapping's edit is in effect, and the batch is
+// delivered as batch 1.
+func TestRestartReStepsTheCapturedBatch(t *testing.T) {
+	pipeline, src, data := restartCopy(t)
+	edited := strings.Replace(src, "uppercase()", `uppercase() + "!"`, 1)
+	edited = strings.Replace(edited, data, "/rpcn-debug-no-such-dir/data.txt", 1)
+	var scriptErr error
+	script := func(stops []dapdrive.Stop) dapdrive.Command {
+		if len(stops) == 1 {
+			scriptErr = errors.Join(write(data, "changed\n"), write(pipeline, edited))
+			return dapdrive.Restart
+		}
+		return dapdrive.Continue
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline, Script: script})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scriptErr != nil {
+		t.Fatal(scriptErr)
+	}
+	if len(res.Stops) != 2 || res.Stops[1].Reason != "entry" || res.Stops[1].Line != 9 || res.Stops[1].UserPath != "pipeline.processors[0]" {
+		t.Errorf("stops = %+v, want the entry stop at the mapping twice", res.Stops)
+	}
+	if len(res.RestartErrors) != 0 {
+		t.Errorf("restart errors = %q", res.RestartErrors)
+	}
+	if len(res.Delivered) != 1 || len(res.Delivered[0]) != 1 ||
+		res.Delivered[0][0].Content != `{"line":"hello restart","upper":"HELLO RESTART!"}` {
+		t.Errorf("delivered = %+v, want the original data through the new mapping", res.Delivered)
+	}
+	if notes := outputs(res, "Restart re-reads only the pipeline file"); len(notes) != 1 {
+		t.Errorf("restart notes = %q, want one", notes)
+	}
+}
+
+// A restart with a broken pipeline file fails, naming the line, and leaves
+// the stop: a following Continue delivers with the old mapping.
+func TestRestartBrokenPipeline(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(src string) string
+		want string
+	}{
+		"lint": {
+			edit: func(src string) string {
+				return strings.Replace(src, "    - mapping: |", "    - no_such_processor: {}\n    - mapping: |", 1)
+			},
+			want: "line 9",
+		},
+		"yaml": {
+			edit: func(src string) string { return strings.Replace(src, "  processors:", "  processors: [", 1) },
+			want: "line 8",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pipeline, src, _ := restartCopy(t)
+			asked := 0
+			var scriptErr error
+			script := func([]dapdrive.Stop) dapdrive.Command {
+				asked++
+				if asked == 1 {
+					scriptErr = write(pipeline, tc.edit(src))
+					return dapdrive.Restart
+				}
+				return dapdrive.Continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline, Script: script})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scriptErr != nil {
+				t.Fatal(scriptErr)
+			}
+			if len(res.RestartErrors) != 1 || !strings.Contains(res.RestartErrors[0], tc.want) {
+				t.Errorf("restart errors = %q, want one naming %s", res.RestartErrors, tc.want)
+			}
+			if len(res.Stops) != 1 || asked != 2 {
+				t.Errorf("stops = %d, asked %d times; want one stop, asked twice", len(res.Stops), asked)
+			}
+			if len(res.Delivered) != 1 || res.Delivered[0][0].Content != `{"line":"hello restart","upper":"HELLO RESTART"}` {
+				t.Errorf("delivered = %+v, want the old mapping's output", res.Delivered)
 			}
 		})
 	}

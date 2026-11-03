@@ -113,8 +113,10 @@ type SetMessage struct {
 // Not supported yet: epic-edit-restart-replay implements it.
 type SaveCapture struct{ Path string }
 
-// Restart re-steps the captured batch (AD-20). Not supported yet:
-// epic-edit-restart-replay implements it.
+// Restart re-steps the captured batch from the entry stop, after
+// re-checking only the pipeline file with the launch's options (AD-20).
+// It is NOT_SUPPORTED before the batch is captured and once the run has
+// ended; a failed Check leaves the current run as it was.
 type Restart struct{}
 
 // Terminate ends the session: it releases a stopped stepper, stops the

@@ -345,7 +345,11 @@ type funcEngine struct {
 
 func (e funcEngine) Check(StartOptions) (CheckResult, error) { return CheckResult{Lines: e.lines}, nil }
 
-func (e funcEngine) Start(ctx context.Context, _ StartOptions, a Arriver) error {
+func (e funcEngine) Capture(context.Context, StartOptions) (CapturedBatch, error) {
+	return CapturedBatch{}, nil
+}
+
+func (e funcEngine) Step(ctx context.Context, _ StartOptions, _ any, a Arriver) error {
 	return e.start(ctx, a)
 }
 

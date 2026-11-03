@@ -80,7 +80,9 @@ func (e *prepEngine) Check(o StartOptions) (CheckResult, error) {
 	return CheckResult{Lines: lines{}, Prepared: e.prepared}, nil
 }
 
-func (e *prepEngine) Start(_ context.Context, o StartOptions, _ Arriver) error {
+func (e *prepEngine) Capture(_ context.Context, o StartOptions) (CapturedBatch, error) {
 	e.started <- o
-	return nil
+	return CapturedBatch{}, nil
 }
+
+func (e *prepEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }

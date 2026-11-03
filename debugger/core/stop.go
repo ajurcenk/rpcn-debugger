@@ -220,6 +220,15 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 		s.mu.Unlock()
 		return NewError(CodeSessionEnded, "the debug session ended")
 	}
+	// The run's own channel: a Restart closes it, and swaps in the next
+	// run's only after this run has returned.
+	replaced := s.replaced
+	select {
+	case <-replaced:
+		s.mu.Unlock()
+		return errReplaced()
+	default:
+	}
 	if batches == nil {
 		batches = []Batch{}
 	}
@@ -281,6 +290,13 @@ func (s *Session) Arrive(ctx context.Context, stepperID, childIndex int, batches
 		return nil
 	case <-s.endedCh:
 		return NewError(CodeSessionEnded, "the debug session ended")
+	case <-replaced:
+		s.mu.Lock()
+		if s.resume == resume {
+			s.stop, s.resume = nil, nil
+		}
+		s.mu.Unlock()
+		return errReplaced()
 	case <-ctx.Done():
 		s.mu.Lock()
 		if s.resume == resume {
@@ -396,4 +412,22 @@ func (s *Session) pause() error {
 	}
 	s.pausePending = true
 	return nil
+}
+
+// resetSteppingLocked discards the stepping state of a replaced run, for a
+// Restart (AD-20): the frames, the root call-site counters, the retry
+// warnings, a pending entry or Pause and the stop. frameSeq and stopSeq
+// keep counting, so no frame or stop id is reused. s.mu must be held.
+func (s *Session) resetSteppingLocked() {
+	s.frames = map[int]*liveFrame{}
+	s.rootSites = map[siteKey]*siteCount{}
+	s.budgetWarned = map[int]bool{}
+	s.entryPending, s.pausePending = false, false
+	s.stop, s.resume = nil, nil
+}
+
+// errReplaced is what Arrive returns in a run a Restart replaced: the
+// stepper delivers nothing.
+func errReplaced() error {
+	return NewError(CodeSessionEnded, "the run was restarted")
 }

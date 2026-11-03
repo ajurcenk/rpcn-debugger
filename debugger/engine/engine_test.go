@@ -128,6 +128,19 @@ func (a *arriver) Arrive(ctx context.Context, stepperID, childIndex int, batches
 
 func standard() *service.Environment { return service.NewEnvironment() }
 
+// start runs a launch's engine side: Capture, then Step on the captured
+// batch. An arr with a Captured method gets the batch's kept and total.
+func start(ctx context.Context, a *engine.Adapter, opts core.StartOptions, arr core.Arriver) error {
+	b, err := a.Capture(ctx, opts)
+	if err != nil {
+		return err
+	}
+	if c, ok := arr.(interface{ Captured(kept, total int) }); ok {
+		c.Captured(b.Kept, b.Total)
+	}
+	return a.Step(ctx, opts, b.Batch, arr)
+}
+
 // Start runs Check's Prepared without loading again (AD-6), and without
 // one (a caller that skipped Check) loads the pipeline itself. The loader
 // gets the rewrite options from StartOptions.
@@ -151,7 +164,7 @@ func TestStartRunsPrepared(t *testing.T) {
 	prepared := opts
 	prepared.Prepared = res.Prepared
 	arr := &arriver{}
-	if err := a.Start(ctx, prepared, arr); err != nil {
+	if err := start(ctx, a, prepared, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(loads) != 1 || loads[0].DebugGroup != "rpcn-debug-jane" {
@@ -162,17 +175,17 @@ func TestStartRunsPrepared(t *testing.T) {
 	}
 
 	arr = &arriver{}
-	if err := a.Start(ctx, opts, arr); err != nil {
+	if err := start(ctx, a, opts, arr); err != nil {
 		t.Fatal(err)
 	}
-	if len(loads) != 2 || loads[1].DebugGroup != "rpcn-debug-jane" {
-		t.Errorf("loads = %+v, want Start without Prepared to load with the debug group", loads)
+	if len(loads) != 3 || loads[1].DebugGroup != "rpcn-debug-jane" || loads[2].DebugGroup != "rpcn-debug-jane" {
+		t.Errorf("loads = %+v, want Capture and Step without Prepared to load with the debug group", loads)
 	}
 	if len(arr.delivered) != 1 {
 		t.Errorf("delivered %d batches without Prepared, want 1", len(arr.delivered))
 	}
 
-	if err := a.Start(ctx, core.StartOptions{Pipeline: samplePipeline, Prepared: "configs"}, &arriver{}); err == nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: samplePipeline, Prepared: "configs"}, &arriver{}); err == nil {
 		t.Error("Start ran a Prepared that is not engine.Configs")
 	}
 }
@@ -194,7 +207,7 @@ func TestSampleStepsAndDelivers(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, core.StartOptions{Pipeline: samplePipeline}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: samplePipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(arr.got) != 2 || arr.got[0].stepperID != 0 || arr.got[0].childIndex != 0 ||
@@ -277,7 +290,7 @@ output:
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	arr := &arriver{}
-	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	var got []string
@@ -316,7 +329,7 @@ output:
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	arr := &arriver{}
-	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(arr.delivered) != 0 {
@@ -355,7 +368,7 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); !core.HasCode(err, core.CodeNothingCaptured) {
+	if err := start(ctx, a, core.StartOptions{Pipeline: path}, arr); !core.HasCode(err, core.CodeNothingCaptured) {
 		t.Fatalf("Start = %v, want NOTHING_CAPTURED", err)
 	}
 	if len(arr.got) != 0 {
@@ -393,7 +406,7 @@ output:
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	// The input stepper stops before its child, then at its end stop with
@@ -423,7 +436,7 @@ func TestNestedStepsAndDelivers(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, core.StartOptions{Pipeline: nestedPipeline}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: nestedPipeline}, arr); err != nil {
 		t.Fatal(err)
 	}
 	// Ids: 0 input, 1 pipeline, 2 branch, 3 and 4 the switch cases, 5
@@ -478,7 +491,7 @@ func TestRewrittenConfigsBuild(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := a.Start(ctx, core.StartOptions{Pipeline: path}, &arriver{}); err != nil {
+			if err := start(ctx, a, core.StartOptions{Pipeline: path}, &arriver{}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -504,7 +517,7 @@ output:
 			a := engine.New(standard(), testLogger(), load)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			err := a.Start(ctx, core.StartOptions{Pipeline: path}, &arriver{})
+			err := start(ctx, a, core.StartOptions{Pipeline: path}, &arriver{})
 			if strict && err == nil {
 				t.Error("strict: the failed message was delivered")
 			}
@@ -535,7 +548,7 @@ func TestEndWhileStopped(t *testing.T) {
 	a := engine.New(standard(), testLogger(), load)
 	arr := &arriver{block: make(chan struct{}), seen: make(chan struct{}, 1)}
 	done := make(chan error, 1)
-	go func() { done <- a.Start(context.Background(), core.StartOptions{Pipeline: samplePipeline}, arr) }()
+	go func() { done <- start(context.Background(), a, core.StartOptions{Pipeline: samplePipeline}, arr) }()
 	select {
 	case <-arr.seen:
 	case <-time.After(30 * time.Second):
@@ -595,7 +608,7 @@ func TestCaptureNeverAcks(t *testing.T) {
 	arr := &arriver{}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Start(ctx, core.StartOptions{Pipeline: path}, arr); err != nil {
+	if err := start(ctx, a, core.StartOptions{Pipeline: path}, arr); err != nil {
 		t.Fatal(err)
 	}
 	if len(arr.got) != 2 {
@@ -674,7 +687,7 @@ func TestCaptureTruncatesToMaxMessages(t *testing.T) {
 			arr := &arriver{}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := a.Start(ctx, core.StartOptions{Pipeline: batch12, MaxMessages: tc.max}, arr); err != nil {
+			if err := start(ctx, a, core.StartOptions{Pipeline: batch12, MaxMessages: tc.max}, arr); err != nil {
 				t.Fatal(err)
 			}
 			if len(arr.captured) != 1 || arr.captured[0] != [2]int{tc.kept, 12} {
@@ -737,7 +750,7 @@ output:
 			arr := &arriver{}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := a.Start(ctx, opts, arr); err != nil {
+			if err := start(ctx, a, opts, arr); err != nil {
 				t.Fatal(err)
 			}
 			end := arr.got[len(arr.got)-1]
@@ -829,7 +842,7 @@ output:
 		path := writePipeline(t, body)
 		a := engine.New(standard(), testLogger(), load)
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-		err := a.Start(ctx, core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(nil, nil)}, &arriver{})
+		err := start(ctx, a, core.StartOptions{Pipeline: path, Lookup: core.EnvLookup(nil, nil)}, &arriver{})
 		cancel()
 		switch {
 		case strict && !core.HasCode(err, core.CodeStrictRejected):
@@ -883,7 +896,7 @@ output:
 			arr := &arriver{}
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
-			err := a.Start(ctx, opts, arr)
+			err := start(ctx, a, opts, arr)
 			switch tc.want {
 			case "invalid":
 				for what, e := range map[string]error{"Check": checkErr, "Start": err} {
@@ -929,5 +942,68 @@ func TestCheckInputs(t *testing.T) {
 	_, err = a.Check(core.StartOptions{Pipeline: path, InputClasses: map[string]core.InputClass{"no_such": core.ClassReplaySafe}})
 	if !core.HasCode(err, core.CodeLaunchInvalid) || !strings.Contains(err.Error(), "inputClasses.no_such") {
 		t.Errorf("Check = %v, want LAUNCH_INVALID naming inputClasses.no_such", err)
+	}
+}
+
+// A Restart's Check lints only what Step runs: the batch is already
+// captured, so an input block that would fail is not linted (AD-20).
+func TestCheckRestartSkipsTheCapture(t *testing.T) {
+	a := engine.New(standard(), testLogger(), load)
+	path := writePipeline(t, "input:\n  generate: {mapping: 'root = {}', no_such_field: 1}\npipeline:\n  processors:\n    - mapping: 'root = this'\n")
+	if _, err := a.Check(core.StartOptions{Pipeline: path}); err == nil {
+		t.Fatal("Check of a bad input block succeeded")
+	}
+	if _, err := a.Check(core.StartOptions{Pipeline: path, Restart: true}); err != nil {
+		t.Errorf("Restart Check = %v, want the input block left unlinted", err)
+	}
+	bad := writePipeline(t, "input:\n  generate: {mapping: 'root = {}'}\npipeline:\n  processors:\n    - no_such_processor: {}\n")
+	if _, err := a.Check(core.StartOptions{Pipeline: bad, Restart: true}); err == nil {
+		t.Error("Restart Check of an unknown processor succeeded")
+	}
+}
+
+// Step works on a deep copy: stepping the captured batch again sees it as
+// captured, and the processors may change between Steps (AD-20).
+func TestStepTwiceOnTheCapturedBatch(t *testing.T) {
+	src := "input:\n  generate: {count: 1, interval: \"\", mapping: 'root = \"x\"'}\npipeline:\n  processors:\n    - mapping: 'root = content().string() + \"%s\"'\n"
+	path := writePipeline(t, fmt.Sprintf(src, "!"))
+	a := engine.New(standard(), testLogger(), load)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := a.Check(core.StartOptions{Pipeline: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := a.Capture(ctx, core.StartOptions{Pipeline: path, Prepared: res.Prepared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Kept != 1 || b.Total != 1 {
+		t.Errorf("captured %d of %d, want 1 of 1", b.Kept, b.Total)
+	}
+	var got []string
+	for _, suffix := range []string{"!", "?", "?"} {
+		if err := os.WriteFile(path, fmt.Appendf(nil, src, suffix), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := a.Check(core.StartOptions{Pipeline: path, Restart: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		arr := &arriver{}
+		if err := a.Step(ctx, core.StartOptions{Pipeline: path, Prepared: res.Prepared}, b.Batch, arr); err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range arr.delivered {
+			for _, m := range d.Messages {
+				got = append(got, string(m.Content.Raw))
+			}
+		}
+	}
+	if want := []string{"x!", "x?", "x?"}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("delivered %q, want %q", got, want)
+	}
+	if err := a.Step(ctx, core.StartOptions{Pipeline: path}, "batch", &arriver{}); err == nil {
+		t.Error("Step ran a batch that is not a service.MessageBatch")
 	}
 }

@@ -19,17 +19,40 @@ func nothingDelivered(m OutputMode) string {
 	}
 }
 
-// Captured implements Arriver. When the capture dropped messages for
-// maxMessages, it tells the user how many it kept.
-func (s *Session) Captured(kept, total int) {
+// capture runs the engine's Capture and keeps the batch it returns, for
+// Restart (AD-20). A quiet input would leave the user waiting without a
+// word, so after captureWait with nothing captured it sends one waiting note
+// (AD-4).
+func (s *Session) capture(ctx context.Context, opts StartOptions) (CapturedBatch, error) {
+	noted := make(chan struct{})
 	s.mu.Lock()
-	s.captured = true
+	delay := s.captureWait
+	s.mu.Unlock()
+	wait := time.AfterFunc(delay, func() {
+		defer close(noted)
+		s.waitingNote()
+	})
+	b, err := s.engine.Capture(ctx, opts)
+	if err == nil {
+		s.keepCaptured(b)
+	}
+	if !wait.Stop() {
+		<-noted // the note goes out before the run's last events
+	}
+	return b, err
+}
+
+// keepCaptured keeps b as the session's captured batch. When the capture
+// dropped messages for maxMessages, it tells the user how many it kept.
+func (s *Session) keepCaptured(b CapturedBatch) {
+	s.mu.Lock()
+	s.captured, s.kept = true, &b
 	ended := s.ended
 	s.mu.Unlock()
-	if ended || kept >= total {
+	if ended || b.Kept >= b.Total {
 		return
 	}
-	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", kept, total)})
+	s.fe.Emit(Output{Category: "console", Text: fmt.Sprintf("captured %d of %d messages (maxMessages)\n", b.Kept, b.Total)})
 }
 
 // SetCaptureWait sets how long the run may capture nothing before the
@@ -53,8 +76,8 @@ func (s *Session) waitingNote() {
 	}
 }
 
-// Deliver implements Arriver: it numbers batch, from 1 in the session
-// (AD-3), and emits it as one Delivered event with its outcome and write
+// Deliver implements Arriver: it numbers batch, from 1 in the run (AD-3;
+// Restart starts the count again), and emits it as one Delivered event with its outcome and write
 // error, in the order the sink received it (AD-21). Its Snapshot is
 // positioned at the user path output, on the line of the top-level output
 // key, on the root thread; it has no frame or stepper (FrameID 0,

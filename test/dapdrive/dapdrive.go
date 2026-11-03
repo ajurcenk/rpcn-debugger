@@ -42,6 +42,10 @@ const (
 	Next     Command = "next"
 	StepOut  Command = "stepOut"
 	Continue Command = "continue"
+	// Restart restarts the run from the stop (AD-20): it re-steps the
+	// captured batch from the entry stop. A failed restart is recorded in
+	// Result.RestartErrors and the Script is asked again at the same stop.
+	Restart Command = "restart"
 )
 
 // Script decides the command at each stop. stops are the stops so far, the
@@ -140,9 +144,12 @@ type Result struct {
 	// Output holds the text of every output event, in order.
 	Output []string
 	// Delivered are the batches rpcn_debug_sink received (AD-21), in
-	// order, from the rpcnDelivered events. It is nil when nothing was
-	// delivered.
+	// order, from the rpcnDelivered events, across Restarts. It is nil
+	// when nothing was delivered.
 	Delivered []Batch
+	// RestartErrors are the messages of the restart requests that failed,
+	// in order.
+	RestartErrors []string
 }
 
 // standardEnv is the stock binary's component set, built once. Runs never
@@ -293,12 +300,17 @@ func (c *client) request(command string, args any) (json.RawMessage, error) {
 			c.events = append(c.events, m)
 		case m.Type == "response" && m.RequestSeq == c.seq:
 			if !m.Success {
-				return nil, fmt.Errorf("%s failed: %s", command, m.Message)
+				return nil, &failedError{command: command, message: m.Message}
 			}
 			return m.Body, nil
 		}
 	}
 }
+
+// failedError is a failed response.
+type failedError struct{ command, message string }
+
+func (e *failedError) Error() string { return e.command + " failed: " + e.message }
 
 // event returns the next event, queued or read.
 func (c *client) event() (message, error) {
@@ -339,6 +351,7 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 	if _, err := c.request("configurationDone", map[string]any{}); err != nil {
 		return res, err
 	}
+	delivered := 0 // batches delivered in this run: a Restart numbers from 1 again
 	for {
 		ev, err := c.event()
 		if err != nil {
@@ -368,12 +381,21 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			}
 			st.Reason = b.Reason
 			res.Stops = append(res.Stops, st)
-			cmd := script(res.Stops)
-			if _, err := c.request(string(cmd), map[string]any{"threadId": b.ThreadID}); err != nil {
+			restarted, err := c.answer(&res, script, b.ThreadID, maxStops)
+			if err != nil {
 				return res, err
 			}
+			if restarted {
+				delivered = 0
+				// The restart re-read the pipeline file: stops map to its
+				// new user paths.
+				if paths, err = userPaths(pipeline); err != nil {
+					return res, err
+				}
+			}
 		case "rpcnDelivered":
-			b, err := deliveredBatches(ev.Body, len(res.Delivered)+1)
+			delivered++
+			b, err := deliveredBatches(ev.Body, delivered)
 			if err != nil {
 				return res, err
 			}
@@ -385,6 +407,28 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			return res, nil
 		}
 	}
+}
+
+// answer sends the Script's command for the current stop, on thread tid.
+// A failed restart is recorded and the Script is asked again, at most
+// maxStops times. It reports whether the stop was answered with a
+// successful restart.
+func (c *client) answer(res *Result, script Script, tid, maxStops int) (restarted bool, err error) {
+	for range maxStops {
+		cmd := script(res.Stops)
+		if cmd != Restart {
+			_, err := c.request(string(cmd), map[string]any{"threadId": tid})
+			return false, err
+		}
+		_, err := c.request(string(Restart), map[string]any{})
+		var fe *failedError
+		if errors.As(err, &fe) {
+			res.RestartErrors = append(res.RestartErrors, fe.message)
+			continue
+		}
+		return err == nil, err
+	}
+	return false, fmt.Errorf("more than %d failed restarts at one stop", maxStops)
 }
 
 // deliveredBatches decodes the body of rpcnDelivered event number n,

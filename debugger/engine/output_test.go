@@ -129,7 +129,7 @@ func runProbeWith(t *testing.T, src string, mode core.OutputMode, p *probeOut, t
 		t.Fatal(err)
 	}
 	opts.Prepared = res.Prepared
-	return p, arr, a.Start(ctx, opts, arr)
+	return p, arr, start(ctx, a, opts, arr)
 }
 
 // Each mode's batch is reported once, with its outcome (AD-21).

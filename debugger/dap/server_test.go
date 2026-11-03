@@ -179,8 +179,8 @@ func checkMessage(t *testing.T, i int, raw []byte, w want) {
 		if err := json.Unmarshal(m.Body, &caps); err != nil {
 			t.Fatalf("message %d: body %s: %v", i, m.Body, err)
 		}
-		if len(caps) != 1 || caps["supportsConfigurationDoneRequest"] != true {
-			t.Errorf("initialize capabilities = %s, want only supportsConfigurationDoneRequest", m.Body)
+		if len(caps) != 2 || caps["supportsConfigurationDoneRequest"] != true || caps["supportsRestartRequest"] != true {
+			t.Errorf("initialize capabilities = %s, want only supportsConfigurationDoneRequest and supportsRestartRequest", m.Body)
 		}
 	}
 }

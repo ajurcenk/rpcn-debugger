@@ -103,14 +103,16 @@ func New(env *service.Environment, log *slog.Logger, load Loader) *Adapter {
 // SetWriteTimeout sets how long the sink waits under output: real for the
 // user's output to write one batch, reconnects included, before the batch
 // fails with OUTPUT_FAILED (default 30 s). It is for tests, and must be
-// called before Start.
+// called before Step.
 func (a *Adapter) SetWriteTimeout(d time.Duration) { a.writeTimeout = d }
 
 // Check loads the pipeline and parses and lints both stream configs, so
-// config errors fail the launch. ${VAR} resolves through opts.Lookup, as in
-// Start (AD-22). It never calls Build: Build opens every *_resources entry
+// config errors fail the launch; with opts.Restart it lints only the step
+// stream (AD-20). ${VAR} resolves through opts.Lookup, as in Capture and
+// Step (AD-22). It never calls Build: Build opens every *_resources entry
 // (caches, connection pools), which would leak. The loaded Configs come
-// back as the result's Prepared, for Start (AD-6: one rewrite per launch).
+// back as the result's Prepared, for Capture and Step (AD-6: one rewrite
+// per launch).
 func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	pipeline := opts.Pipeline
 	lo, err := a.loadOptions(opts)
@@ -128,8 +130,12 @@ func (a *Adapter) Check(opts core.StartOptions) (core.CheckResult, error) {
 	// A failed Check still carries the translator, so the Session can name
 	// user paths in its error (AD-6).
 	failed := core.CheckResult{Translator: conf.Translator}
-	if _, err := r.configureCapture(nil); err != nil {
-		return failed, fmt.Errorf("%s: %w", pipeline, err)
+	// A Restart re-steps the batch already captured: the capture config
+	// does not run, so it is not linted (AD-20).
+	if !opts.Restart {
+		if _, err := r.configureCapture(nil); err != nil {
+			return failed, fmt.Errorf("%s: %w", pipeline, err)
+		}
 	}
 	if _, _, err := r.configureStep(); err != nil {
 		return failed, fmt.Errorf("%s: %w", pipeline, err)
@@ -159,37 +165,62 @@ func (a *Adapter) loadOptions(opts core.StartOptions) (LoadOptions, error) {
 	}, nil
 }
 
-// Start captures one batch without acking it, stops the capture stream,
-// truncates the batch to opts.MaxMessages, then feeds it through the stepper
-// into rpcn_debug_sink. It returns nil once the sink has the result. It
-// runs opts.Prepared, the Configs Check returned, and loads the pipeline
-// itself only when Prepared is nil.
-func (a *Adapter) Start(ctx context.Context, opts core.StartOptions, arr core.Arriver) error {
-	var conf Configs
+// prepared returns the Configs to run: opts.Prepared, the Configs Check
+// returned, or with a nil Prepared the pipeline loaded afresh.
+func (a *Adapter) prepared(opts core.StartOptions) (Configs, error) {
 	switch p := opts.Prepared.(type) {
 	case Configs:
-		conf = p
+		return p, nil
 	case nil:
 		lo, err := a.loadOptions(opts)
 		if err != nil {
-			return err
+			return Configs{}, err
 		}
-		if conf, _, err = a.load(opts.Pipeline, lo); err != nil {
-			return err
-		}
+		conf, _, err := a.load(opts.Pipeline, lo)
+		return conf, err
 	default:
-		return fmt.Errorf("start: Prepared is a %T, not the Configs Check returns", opts.Prepared)
+		return Configs{}, fmt.Errorf("start: Prepared is a %T, not the Configs Check returns", opts.Prepared)
+	}
+}
+
+// Capture captures one batch without acking it, stops the capture stream
+// and truncates the batch to opts.MaxMessages. Its Batch is a
+// service.MessageBatch, for Step. It runs opts.Prepared, the Configs Check
+// returned, and loads the pipeline itself only when Prepared is nil.
+func (a *Adapter) Capture(ctx context.Context, opts core.StartOptions) (core.CapturedBatch, error) {
+	conf, err := a.prepared(opts)
+	if err != nil {
+		return core.CapturedBatch{}, err
+	}
+	r, err := a.newRun(conf, opts.Lookup, nopArriver{})
+	if err != nil {
+		return core.CapturedBatch{}, fmt.Errorf("%s: %w", opts.Pipeline, err)
+	}
+	batch, total, err := r.capture(ctx, opts.MaxMessages)
+	if err != nil {
+		return core.CapturedBatch{}, err
+	}
+	return core.CapturedBatch{Batch: batch, Kept: len(batch), Total: total}, nil
+}
+
+// Step feeds a deep copy of batch, a Capture's service.MessageBatch,
+// through the stepper into rpcn_debug_sink, on fresh env clones (AD-1), so
+// the batch stays as captured for a later Step (AD-20). It returns nil once
+// the sink has the result.
+func (a *Adapter) Step(ctx context.Context, opts core.StartOptions, batch any, arr core.Arriver) error {
+	b, ok := batch.(service.MessageBatch)
+	if !ok {
+		return fmt.Errorf("step: the batch is a %T, not the service.MessageBatch Capture returns", batch)
+	}
+	conf, err := a.prepared(opts)
+	if err != nil {
+		return err
 	}
 	r, err := a.newRun(conf, opts.Lookup, arr)
 	if err != nil {
 		return fmt.Errorf("%s: %w", opts.Pipeline, err)
 	}
-	batch, total, err := r.capture(ctx, opts.MaxMessages)
-	if err != nil {
-		return err
-	}
-	arr.Captured(len(batch), total)
-	if err := r.step(ctx, batch); err != nil {
+	if err := r.step(ctx, b.DeepCopy()); err != nil {
 		return err
 	}
 	a.log.Info("debug run delivered", "batches", len(r.sink.batches()))
@@ -428,8 +459,6 @@ func (r *run) stop(strm *service.Stream, runErr <-chan error, cancel context.Can
 // and the capture stream runs its steppers with it, so input-tree processors
 // run unstepped.
 type nopArriver struct{}
-
-func (nopArriver) Captured(int, int) {}
 
 // Enter pushes a frame, so a nested stepper finds one and does not report
 // CTX_LOST (AD-17). Nothing reads it: only the Session uses frames.

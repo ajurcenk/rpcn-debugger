@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -90,9 +91,14 @@ type fakeEngine struct {
 	inputs   []InputFinding // returned by Check
 	// checked receives the options of each Check, when set.
 	checked chan StartOptions
-	// hold, when set, makes Start wait for it (or ctx's end) before it
-	// calls Captured: a quiet input.
+	// hold, when set, makes Capture wait for it (or ctx's end): a quiet
+	// input.
 	hold chan struct{}
+	// stepOpts receives the options of each Step, when set.
+	stepOpts chan StartOptions
+
+	mu       sync.Mutex
+	captures int // Capture calls that returned a batch
 }
 
 func (e *fakeEngine) Check(opts StartOptions) (CheckResult, error) {
@@ -112,18 +118,18 @@ func (e *fakeEngine) Check(opts StartOptions) (CheckResult, error) {
 	return CheckResult{Lines: l, Translator: e.tr, Warnings: e.warnings, Delivery: e.delivery, Inputs: e.inputs}, nil
 }
 
-func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) error {
+func (e *fakeEngine) Capture(ctx context.Context, opts StartOptions) (CapturedBatch, error) {
 	if e.opts != nil {
 		e.opts <- opts
 	}
 	if e.startErr != nil {
-		return e.startErr
+		return CapturedBatch{}, e.startErr
 	}
 	if e.hold != nil {
 		select {
 		case <-e.hold:
 		case <-ctx.Done():
-			return ctx.Err()
+			return CapturedBatch{}, ctx.Err()
 		}
 	}
 	kept, total := e.captured[0], e.captured[1]
@@ -131,9 +137,19 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 		kept = len(e.batch[0].Messages)
 		total = kept
 	}
-	a.Captured(kept, total)
+	e.mu.Lock()
+	e.captures++
+	e.mu.Unlock()
+	return CapturedBatch{Batch: e.batch, Kept: kept, Total: total}, nil
+}
+
+func (e *fakeEngine) Step(ctx context.Context, opts StartOptions, batch any, a Arriver) error {
+	if e.stepOpts != nil {
+		e.stepOpts <- opts
+	}
+	b, _ := batch.([]Batch)
 	defer func() {
-		for i, b := range e.deliver {
+		for i, d := range e.deliver {
 			o, err := OutcomeRecorded, error(nil)
 			if i < len(e.outcomes) {
 				o = e.outcomes[i]
@@ -141,7 +157,7 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 			if o == OutcomeFailed {
 				err = e.writeErr
 			}
-			a.Deliver(ctx, b, o, err)
+			a.Deliver(ctx, d, o, err)
 		}
 	}()
 	steppers := e.steppers
@@ -149,11 +165,11 @@ func (e *fakeEngine) Start(ctx context.Context, opts StartOptions, a Arriver) er
 		steppers = []*fakeStepper{{id: 0, children: make([]fakeChild, e.children)}}
 	}
 	for _, st := range steppers {
-		if err := st.run(ctx, a, e.batch); err != nil {
+		if err := st.run(ctx, a, b); err != nil {
 			return err
 		}
 	}
-	e.delivered <- e.batch
+	e.delivered <- b
 	return nil
 }
 
@@ -388,9 +404,11 @@ func (e *pathEngine) Check(o StartOptions) (CheckResult, error) {
 	*e.got = p
 	return CheckResult{Lines: lines{}}, nil
 }
-func (e *pathEngine) Start(context.Context, StartOptions, Arriver) error {
-	return nil
+func (e *pathEngine) Capture(context.Context, StartOptions) (CapturedBatch, error) {
+	return CapturedBatch{}, nil
 }
+
+func (e *pathEngine) Step(context.Context, StartOptions, any, Arriver) error { return nil }
 
 func TestNothingCaptured(t *testing.T) {
 	e := newEngine()
@@ -478,7 +496,7 @@ func TestNotSupported(t *testing.T) {
 	}
 	before, _ := s.Stopped()
 	for _, cmd := range []Command{
-		Evaluate{Expression: "this"}, SetMessage{}, SaveCapture{}, Restart{},
+		Evaluate{Expression: "this"}, SetMessage{}, SaveCapture{},
 	} {
 		res, err := s.Do(context.Background(), cmd)
 		var ce Error

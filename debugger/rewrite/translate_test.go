@@ -102,7 +102,6 @@ func (c *collector) WithGroup(string) slog.Handler { return c }
 
 type nopArriver struct{}
 
-func (nopArriver) Captured(int, int) {}
 func (nopArriver) Enter(ctx context.Context, _ core.Entry) (context.Context, func(any)) {
 	return ctx, func(any) {}
 }
@@ -130,7 +129,12 @@ func TestTranslateEngineErrors(t *testing.T) {
 	log := slog.New(&collector{mu: &sync.Mutex{}, got: &got})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := engine.New(service.NewEnvironment(), log, load).Start(ctx, core.StartOptions{Pipeline: path}, nopArriver{}); err != nil {
+	eng := engine.New(service.NewEnvironment(), log, load)
+	b, err := eng.Capture(ctx, core.StartOptions{Pipeline: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Step(ctx, core.StartOptions{Pipeline: path}, b.Batch, nopArriver{}); err != nil {
 		t.Fatal(err)
 	}
 

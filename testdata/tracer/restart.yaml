@@ -1,0 +1,21 @@
+# Restart sample (AD-20): one generated message through one mapping. Press
+# F5: the debugger stops before the mapping. Edit the mapping, save and
+# press Restart: the run stops at entry again and re-steps the same
+# captured batch with the new mapping. The input is not read again: the
+# message's captured_at stays the time of the first capture.
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: |
+      root.greeting = "hello restart"
+      root.captured_at = now()
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        root.upper = this.greeting.uppercase()
+
+output:
+  drop: {}

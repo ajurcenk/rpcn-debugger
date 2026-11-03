@@ -71,19 +71,27 @@ func (e *fakeEngine) Check(core.StartOptions) (core.CheckResult, error) {
 	}, Delivery: core.Position{UserPath: "output", Line: 20}}, nil
 }
 
-func (e *fakeEngine) Start(ctx context.Context, opts core.StartOptions, a core.Arriver) error {
+func (e *fakeEngine) Capture(_ context.Context, opts core.StartOptions) (core.CapturedBatch, error) {
 	if e.opts != nil {
 		e.opts <- opts
 	}
+	if e.startErr != nil {
+		e.ended <- e.startErr
+		return core.CapturedBatch{}, e.startErr
+	}
+	return core.CapturedBatch{Kept: 1, Total: 1}, nil
+}
+
+func (e *fakeEngine) Step(ctx context.Context, _ core.StartOptions, _ any, a core.Arriver) error {
 	err := e.start(ctx, a)
-	e.ended <- err
+	select {
+	case e.ended <- err:
+	default: // a Restart's earlier run already reported
+	}
 	return err
 }
 
 func (e *fakeEngine) start(ctx context.Context, a core.Arriver) error {
-	if e.startErr != nil {
-		return e.startErr
-	}
 	if e.nested {
 		return e.startNested(ctx, a)
 	}
@@ -813,7 +821,6 @@ func TestUnsupportedCommands(t *testing.T) {
 		args    map[string]any
 	}{
 		{"evaluate", map[string]any{"expression": "this", "frameId": frame}},
-		{"restart", map[string]any{}},
 		{"setVariable", map[string]any{"variablesReference": 1, "name": "x", "value": "1"}},
 	} {
 		c.send(req.command, req.args)
@@ -832,4 +839,56 @@ func TestUnsupportedCommands(t *testing.T) {
 	c.event("terminated")
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)
+}
+
+// The initialize response advertises restart.
+func TestInitializeAdvertisesRestart(t *testing.T) {
+	c := startServer(t, newFakeEngine())
+	c.send("initialize", map[string]any{"adapterID": "redpanda-connect"})
+	if resp := c.response("initialize", true).(*dap.InitializeResponse); !resp.Body.SupportsRestartRequest {
+		t.Error("initialize does not advertise supportsRestartRequest")
+	}
+}
+
+// The restart response precedes every event of the new run: the old
+// thread's exit, the note, the new thread and its entry stop.
+func TestRestartResponseFirst(t *testing.T) {
+	c := startServer(t, newFakeEngine())
+	c.toStop()
+	c.send("restart", map[string]any{})
+	c.response("restart", true)
+	c.threadEvent("exited")
+	if out := c.event("output").(*dap.OutputEvent); !strings.HasPrefix(out.Body.Output, "Restart re-reads only the pipeline file") {
+		t.Errorf("output = %q, want the restart note", out.Body.Output)
+	}
+	c.threadEvent("started")
+	if st := c.event("stopped").(*dap.StoppedEvent); st.Body.Reason != "entry" {
+		t.Errorf("stopped = %+v, want entry", st.Body)
+	}
+	c.send("continue", map[string]any{"threadId": 1})
+	c.response("continue", true)
+	c.delivery(1)
+}
+
+// A failed restart answers the Check's error and leaves the stop: a later
+// next works.
+func TestRestartFails(t *testing.T) {
+	eng := newFakeEngine()
+	c := startServer(t, eng)
+	c.toStop()
+	frame := c.frameID()
+	eng.checkErr = core.Error{Code: core.CodePipelineInvalid, Message: "bad YAML", Line: 13}
+	c.send("restart", map[string]any{})
+	resp := c.response("restart", false).(*dap.ErrorResponse)
+	if resp.Body.Error == nil || resp.Body.Error.Id != core.Number(core.CodePipelineInvalid) || !strings.Contains(resp.Message, "line 13") {
+		t.Errorf("restart error = %+v (%s), want PIPELINE_INVALID at line 13", resp.Body.Error, resp.Message)
+	}
+	if got := c.frameID(); got != frame {
+		t.Errorf("frame = %d after a failed restart, want %d", got, frame)
+	}
+	c.send("next", map[string]any{"threadId": 1})
+	c.response("next", true)
+	if st := c.event("stopped").(*dap.StoppedEvent); st.Body.Reason != "step" {
+		t.Errorf("stopped = %+v, want step", st.Body)
+	}
 }

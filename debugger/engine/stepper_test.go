@@ -57,8 +57,6 @@ func (a *spyArriver) Deliver(ctx context.Context, b core.Batch, o core.Outcome, 
 	}
 }
 
-func (a *spyArriver) Captured(int, int) {}
-
 func (a *spyArriver) Enter(ctx context.Context, e core.Entry) (context.Context, func(any)) {
 	if a.inner != nil {
 		return a.inner.Enter(ctx, e)

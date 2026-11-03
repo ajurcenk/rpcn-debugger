@@ -99,3 +99,22 @@ func (s *Session) threadLocked(id int) *thread {
 	}
 	return t
 }
+
+// liveThreadsLocked returns the ids of the started, unexited threads, in
+// id order. s.mu must be held.
+func (s *Session) liveThreadsLocked() []int {
+	var ids []int
+	for id, t := range s.threads {
+		if t.started && !t.exited {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// resetThreadsLocked forgets every thread, for a Restart (AD-20). s.mu must
+// be held.
+func (s *Session) resetThreadsLocked() {
+	s.threads = map[int]*thread{}
+}

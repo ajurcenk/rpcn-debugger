@@ -38,7 +38,11 @@ func (e checkEngine) Check(core.StartOptions) (core.CheckResult, error) {
 	return core.CheckResult{Translator: e.tr}, nil
 }
 
-func (checkEngine) Start(context.Context, core.StartOptions, core.Arriver) error { return nil }
+func (checkEngine) Capture(context.Context, core.StartOptions) (core.CapturedBatch, error) {
+	return core.CapturedBatch{}, nil
+}
+
+func (checkEngine) Step(context.Context, core.StartOptions, any, core.Arriver) error { return nil }
 
 const logPipeline = `input:
   generate: {mapping: 'root = {}'}

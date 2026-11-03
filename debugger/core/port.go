@@ -5,9 +5,6 @@ import "context"
 // Arriver is what a stepper calls at each stop position (AD-9). The Session
 // implements it.
 type Arriver interface {
-	// Captured is called once the batch is captured, before the first
-	// Arrive: kept of its total messages are stepped (AD-4 maxMessages).
-	Captured(kept, total int)
 	// Enter starts entry e (AD-17). It returns ctx with the entry's frame
 	// pushed on the frame stack, which the stepper passes to every Arrive
 	// and to its children, and the exit func it calls when the entry
@@ -80,9 +77,9 @@ type CheckResult struct {
 	// walker order. The Session refuses the launch on them, or warns.
 	Inputs []InputFinding
 	// Prepared is the engine's own result of the rewrite: the configs Check
-	// linted. It is opaque to the Session, which keeps it and passes it back
-	// in StartOptions.Prepared, so Start runs exactly what Check saw (AD-6:
-	// one rewrite per launch). It may be nil.
+	// linted. It is opaque to the Session, which keeps it and passes it
+	// back in StartOptions.Prepared, so Capture and Step run exactly what
+	// Check saw (AD-6: one rewrite per launch). It may be nil.
 	Prepared any
 }
 
@@ -91,24 +88,38 @@ type CheckResult struct {
 type Engine interface {
 	// Check reads and rewrites the pipeline file opts.Pipeline, with the
 	// rewrite options in opts (DebugGroup, InputClasses, KeepConsumerGroup,
-	// Output),
-	// and parses and
-	// lints it without running anything, resolving ${VAR} through
-	// opts.Lookup as Start does (AD-22). It ignores opts.MaxMessages and
+	// Output), and parses and lints it without running anything, resolving
+	// ${VAR} through opts.Lookup as Capture and Step do (AD-22). With
+	// opts.Restart it lints only what Step runs, not the capture config. It ignores opts.MaxMessages and
 	// opts.Prepared. It returns the rewritten configs in
 	// CheckResult.Prepared and the input findings in CheckResult.Inputs.
 	// Its error fails the launch; a non-Error one is PIPELINE_INVALID.
 	Check(opts StartOptions) (CheckResult, error)
-	// Start captures one batch from the pipeline's input, keeps at most
-	// opts.MaxMessages of it, and steps it through the processors, calling
-	// a.Captured once, a.Arrive at every stop position and a.Deliver for
-	// every batch rpcn_debug_sink receives. It runs opts.Prepared, the
-	// configs a Check returned, without reading the file again (AD-6); with
-	// a nil Prepared it reads and rewrites opts.Pipeline itself. It returns
-	// nil once the batch is delivered, an Error with code NOTHING_CAPTURED
-	// when the input yields nothing, or an error when ctx ends or the run
-	// fails.
-	Start(ctx context.Context, opts StartOptions, a Arriver) error
+	// Capture captures one batch from the pipeline's input without acking
+	// it, and keeps at most opts.MaxMessages of it (AD-4). It runs
+	// opts.Prepared, the configs a Check returned, without reading the file
+	// again (AD-6); with a nil Prepared it reads and rewrites opts.Pipeline
+	// itself. It returns an Error with code NOTHING_CAPTURED when the input
+	// yields nothing, or an error when ctx ends or the capture fails.
+	Capture(ctx context.Context, opts StartOptions) (CapturedBatch, error)
+	// Step steps batch, the Batch of a CapturedBatch that Capture returned,
+	// through the processors of opts.Prepared (or of opts.Pipeline, read and
+	// rewritten, when Prepared is nil), calling a.Arrive at every stop
+	// position and a.Deliver for every batch rpcn_debug_sink receives. It
+	// works on a deep copy, so batch is never modified and a later Step
+	// (Restart, AD-20) sees it as captured. It returns nil once the batch is
+	// delivered, or an error when ctx ends or the run fails.
+	Step(ctx context.Context, opts StartOptions, batch any, a Arriver) error
+}
+
+// CapturedBatch is the batch a Capture took from the input (AD-4, AD-20).
+// The Session keeps it for Restart.
+type CapturedBatch struct {
+	// Batch is the engine's own batch, opaque to the Session (core stays
+	// stdlib only), which passes it back to Step unchanged.
+	Batch any
+	// Kept of the batch's Total messages are stepped (maxMessages).
+	Kept, Total int
 }
 
 // StartOptions are the launch options an Engine runs with. The Session
@@ -140,8 +151,12 @@ type StartOptions struct {
 	// where rpcn_debug_sink sends the batches it receives. "" is dry-run.
 	Output OutputMode
 	// Prepared is CheckResult.Prepared from this launch's Check, passed
-	// back to Start unchanged. nil makes Start load the pipeline itself.
+	// back to Capture and Step unchanged. nil makes them load the pipeline
+	// themselves.
 	Prepared any
+	// Restart marks the Check of a Restart (AD-20): the batch is already
+	// captured, so Check skips the capture config's lint.
+	Restart bool
 }
 
 // Frontend receives the Session's events. Emit may be called from any

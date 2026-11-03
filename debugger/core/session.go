@@ -50,11 +50,14 @@ type Session struct {
 	inputClasses map[string]InputClass // the inputClasses rewrite option (AD-5)
 	keepGroup    bool                  // the keepConsumerGroup rewrite option (AD-5)
 	output       OutputMode            // the output rewrite option (AD-21)
-	prepared     any                   // Check's configs, run by Start (AD-6: one rewrite per launch)
+	prepared     any                   // Check's configs, run by Capture and Step (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
-	delivered    int                   // batches delivered in this session, numbering them (AD-3; no Restart yet: reset it there, epic-edit-restart-replay)
+	delivered    int                   // batches delivered in this run, numbering them (AD-3); Restart resets it
 	runDone      bool                  // the run emitted Terminated: Log sends nothing more
-	captured     bool                  // Captured was called: the waiting note is not sent
+	captured     bool                  // the batch is captured: the waiting note is not sent
+	kept         *CapturedBatch        // the captured batch, re-stepped by Restart (AD-20); nil before the capture
+	gen          int                   // the run generation: Restart bumps it, and a stale run ends silently
+	restartNoted bool                  // the first Restart's note went out (D4)
 	launched     bool
 	configured   bool
 	breakpoints  map[string][]int
@@ -76,6 +79,10 @@ type Session struct {
 	endedCh      chan struct{}
 	cancel       context.CancelFunc
 	done         chan struct{}
+	replaced     chan struct{} // closed when a Restart replaces the run: its Arrives fail
+
+	// restartMu serializes Restarts: one replaces the run at a time.
+	restartMu sync.Mutex
 }
 
 // NewSession returns a Session that runs pipelines through engine and sends
@@ -130,7 +137,7 @@ func (s *Session) Do(_ context.Context, cmd Command) (Result, error) {
 	case SaveCapture:
 		return nil, notSupported("Saving a capture", "epic-edit-restart-replay")
 	case Restart:
-		return nil, notSupported("Restart", "epic-edit-restart-replay")
+		return nil, s.restart()
 	default:
 		return nil, NewError(CodeNotSupported, "unknown command %T", cmd)
 	}
@@ -203,8 +210,8 @@ func (s *Session) launch(c Launch) error {
 	}
 	s.mu.Unlock()
 
-	// Check and Start resolve ${VAR} through the same lookup, so lint and
-	// parse see the values the run gets (AD-22).
+	// Check, Capture and Step resolve ${VAR} through the same lookup, so
+	// lint and parse see the values the run gets (AD-22).
 	lookup := EnvLookup(fileEnv, env)
 	group := debugGroup()
 	var classes map[string]InputClass
@@ -257,15 +264,143 @@ func (s *Session) configurationDone() error {
 	s.threadLocked(ThreadID).started = true
 
 	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel, s.done = cancel, make(chan struct{})
-	// Start runs the configs Check produced: an edit to the file after
-	// launch never desyncs them from s.lines (AD-6).
-	opts := StartOptions{
+	s.cancel, s.done, s.replaced = cancel, make(chan struct{}), make(chan struct{})
+	// Capture and Step run the configs Check produced: an edit to the file
+	// after launch never desyncs them from s.lines (AD-6).
+	opts := s.optionsLocked()
+	opts.Prepared = s.prepared
+	go s.run(ctx, opts, nil, s.gen, s.done)
+	return nil
+}
+
+// optionsLocked returns the launch's options as launched, without
+// Prepared. s.mu must be held.
+func (s *Session) optionsLocked() StartOptions {
+	return StartOptions{
 		Pipeline: s.pipeline, Cwd: s.cwd, MaxMessages: s.maxMessages, Lookup: s.lookup,
 		DebugGroup: s.debugGroup, InputClasses: s.inputClasses, KeepConsumerGroup: s.keepGroup,
-		Output: s.output, Prepared: s.prepared,
+		Output: s.output,
 	}
-	go s.run(ctx, opts, s.done)
+}
+
+// restartWindDown is how long a Restart lets the replaced run wind down
+// before it cancels it.
+const restartWindDown = 2 * time.Second
+
+// restartNote is the console note of a session's first Restart (D4).
+const restartNote = "Restart re-reads only the pipeline file; changes to launch.json need a new launch.\n"
+
+// restartDryRunNote is the console note of a Restart under output: real.
+const restartDryRunNote = "Restart runs as output: dry-run, so the batch is not written to the output again.\n"
+
+// restart replaces the run with a new one that re-steps the captured batch
+// (AD-20). It re-checks only the pipeline file, with the launch's options:
+// the input block is not linted, the input classes are not decided again
+// and nothing is captured. A failed Check leaves the current run as it is.
+// Otherwise the old run is released (each of its Arrives fails, so it
+// delivers nothing), cancelled if it lingers, and waited for. Its threads
+// exit, the stepping state and the delivered-batch number start afresh
+// (breakpoints and exception filters stay), and the new run stops at the
+// entry stop. Under output: real the new run is dry-run.
+func (s *Session) restart() error {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+
+	s.mu.Lock()
+	switch {
+	case s.ended:
+		s.mu.Unlock()
+		return NewError(CodeSessionEnded, "the debug session ended")
+	case s.runDone:
+		s.mu.Unlock()
+		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
+	case s.kept == nil:
+		s.mu.Unlock()
+		return NewError(CodeNotSupported, "Restart is not supported before the batch is captured")
+	}
+	opts := s.optionsLocked()
+	wasReal := opts.Output.Effective() == OutputReal
+	if wasReal {
+		opts.Output = OutputDryRun
+	}
+	opts.Restart = true
+	kept := *s.kept
+	s.mu.Unlock()
+
+	res, err := s.engine.Check(opts)
+	if err != nil {
+		ce, _ := AsError(err, CodePipelineInvalid).(Error)
+		ce.Message = TranslateText(res.Translator, ce.Message)
+		return ce
+	}
+
+	// Replace the run: a stale generation ends without a word.
+	s.mu.Lock()
+	if s.ended || s.runDone {
+		ended := s.ended
+		s.mu.Unlock()
+		if ended {
+			return NewError(CodeSessionEnded, "the debug session ended")
+		}
+		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
+	}
+	s.gen++
+	cancel, done, replaced := s.cancel, s.done, s.replaced
+	s.mu.Unlock()
+	// Releasing the run's stop lets it wind down on its own, which stops
+	// its streams quickly; cancelling them mid-transaction stalls their
+	// shutdown. A run that doesn't end soon (a write under output: real)
+	// is cancelled.
+	close(replaced)
+	select {
+	case <-done:
+	case <-time.After(restartWindDown):
+	}
+	cancel()
+	<-done
+
+	s.mu.Lock()
+	if s.ended {
+		s.mu.Unlock()
+		return NewError(CodeSessionEnded, "the debug session ended")
+	}
+	if s.runDone {
+		// The run ended (Terminated) before it saw the new generation.
+		s.mu.Unlock()
+		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
+	}
+	exited := s.liveThreadsLocked()
+	s.resetThreadsLocked()
+	s.resetSteppingLocked()
+	s.delivered = 0
+	s.lines, s.translate, s.prepared, s.delivery = res.Lines, res.Translator, res.Prepared, res.Delivery
+	s.entryPending = true
+	s.threadLocked(ThreadID).started = true
+	notes := []string{}
+	if !s.restartNoted {
+		s.restartNoted = true
+		notes = append(notes, restartNote)
+	}
+	if wasReal {
+		notes = append(notes, restartDryRunNote)
+	}
+	ctx, cancelRun := context.WithCancel(context.Background())
+	s.cancel, s.done, s.replaced = cancelRun, make(chan struct{}), make(chan struct{})
+	opts.Prepared, opts.Restart = res.Prepared, false
+	gen, runDone := s.gen, s.done
+	s.mu.Unlock()
+
+	// Outside the lock: Emit is never called while it is held.
+	for _, id := range exited {
+		s.fe.Emit(ThreadExited{ThreadID: id})
+	}
+	for _, n := range notes {
+		s.fe.Emit(Output{Category: "console", Text: n})
+	}
+	for _, w := range res.Warnings {
+		s.fe.Emit(Output{Category: "console", Text: "Warning: " + w + "\n"})
+	}
+	go s.run(ctx, opts, &kept, gen, runDone)
 	return nil
 }
 
@@ -283,7 +418,11 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 	return res
 }
 
-func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}) {
+// run is one debug run of generation gen: it captures the batch, unless
+// kept is the batch a Restart re-steps, then steps it. It closes done when
+// it returns. A run that a Restart replaced (its gen is stale) ends without
+// a word: no note, ThreadExited or Terminated.
+func (s *Session) run(ctx context.Context, opts StartOptions, kept *CapturedBatch, gen int, done chan struct{}) {
 	defer close(done)
 	s.mu.Lock()
 	ended := s.ended
@@ -291,25 +430,22 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	if !ended {
 		s.fe.Emit(ThreadStarted{ThreadID: ThreadID, Name: rootThreadName})
 	}
-	// A quiet input would leave the user waiting without a word (AD-4).
-	noted := make(chan struct{})
-	s.mu.Lock()
-	delay := s.captureWait
-	s.mu.Unlock()
-	wait := time.AfterFunc(delay, func() {
-		defer close(noted)
-		s.waitingNote()
-	})
-	err := s.engine.Start(ctx, opts, s)
-	if !wait.Stop() {
-		<-noted // the note goes out before the run's last events
+	var err error
+	if kept == nil {
+		var b CapturedBatch
+		if b, err = s.capture(ctx, opts); err == nil {
+			kept = &b
+		}
+	}
+	if err == nil {
+		err = s.engine.Step(ctx, opts, kept.Batch, s)
 	}
 
 	s.mu.Lock()
-	ended = s.ended
+	ended = s.ended || s.gen != gen
 	s.mu.Unlock()
 	if ended {
-		return // Terminate: the frontend is gone.
+		return // Terminate (the frontend is gone) or Restart (a new run took over).
 	}
 	if HasCode(err, CodeStrictRejected) {
 		s.mu.Lock()
@@ -327,10 +463,10 @@ func (s *Session) run(ctx context.Context, opts StartOptions, done chan struct{}
 	switch {
 	case err == nil:
 		s.mu.Lock()
-		none, mode := s.delivered == 0, s.output
+		none := s.delivered == 0
 		s.mu.Unlock()
 		if none {
-			s.fe.Emit(Output{Category: "console", Text: nothingDelivered(mode) + "\n"})
+			s.fe.Emit(Output{Category: "console", Text: nothingDelivered(opts.Output) + "\n"})
 		}
 	case HasCode(err, CodeNothingCaptured):
 		s.fe.Emit(Output{Category: "console", Text: err.Error() + "\n"})

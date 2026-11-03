@@ -62,8 +62,12 @@ type server struct {
 	log  *slog.Logger
 	sess *core.Session
 
-	mu  sync.Mutex // guards seq and every write to w
+	mu  sync.Mutex // guards seq, holding, held and every write to w
 	seq int
+	// holding is set while a restart runs: events are queued in held, in
+	// order, and written after the restart response.
+	holding bool
+	held    []dap.Message
 }
 
 func (s *server) run() error {
@@ -116,6 +120,7 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 	case *dap.InitializeRequest:
 		resp := &dap.InitializeResponse{Response: s.response(r)}
 		resp.Body.SupportsConfigurationDoneRequest = true
+		resp.Body.SupportsRestartRequest = true
 		return false, s.send(resp)
 
 	case *dap.LaunchRequest:
@@ -240,9 +245,7 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 		})
 
 	case *dap.RestartRequest:
-		return false, s.respondLocked(r, core.Restart{}, func() dap.Message {
-			return &dap.RestartResponse{Response: s.response(r)}
-		})
+		return false, s.restart(r)
 
 	case *dap.TerminateRequest:
 		// Releases a stopped stepper and waits for the streams to stop; the
@@ -303,6 +306,46 @@ func (s *server) respondLocked(r *dap.Request, cmd core.Command, ok func() dap.M
 		return s.writeLocked(s.failure(r, err))
 	}
 	return s.writeLocked(ok())
+}
+
+// restart runs a Restart. Unlike respondLocked it runs the command without
+// the write lock: the Session waits for the old run, whose teardown emits,
+// and Emit takes the lock. Events are held meanwhile and written after the
+// response, so the response precedes every event of the new run.
+func (s *server) restart(r *dap.Request) error {
+	s.mu.Lock()
+	s.holding = true
+	s.mu.Unlock()
+	_, err := s.do(core.Restart{})
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held := s.held
+	s.holding, s.held = false, nil
+	var resp dap.Message = &dap.RestartResponse{Response: s.response(r)}
+	if err != nil {
+		resp = s.failure(r, err)
+	}
+	if werr := s.writeLocked(resp); werr != nil {
+		return werr
+	}
+	for _, msg := range held {
+		if werr := s.writeLocked(msg); werr != nil {
+			return werr
+		}
+	}
+	return nil
+}
+
+// emit writes event msg, or queues it while a restart runs.
+func (s *server) emit(msg dap.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.holding {
+		s.held = append(s.held, msg)
+		return nil
+	}
+	return s.writeLocked(msg)
 }
 
 func (s *server) sendUnknown(requestSeq int, command string) error {
@@ -435,7 +478,7 @@ func (f frontend) Emit(ev core.Event) {
 		f.s.log.Debug("Session event without a DAP rendering", "event", fmt.Sprintf("%T", ev))
 		return
 	}
-	if err := f.s.send(msg); err != nil {
+	if err := f.s.emit(msg); err != nil {
 		f.s.log.Warn("sending DAP event failed", "error", err)
 	}
 }
@@ -477,7 +520,7 @@ func (f frontend) delivered(e core.Delivered) {
 		Batch: e.Batch, Outcome: string(e.Outcome), Error: e.Error, Snapshot: e.Snapshot,
 	}}
 	for _, msg := range []dap.Message{out, ev} {
-		if err := f.s.send(msg); err != nil {
+		if err := f.s.emit(msg); err != nil {
 			f.s.log.Warn("sending DAP event failed", "error", err)
 			return
 		}
