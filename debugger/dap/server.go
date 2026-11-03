@@ -62,8 +62,11 @@ type server struct {
 	log  *slog.Logger
 	sess *core.Session
 
-	mu  sync.Mutex // guards seq, holding, held and every write to w
+	mu  sync.Mutex // guards seq, holding, held, terminated and every write to w
 	seq int
+	// terminated is set once a terminated event was written: a terminate
+	// request sends one only when the run hasn't.
+	terminated bool
 	// holding is set while a restart runs: events are queued in held, in
 	// order, and written after the restart response.
 	holding bool
@@ -248,10 +251,22 @@ func (s *server) handle(req dap.RequestMessage) (done bool, err error) {
 		return false, s.restart(r)
 
 	case *dap.TerminateRequest:
-		// Releases a stopped stepper and waits for the streams to stop; the
+		// Releases a stopped stepper and waits for the streams to stop. A
+		// run that captured its batch doesn't emit Terminated when it ends
+		// (D5), so the terminated event follows the response here; the
 		// client follows up with disconnect.
+		// Terminate waits for the run, so a run's own Terminated (one that
+		// captured nothing) is written by now.
 		_, _ = s.do(core.Terminate{})
-		return false, s.send(&dap.TerminateResponse{Response: s.response(r)})
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err := s.writeLocked(&dap.TerminateResponse{Response: s.response(r)}); err != nil {
+			return false, err
+		}
+		if s.terminated {
+			return false, nil
+		}
+		return false, s.writeLocked(&dap.TerminatedEvent{Event: s.event("terminated")})
 
 	case *dap.DisconnectRequest:
 		// Releases a stopped stepper and waits for the streams to stop.
@@ -406,6 +421,9 @@ func (s *server) send(msg dap.Message) error {
 }
 
 func (s *server) writeLocked(msg dap.Message) error {
+	if _, ok := msg.(*dap.TerminatedEvent); ok {
+		s.terminated = true
+	}
 	s.seq++
 	switch m := msg.(type) {
 	case dap.ResponseMessage:

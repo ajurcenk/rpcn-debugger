@@ -76,15 +76,13 @@ func step(t *testing.T, s *Session, rec *recorder, cmd Command, want pos, depth 
 	return st
 }
 
-// toEnd issues cmd and checks the run terminates with no further stop.
+// toEnd issues cmd and checks the run ends with no further stop.
 func toEnd(t *testing.T, s *Session, rec *recorder, cmd Command) {
 	t.Helper()
 	if err := do(s, cmd); err != nil {
 		t.Fatal(err)
 	}
-	if ev := rec.next(t); ev.kind != "terminated" {
-		t.Fatalf("event = %+v, want terminated", ev)
-	}
+	rec.runEnds(t)
 }
 
 func treeLaunched(t *testing.T) (*Session, *recorder) {
@@ -217,7 +215,7 @@ func TestPause(t *testing.T) {
 }
 
 // The root thread starts once, before the first stop, and exits at the end
-// of the run, before terminated; Threads lists it while it runs.
+// of the run, after the run-finished note; Threads lists it while it runs.
 func TestThreads(t *testing.T) {
 	rec := newRecorder()
 	rec.threads = true
@@ -250,12 +248,7 @@ func TestThreads(t *testing.T) {
 	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
-	if ev := rec.next(t); ev != (event{"thread", "exited 1"}) {
-		t.Fatalf("event = %+v, want thread exited 1", ev)
-	}
-	if ev := rec.next(t); ev.kind != "terminated" {
-		t.Fatalf("event = %+v, want terminated", ev)
-	}
+	rec.runEnds(t)
 	if got := s.Threads(); len(got) != 0 {
 		t.Errorf("threads after the run = %+v", got)
 	}
@@ -466,7 +459,7 @@ func TestAttemptsAndTimeBudget(t *testing.T) {
 	for {
 		ev := rec.next(t)
 		got = append(got, ev.kind+" "+ev.detail)
-		if ev.kind == "terminated" {
+		if ev.kind == "rootExited" {
 			break
 		}
 		if ev.kind == "stopped" {
@@ -489,7 +482,8 @@ func TestAttemptsAndTimeBudget(t *testing.T) {
 		skipped,
 		"stopped step",
 		"stopped step",
-		"terminated ",
+		"output " + RunFinishedNote,
+		"rootExited ",
 	}
 	for i := range got {
 		// The rest of the warning is prose.

@@ -53,7 +53,7 @@ type Session struct {
 	prepared     any                   // Check's configs, run by Capture and Step (AD-6: one rewrite per launch)
 	delivery     Position              // where Delivered Snapshots are positioned (AD-21)
 	delivered    int                   // batches delivered in this run, numbering them (AD-3); Restart resets it
-	runDone      bool                  // the run emitted Terminated: Log sends nothing more
+	runDone      bool                  // the run ended: Log sends nothing more until a Restart
 	captured     bool                  // the batch is captured: the waiting note is not sent
 	kept         *CapturedBatch        // the captured batch, re-stepped by Restart (AD-20); nil before the capture
 	gen          int                   // the run generation: Restart bumps it, and a stale run ends silently
@@ -311,9 +311,6 @@ func (s *Session) restart() error {
 	case s.ended:
 		s.mu.Unlock()
 		return NewError(CodeSessionEnded, "the debug session ended")
-	case s.runDone:
-		s.mu.Unlock()
-		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
 	case s.kept == nil:
 		s.mu.Unlock()
 		return NewError(CodeNotSupported, "Restart is not supported before the batch is captured")
@@ -336,13 +333,9 @@ func (s *Session) restart() error {
 
 	// Replace the run: a stale generation ends without a word.
 	s.mu.Lock()
-	if s.ended || s.runDone {
-		ended := s.ended
+	if s.ended {
 		s.mu.Unlock()
-		if ended {
-			return NewError(CodeSessionEnded, "the debug session ended")
-		}
-		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
+		return NewError(CodeSessionEnded, "the debug session ended")
 	}
 	s.gen++
 	cancel, done, replaced := s.cancel, s.done, s.replaced
@@ -364,15 +357,12 @@ func (s *Session) restart() error {
 		s.mu.Unlock()
 		return NewError(CodeSessionEnded, "the debug session ended")
 	}
-	if s.runDone {
-		// The run ended (Terminated) before it saw the new generation.
-		s.mu.Unlock()
-		return NewError(CodeNotSupported, "Restart is not supported once the run has ended: start a new launch")
-	}
+	// A run that ended before it saw the new generation (runDone) is
+	// replaced like a live one.
 	exited := s.liveThreadsLocked()
 	s.resetThreadsLocked()
 	s.resetSteppingLocked()
-	s.delivered = 0
+	s.delivered, s.runDone = 0, false
 	s.lines, s.translate, s.prepared, s.delivery = res.Lines, res.Translator, res.Prepared, res.Delivery
 	s.entryPending = true
 	s.threadLocked(ThreadID).started = true
@@ -422,6 +412,11 @@ func (s *Session) setBreakpoints(c SetBreakpoints) Result {
 // kept is the batch a Restart re-steps, then steps it. It closes done when
 // it returns. A run that a Restart replaced (its gen is stale) ends without
 // a word: no note, ThreadExited or Terminated.
+//
+// A run that captured its batch doesn't terminate when it ends (D5, AD-20):
+// after its own end notes it emits the run-finished note and the root
+// ThreadExited, and the session waits for Restart or Terminate. A run that
+// captured nothing, or failed before the capture, ends with Terminated.
 func (s *Session) run(ctx context.Context, opts StartOptions, kept *CapturedBatch, gen int, done chan struct{}) {
 	defer close(done)
 	s.mu.Lock()
@@ -484,15 +479,26 @@ func (s *Session) run(ctx context.Context, opts StartOptions, kept *CapturedBatc
 		root.exited = true
 	}
 	s.mu.Unlock()
-	if exitRoot {
-		s.fe.Emit(ThreadExited{ThreadID: ThreadID})
+	// Records the streams log while shutting down would follow the run's
+	// last event: Log is muted from here until a Restart.
+	captured := kept != nil
+	if captured {
+		s.fe.Emit(Output{Category: "console", Text: RunFinishedNote})
 	}
-	// Records the streams log while shutting down would follow Terminated.
 	s.mu.Lock()
 	s.runDone = true
 	s.mu.Unlock()
-	s.fe.Emit(Terminated{})
+	if exitRoot {
+		s.fe.Emit(ThreadExited{ThreadID: ThreadID})
+	}
+	if !captured {
+		s.fe.Emit(Terminated{})
+	}
 }
+
+// RunFinishedNote is the console note at the end of a run that captured its
+// batch: the session stays for a Restart (D5).
+const RunFinishedNote = "Run finished: Restart re-steps the same batch with the edited pipeline; Stop ends the session.\n"
 
 // Translator returns the Translate of the launched pipeline, or nil before
 // a successful launch. The log handler translates engine records with it
@@ -505,7 +511,7 @@ func (s *Session) Translator() Translate {
 
 // Log reports a log record's text to the frontend as an Output event:
 // category stderr for errors, console otherwise (AD-15). It sends nothing
-// once the session has ended or its run has emitted Terminated. It must not be called while the caller
+// once the session has ended or its run has ended, until a Restart. It must not be called while the caller
 // holds a lock the frontend's Emit takes.
 func (s *Session) Log(level slog.Level, text string) {
 	s.mu.Lock()

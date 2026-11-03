@@ -291,6 +291,16 @@ func (c *client) event(name string) dap.EventMessage {
 	return e
 }
 
+// runEnds reads the end of a run that captured its batch: the run-finished
+// note, then the root thread's exit, and no terminated event (D5).
+func (c *client) runEnds() {
+	c.t.Helper()
+	if out := c.event("output").(*dap.OutputEvent); !strings.HasPrefix(out.Body.Output, "Run finished: Restart re-steps the same batch") {
+		c.t.Fatalf("output = %q, want the run-finished note", out.Body.Output)
+	}
+	c.threadEvent("exited")
+}
+
 func (c *client) serveResult() error {
 	c.t.Helper()
 	select {
@@ -443,8 +453,7 @@ func TestF5StopThenResume(t *testing.T) {
 			if _, ev := c.delivery(1); len(ev.Body.Snapshot.Batches) != 1 || ev.Body.Snapshot.Position.UserPath != "output" {
 				t.Errorf("rpcnDelivered = %+v", ev.Body)
 			}
-			c.threadEvent("exited")
-			c.event("terminated")
+			c.runEnds()
 			select {
 			case <-eng.delivered:
 			default:
@@ -527,6 +536,61 @@ func TestNothingCaptured(t *testing.T) {
 	}
 	c.threadEvent("exited")
 	c.event("terminated")
+	c.send("disconnect", map[string]any{})
+	c.response("disconnect", true)
+	if err := c.serveResult(); err != nil {
+		t.Errorf("Serve = %v", err)
+	}
+}
+
+// After a run that captured its batch, the session stays (D5): Stop (a
+// terminate request) gets its response, then a terminated event, and the
+// client disconnects. Terminate at a stop ends the session the same way.
+func TestTerminate(t *testing.T) {
+	for name, atStop := range map[string]bool{"after the run": false, "at a stop": true} {
+		t.Run(name, func(t *testing.T) {
+			eng := newFakeEngine()
+			c := startServer(t, eng)
+			c.toStop()
+			if !atStop {
+				c.send("continue", map[string]any{"threadId": 1})
+				c.response("continue", true)
+				c.delivery(1)
+				c.runEnds()
+				c.send("threads", map[string]any{})
+				if th := c.response("threads", true).(*dap.ThreadsResponse); len(th.Body.Threads) != 0 {
+					t.Errorf("threads after the run = %+v", th.Body.Threads)
+				}
+				c.send("next", map[string]any{"threadId": 1})
+				c.response("next", false)
+			}
+			c.send("terminate", map[string]any{})
+			c.response("terminate", true)
+			c.event("terminated")
+			c.send("disconnect", map[string]any{})
+			c.response("disconnect", true)
+			if err := c.serveResult(); err != nil {
+				t.Errorf("Serve = %v", err)
+			}
+		})
+	}
+}
+
+// Stop after a launch that captured nothing: the run already sent
+// terminated, so the terminate response comes with no second one.
+func TestTerminateAfterNothingCaptured(t *testing.T) {
+	eng := newFakeEngine()
+	eng.startErr = core.NewError(core.CodeNothingCaptured, "no batch was captured: the input closed")
+	c := startServer(t, eng)
+	c.launch(map[string]any{"pipeline": "/p/pipeline.yaml"})
+	c.send("configurationDone", map[string]any{})
+	c.response("configurationDone", true)
+	c.threadEvent("started")
+	c.event("output")
+	c.threadEvent("exited")
+	c.event("terminated")
+	c.send("terminate", map[string]any{})
+	c.response("terminate", true)
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)
 	if err := c.serveResult(); err != nil {
@@ -835,8 +899,7 @@ func TestUnsupportedCommands(t *testing.T) {
 	c.send("continue", map[string]any{"threadId": 1})
 	c.response("continue", true)
 	c.delivery(1)
-	c.threadEvent("exited")
-	c.event("terminated")
+	c.runEnds()
 	c.send("disconnect", map[string]any{})
 	c.response("disconnect", true)
 }

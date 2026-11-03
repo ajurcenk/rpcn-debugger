@@ -175,9 +175,7 @@ func TestCaptureWaitNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-e.delivered
-	if ev := rec.next(t); ev.kind != "terminated" {
-		t.Fatalf("event = %+v, want terminated", ev)
-	}
+	rec.runEnds(t)
 }
 
 func TestCaptureWaitNoteNotWhenCaptured(t *testing.T) {

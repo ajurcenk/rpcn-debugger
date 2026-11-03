@@ -154,7 +154,11 @@ func runToEndOutput(t *testing.T, path string, args map[string]any) (delivered, 
 					delivered = append(delivered, string(msg.Content.Raw))
 				}
 			}
-		case m.Type == "event" && m.Event == "terminated":
+		case m.Type == "event" && m.Event == "thread" && len(out) > 0 && strings.HasPrefix(out[len(out)-1], runFinishedPrefix),
+			m.Type == "event" && m.Event == "terminated":
+			// A run that captured its batch ends with the run-finished note
+			// and the root thread's exit (D5); one that didn't, with
+			// terminated.
 			c.send("disconnect", map[string]any{})
 			c.next("response", "disconnect")
 			return delivered, out

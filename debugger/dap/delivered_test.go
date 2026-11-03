@@ -12,7 +12,7 @@ import (
 )
 
 // runToEnd launches eng's pipeline, continues from the entry stop and
-// returns the events up to terminated.
+// returns the events up to the root thread's exit, which ends the run (D5).
 func runToEnd(t *testing.T, eng *fakeEngine) []dap.Message {
 	t.Helper()
 	c := startServer(t, eng)
@@ -24,8 +24,11 @@ func runToEnd(t *testing.T, eng *fakeEngine) []dap.Message {
 	for {
 		m := c.next()
 		got = append(got, m)
-		if e, ok := m.(dap.EventMessage); ok && e.GetEvent().Event == "terminated" {
+		if e, ok := m.(*dap.ThreadEvent); ok && e.Body.Reason == "exited" && e.Body.ThreadId == 1 {
 			break
+		}
+		if e, ok := m.(dap.EventMessage); ok && e.GetEvent().Event == "terminated" {
+			t.Fatal("terminated at the end of a run that captured its batch")
 		}
 	}
 	c.send("disconnect", map[string]any{})
@@ -185,7 +188,7 @@ func TestConsoleContentCut(t *testing.T) {
 	}
 }
 
-// A run that delivers nothing says so, then terminates.
+// A run that delivers nothing says so, then ends as usual.
 func TestNothingDelivered(t *testing.T) {
 	eng := newFakeEngine()
 	eng.deliver = []core.Batch{}
@@ -198,7 +201,7 @@ func TestNothingDelivered(t *testing.T) {
 			t.Errorf("rpcnDelivered %+v, want none", e.Body)
 		}
 	}
-	if len(texts) != 1 || texts[0] != "Nothing was delivered to dry-run output\n" {
-		t.Errorf("outputs = %q, want the nothing-delivered note", texts)
+	if len(texts) != 2 || texts[0] != "Nothing was delivered to dry-run output\n" || !strings.HasPrefix(texts[1], "Run finished:") {
+		t.Errorf("outputs = %q, want the nothing-delivered note, then the run-finished note", texts)
 	}
 }

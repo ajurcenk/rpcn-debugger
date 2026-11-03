@@ -167,13 +167,19 @@ func TestRestartReStepsTheBatch(t *testing.T) {
 	}
 	expect(t, rec, "thread:exited 1", "output:w v2", "thread:started 1", "delivered:1 recorded", "stopped:entry")
 
-	// Once the run ended, Restart is not supported.
+	// The run ends without Terminated: a Restart after it re-steps the
+	// batch as from a stop (D5).
 	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, rec, "thread:exited 1", "terminated")
-	if err := do(s, Restart{}); !HasCode(err, CodeNotSupported) {
-		t.Errorf("Restart after the run = %v, want NOT_SUPPORTED", err)
+	expect(t, rec, "output:"+RunFinishedNote, "thread:exited 1")
+	rec.none(t)
+	if err := do(s, Restart{}); err != nil {
+		t.Fatalf("Restart after the run = %v", err)
+	}
+	expect(t, rec, "output:w v2", "thread:started 1", "delivered:1 recorded", "stopped:entry")
+	if checks, steps, captures := e.counts(); len(checks) != 4 || len(steps) != 4 || captures != 1 {
+		t.Errorf("checks %d, steps %d, captures %d; want 4, 4, 1", len(checks), len(steps), captures)
 	}
 }
 
@@ -293,9 +299,9 @@ func (f *hookFrontend) Emit(ev Event) {
 	f.rec.Emit(ev)
 }
 
-// A Restart that comes as the run ends (it already passed its generation
-// check, so it goes on to Terminated) refuses once the run is waited for:
-// no new run starts after Terminated.
+// A Restart that comes as the run ends (the run already passed its
+// generation check, so it goes on to its end) waits for the run and then
+// replaces it like a live one (D5).
 func TestRestartAsTheRunEnds(t *testing.T) {
 	e := &restartEngine{mapping: "v1"}
 	rec := newRecorder()
@@ -328,12 +334,12 @@ func TestRestartAsTheRunEnds(t *testing.T) {
 	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, rec, "terminated")
-	if err := <-restarted; !HasCode(err, CodeNotSupported) {
-		t.Errorf("Restart as the run ends = %v, want NOT_SUPPORTED", err)
+	expect(t, rec, "output:"+RunFinishedNote, "rootExited", "output:"+restartNote, "output:w v1", "stopped:entry")
+	if err := <-restarted; err != nil {
+		t.Errorf("Restart as the run ends = %v, want it to succeed", err)
 	}
-	if _, steps, _ := e.counts(); len(steps) != 1 {
-		t.Errorf("steps = %d, want no new run", len(steps))
+	if _, steps, captures := e.counts(); len(steps) != 2 || captures != 1 {
+		t.Errorf("steps = %d, captures = %d; want a new run on the kept batch", len(steps), captures)
 	}
 	rec.none(t)
 }

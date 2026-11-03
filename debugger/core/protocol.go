@@ -284,7 +284,9 @@ type Output struct {
 	Text     string
 }
 
-// Terminated reports the end of the debuggee run.
+// Terminated reports the end of the debuggee run. A run that captured its
+// batch doesn't send it: the root thread's ThreadExited ends that run, and
+// the session stays for a Restart (D5).
 type Terminated struct{}
 
 func (ThreadStarted) event()      {}

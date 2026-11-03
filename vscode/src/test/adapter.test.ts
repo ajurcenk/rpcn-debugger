@@ -82,7 +82,7 @@ test('rpcn-debug answers initialize and exits 0 on disconnect', async () => {
   }
 });
 
-test('F5 path: captures, stops before the mapping, steps over and terminates', async () => {
+test('F5 path: captures, stops before the mapping, steps over; the run ends and the session stays', async () => {
   const proc = spawn(binary, [], { stdio: ['pipe', 'pipe', 'inherit'] });
   const exited = exitCode(proc);
   try {
@@ -143,9 +143,11 @@ test('F5 path: captures, stops before the mapping, steps over and terminates', a
     assert.equal(end.length, 1);
     assert.equal(end[0].line, processorsLine);
 
-    const terminated = dc.waitForEvent('terminated');
+    // The run ends with the root thread's exit; the session stays for a
+    // Restart (D5), so the client ends it.
+    const runEnded = dc.waitForEvent('thread');
     await dc.nextRequest({ threadId });
-    await terminated;
+    assert.equal((await runEnded).body.reason, 'exited');
 
     const disc = await dc.disconnectRequest();
     assert.equal(disc.success, true);
@@ -213,9 +215,12 @@ test('nested demo: Step Over, Step In and Step Out walk the frames', async () =>
     assert.deepEqual(lines(await step(dc, 'stepOut', threadId)), [23]);
 
     const exitedThread = dc.waitForEvent('thread');
-    const terminated = dc.waitForEvent('terminated');
     await dc.continueRequest({ threadId });
     assert.equal((await exitedThread).body.reason, 'exited');
+
+    // Stop: the terminate response, then terminated.
+    const terminated = dc.waitForEvent('terminated');
+    await dc.terminateRequest();
     await terminated;
 
     const disc = await dc.disconnectRequest();
@@ -284,9 +289,9 @@ test('a batch of 12 is truncated to the default maxMessages of 10', async () => 
     const messages = await dc.variablesRequest({ variablesReference: batch.variablesReference });
     assert.equal(messages.body.variables.length, 10);
 
-    const terminated = dc.waitForEvent('terminated');
+    const runEnded = dc.waitForEvent('thread');
     await dc.continueRequest({ threadId });
-    await terminated;
+    assert.equal((await runEnded).body.reason, 'exited');
 
     const disc = await dc.disconnectRequest();
     assert.equal(disc.success, true);

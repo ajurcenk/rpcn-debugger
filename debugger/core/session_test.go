@@ -71,6 +71,7 @@ type fakeEngine struct {
 	checkErr  error
 	warnings  []string
 	startErr  error
+	stepErr   error // returned by Step once its steppers ran
 	children  int
 	steppers  []*fakeStepper
 	lines     lines // nil: pipeline.processors with children leaves
@@ -170,7 +171,7 @@ func (e *fakeEngine) Step(ctx context.Context, opts StartOptions, batch any, a A
 		}
 	}
 	e.delivered <- b
-	return nil
+	return e.stepErr
 }
 
 type event struct {
@@ -199,8 +200,12 @@ func (r *recorder) Emit(ev Event) {
 			r.events <- event{"thread", fmt.Sprintf("started %d", e.ThreadID)}
 		}
 	case ThreadExited:
-		if r.threads {
+		switch {
+		case r.threads:
 			r.events <- event{"thread", fmt.Sprintf("exited %d", e.ThreadID)}
+		case e.ThreadID == ThreadID:
+			// The root thread's exit ends a run that captured its batch (D5).
+			r.events <- event{"rootExited", ""}
 		}
 	case StepStarted:
 		if r.steps {
@@ -226,6 +231,23 @@ func (r *recorder) Emit(ev Event) {
 	default:
 		r.events <- event{fmt.Sprintf("%T", ev), ""}
 	}
+}
+
+// runEnds expects the end of a run that captured its batch: the
+// run-finished note, then the root thread's exit, and no Terminated (D5).
+func (r *recorder) runEnds(t *testing.T) {
+	t.Helper()
+	if ev := r.next(t); ev != (event{"output", RunFinishedNote}) {
+		t.Fatalf("event = %+v, want the run-finished note", ev)
+	}
+	want := event{"rootExited", ""}
+	if r.threads {
+		want = event{"thread", "exited 1"}
+	}
+	if ev := r.next(t); ev != want {
+		t.Fatalf("event = %+v, want %+v", ev, want)
+	}
+	r.none(t)
 }
 
 func do(s *Session, cmd Command) error {
@@ -317,9 +339,7 @@ func TestStopThenResume(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if ev := rec.next(t); ev.kind != "terminated" {
-				t.Fatalf("event = %+v, want terminated", ev)
-			}
+			rec.runEnds(t)
 			if got := <-e.delivered; len(got) != 1 {
 				t.Errorf("delivered %v", got)
 			}
@@ -342,9 +362,7 @@ func TestContinueRunsToTheEnd(t *testing.T) {
 	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
-	if ev := rec.next(t); ev.kind != "terminated" {
-		t.Fatalf("event = %+v, want terminated", ev)
-	}
+	rec.runEnds(t)
 }
 
 func TestLaunchErrors(t *testing.T) {
@@ -416,6 +434,9 @@ func TestNothingCaptured(t *testing.T) {
 	_, rec := launched(t, e)
 	if ev := rec.next(t); ev.kind != "output" || !strings.Contains(ev.detail, "no batch was captured") {
 		t.Fatalf("event = %+v, want an output naming the empty capture", ev)
+	}
+	if ev := rec.next(t); ev.kind != "rootExited" {
+		t.Fatalf("event = %+v, want the root thread's exit", ev)
 	}
 	if ev := rec.next(t); ev.kind != "terminated" {
 		t.Fatalf("event = %+v, want terminated", ev)
@@ -512,9 +533,7 @@ func TestNotSupported(t *testing.T) {
 	if err := do(s, Continue{}); err != nil {
 		t.Fatal(err)
 	}
-	if ev := rec.next(t); ev.kind != "terminated" {
-		t.Fatalf("event = %+v, want terminated", ev)
-	}
+	rec.runEnds(t)
 }
 
 func TestSetBreakpointsUnverified(t *testing.T) {
@@ -682,7 +701,7 @@ func TestStrictRejectionIsNotAFailure(t *testing.T) {
 	e.startErr = NewError(CodeStrictRejected, "rejected due to failed processing: boom")
 	_, rec := launched(t, e)
 	var outs []string
-	for ev := rec.next(t); ev.kind != "terminated"; ev = rec.next(t) {
+	for ev := rec.next(t); ev.kind != "rootExited"; ev = rec.next(t) {
 		if ev.kind == "output" {
 			outs = append(outs, ev.detail)
 		}
@@ -762,7 +781,7 @@ func TestDelivered(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if ev.kind == "terminated" {
+		if ev == (event{"thread", "exited 1"}) {
 			break
 		}
 	}
@@ -771,12 +790,13 @@ func TestDelivered(t *testing.T) {
 		"stopped entry",
 		"delivered 1 recorded output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
 		"delivered 2 recorded output line 20 /p/pipeline.yaml thread 1 stepper -1: b c",
+		"output " + RunFinishedNote,
 		"thread exited 1",
-		"terminated ",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+	rec.none(t) // no Terminated: the session stays for a Restart
 }
 
 // Delivered carries the Session's batch number, the sink's outcome and the
@@ -799,7 +819,7 @@ func TestDeliveredOutcomes(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = do(s, Terminate{}) })
 	var got []string
-	for ev := rec.next(t); ev.kind != "terminated"; ev = rec.next(t) {
+	for ev := rec.next(t); ev.kind != "rootExited"; ev = rec.next(t) {
 		if ev.kind == "stopped" {
 			if err := do(s, Continue{}); err != nil {
 				t.Fatal(err)
@@ -811,6 +831,7 @@ func TestDeliveredOutcomes(t *testing.T) {
 	want := []string{
 		"delivered 1 written output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
 		"delivered 2 failed (refused at pipeline.processors) output line 20 /p/pipeline.yaml thread 1 stepper -1: a",
+		"output " + RunFinishedNote,
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("events:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -846,7 +867,7 @@ func TestNothingDelivered(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if ev.kind == "terminated" {
+				if ev == (event{"thread", "exited 1"}) {
 					break
 				}
 			}
@@ -854,12 +875,100 @@ func TestNothingDelivered(t *testing.T) {
 				"thread started 1",
 				"stopped entry",
 				"output " + text,
+				"output " + RunFinishedNote,
 				"thread exited 1",
-				"terminated ",
 			}
 			if strings.Join(got, "\n") != strings.Join(want, "\n") {
 				t.Errorf("events:\n%q\nwant:\n%q", got, want)
 			}
 		})
+	}
+}
+
+// A run that captured its batch ends without Terminated however it ends: its
+// own end note, the run-finished note, then the root thread's exit, and the
+// session stays for a Restart (D5).
+func TestRunEndsAfterCapture(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		note string // the run's own end note
+	}{
+		"delivered":      {nil, ""},
+		"run failure":    {errors.New("boom"), "The debug run failed: boom\n"},
+		"strict":         {NewError(CodeStrictRejected, "rejected"), "error_handling.strict: the output rejected"},
+		"output failure": {NewError(CodeOutputFailed, "write refused"), "write refused"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEngine()
+			e.stepErr = tc.err
+			e.deliver = []Batch{{Messages: []Message{{Content: Content{Raw: []byte("a")}}}}}
+			s, rec := launched(t, e)
+			t.Cleanup(func() { _ = do(s, Terminate{}) })
+			if ev := rec.next(t); ev != (event{"stopped", "entry"}) {
+				t.Fatalf("event = %+v, want stopped entry", ev)
+			}
+			if err := do(s, Continue{}); err != nil {
+				t.Fatal(err)
+			}
+			<-e.delivered
+			if tc.note != "" {
+				if ev := rec.next(t); ev.kind != "output" || !strings.Contains(ev.detail, tc.note) {
+					t.Fatalf("event = %+v, want the note %q", ev, tc.note)
+				}
+			}
+			rec.runEnds(t)
+			// Nothing is stopped and no thread is live: stepping is refused.
+			if got := s.Threads(); len(got) != 0 {
+				t.Errorf("threads after the run = %+v", got)
+			}
+			for _, cmd := range []Command{Next{ThreadID: ThreadID}, Continue{ThreadID: ThreadID}} {
+				if err := do(s, cmd); !HasCode(err, CodeNotStopped) {
+					t.Errorf("%T after the run = %v, want NOT_STOPPED", cmd, err)
+				}
+			}
+			// Restart re-steps the kept batch from the entry stop.
+			if err := do(s, Restart{}); err != nil {
+				t.Fatalf("Restart after the run = %v", err)
+			}
+			if ev := rec.next(t); ev != (event{"output", restartNote}) {
+				t.Fatalf("event = %+v, want the restart note", ev)
+			}
+			if ev := rec.next(t); ev != (event{"stopped", "entry"}) {
+				t.Fatalf("event = %+v, want stopped entry", ev)
+			}
+			e.mu.Lock()
+			captures := e.captures
+			e.mu.Unlock()
+			if captures != 1 {
+				t.Errorf("captures = %d, want 1", captures)
+			}
+		})
+	}
+}
+
+// Once a run that captured its batch has ended, log records reach the
+// frontend no more, until a Restart starts a new run.
+func TestLogAfterRunEnds(t *testing.T) {
+	e := newEngine()
+	s, rec := launched(t, e)
+	t.Cleanup(func() { _ = do(s, Terminate{}) })
+	if ev := rec.next(t); ev.kind != "stopped" {
+		t.Fatalf("event = %+v", ev)
+	}
+	if err := do(s, Continue{}); err != nil {
+		t.Fatal(err)
+	}
+	<-e.delivered
+	rec.runEnds(t)
+	s.Log(slog.LevelError, "late\n")
+	rec.none(t)
+	if err := do(s, Restart{}); err != nil {
+		t.Fatal(err)
+	}
+	for ev := rec.next(t); ev.kind != "stopped"; ev = rec.next(t) {
+	}
+	s.Log(slog.LevelError, "again\n")
+	if ev := rec.next(t); ev != (event{"output", "again\n"}) {
+		t.Fatalf("event = %+v, want the log record after the Restart", ev)
 	}
 }

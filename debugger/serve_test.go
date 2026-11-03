@@ -115,6 +115,33 @@ func (c *wire) next(kind, name string) msg {
 	return msg{}
 }
 
+// runFinishedPrefix starts the console note that ends a run that captured
+// its batch (D5).
+const runFinishedPrefix = "Run finished: Restart re-steps the same batch"
+
+// runEnds reads the end of a run that captured its batch: the run-finished
+// note, then the root thread's exit; no terminated event follows (D5).
+func (c *wire) runEnds() {
+	c.t.Helper()
+	m := c.next("event", "output")
+	var b struct {
+		Output string `json:"output"`
+	}
+	_ = json.Unmarshal(m.Body, &b)
+	if !strings.HasPrefix(b.Output, runFinishedPrefix) {
+		c.t.Fatalf("output = %q, want the run-finished note", b.Output)
+	}
+	m = c.next("event", "thread")
+	var th struct {
+		Reason   string `json:"reason"`
+		ThreadID int    `json:"threadId"`
+	}
+	_ = json.Unmarshal(m.Body, &th)
+	if th.Reason != "exited" || th.ThreadID != 1 {
+		c.t.Fatalf("thread event = %+v, want thread 1 exited", th)
+	}
+}
+
 // The whole path: rewrite, capture, stepper, gate, sink and DAP, on the
 // tracer sample.
 func TestServeTracerSample(t *testing.T) {
@@ -172,8 +199,7 @@ func TestServeTracerSample(t *testing.T) {
 					c.next("response", resume)
 				}
 				c.delivered(`{"doubled":2,"greeting":"hello","n":1}`)
-				c.next("event", "thread")
-				c.next("event", "terminated")
+				c.runEnds()
 			}
 			c.send("disconnect", map[string]any{})
 			c.next("response", "disconnect")
@@ -389,8 +415,7 @@ func continueToEnd(t *testing.T, c *wire) {
 	c.send("continue", map[string]any{"threadId": 1})
 	c.next("response", "continue")
 	c.delivered("")
-	c.next("event", "thread")
-	c.next("event", "terminated")
+	c.runEnds()
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
 }
@@ -472,8 +497,7 @@ func TestServeNestedStepping(t *testing.T) {
 	c.send("next", map[string]any{"threadId": 1})
 	c.next("response", "next")
 	c.delivered(`{"branched":10,"case":"one","from_input":true,"from_output":true,"n":1}`)
-	c.next("event", "thread")
-	c.next("event", "terminated")
+	c.runEnds()
 	c.send("disconnect", map[string]any{})
 	c.next("response", "disconnect")
 }
@@ -664,7 +688,7 @@ output:
 		select {
 		case m, ok := <-c.msgs:
 			if !ok {
-				t.Fatal("stream closed before terminated")
+				t.Fatal("stream closed before the run ended")
 			}
 			switch {
 			case m.Type == "event" && m.Event == "output":
@@ -674,14 +698,16 @@ output:
 				}
 				_ = json.Unmarshal(m.Body, &body)
 				outputs = append(outputs, body)
-			case m.Type == "event" && m.Event == "terminated":
-				done = true
-			case m.Type == "event" && (m.Event == "thread" || m.Event == "rpcnDelivered"):
+			case m.Type == "event" && m.Event == "thread":
+				// The root thread's exit after the run-finished note ends
+				// the run (D5).
+				done = len(outputs) > 0 && strings.HasPrefix(outputs[len(outputs)-1].Output, runFinishedPrefix)
+			case m.Type == "event" && m.Event == "rpcnDelivered":
 			default:
 				t.Fatalf("unexpected %+v", m)
 			}
 		case <-time.After(30 * time.Second):
-			t.Fatal("timed out waiting for terminated")
+			t.Fatal("timed out waiting for the end of the run")
 		}
 	}
 	c.send("disconnect", map[string]any{})

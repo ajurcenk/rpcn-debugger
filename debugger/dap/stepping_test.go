@@ -79,8 +79,7 @@ func TestNestedStack(t *testing.T) {
 	c.send("next", map[string]any{"threadId": 1})
 	c.response("next", true)
 	c.delivery(1)
-	c.threadEvent("exited")
-	c.event("terminated")
+	c.runEnds()
 
 	c.send("threads", map[string]any{})
 	if th := c.response("threads", true).(*dap.ThreadsResponse); len(th.Body.Threads) != 0 {

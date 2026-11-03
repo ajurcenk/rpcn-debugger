@@ -1,7 +1,7 @@
 // Package dapdrive is a scripted DAP client for end-to-end tests. Run starts
 // debugger.Serve over in-memory pipes, launches a pipeline, answers every
-// stop with a Script (Step In at every stop, say) until the run terminates,
-// and returns what each stop showed: its line, user path, frame stack with
+// stop with a Script (Step In at every stop, say) until the run ends, and
+// returns what each stop showed: its line, user path, frame stack with
 // repeat labels and batches, plus the Debug Console output and the
 // delivered batches (from the rpcnDelivered events).
 //
@@ -76,6 +76,11 @@ type Options struct {
 	// configurationDone, e.g. to edit or remove the pipeline file. Its
 	// error ends the run.
 	AfterLaunch func() error
+	// AfterRun, when set, answers the end of a run (the root thread's
+	// exit, D5) with the result so far. Restart restarts the run from the
+	// end: a failed restart is recorded in Result.RestartErrors and ends
+	// Run. Any other answer ("" included) ends Run. nil ends Run.
+	AfterRun func(Result) Command
 }
 
 // Frame is one stack frame of a stop, innermost first.
@@ -150,6 +155,10 @@ type Result struct {
 	// RestartErrors are the messages of the restart requests that failed,
 	// in order.
 	RestartErrors []string
+	// Terminated is true when a terminated event ended the run (a launch
+	// that captured nothing), not the root thread's exit after the
+	// run-finished note (D5).
+	Terminated bool
 }
 
 // standardEnv is the stock binary's component set, built once. Runs never
@@ -158,7 +167,11 @@ var standardEnv = sync.OnceValue(func() *service.Environment {
 	return schema.Standard("dev", "").Environment()
 })
 
-// Run debugs opts.Pipeline over DAP until the run terminates or ctx ends.
+// Run debugs opts.Pipeline over DAP until the run ends or ctx does. A run
+// ends with a terminated event, or with the root thread's exit after the
+// run-finished note while no restart is in flight (the session stays for
+// a Restart, D5); Run then
+// disconnects, unless opts.AfterRun restarts it.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	pipeline, err := filepath.Abs(opts.Pipeline)
 	if err != nil {
@@ -201,7 +214,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		<-served
 	}()
 
-	res, err := c.run(pipeline, opts.Launch, script, paths, maxStops, opts.AfterLaunch)
+	res, err := c.run(pipeline, opts.Launch, script, paths, maxStops, opts.AfterLaunch, opts.AfterRun)
 	if err != nil {
 		return res, err
 	}
@@ -330,7 +343,9 @@ func (c *client) event() (message, error) {
 	}
 }
 
-func (c *client) run(pipeline string, launch map[string]any, script Script, paths map[pathKey]string, maxStops int, afterLaunch func() error) (Result, error) {
+func (c *client) run(pipeline string, launch map[string]any, script Script, paths map[pathKey]string, maxStops int,
+	afterLaunch func() error, afterRun func(Result) Command,
+) (Result, error) {
 	var res Result
 	if _, err := c.request("initialize", map[string]any{"adapterID": "redpanda-connect", "linesStartAt1": true}); err != nil {
 		return res, err
@@ -352,6 +367,28 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 		return res, err
 	}
 	delivered := 0 // batches delivered in this run: a Restart numbers from 1 again
+	// inFlight is true from a successful restart until the new run's root
+	// thread starts: the replaced run's root ThreadExited is not the end
+	// of a run.
+	inFlight := false
+	// finished is true once this run sent the run-finished note: only then
+	// does the root thread's exit end the run. An uncaptured launch's root
+	// exit is followed by terminated.
+	finished := false
+	restarted := func() error {
+		delivered, inFlight, finished = 0, true, false
+		// The restart re-read the pipeline file: stops map to its new
+		// user paths.
+		var err error
+		paths, err = userPaths(pipeline)
+		return err
+	}
+	disconnect := func() (Result, error) {
+		if _, err := c.request("disconnect", map[string]any{}); err != nil {
+			return res, err
+		}
+		return res, nil
+	}
 	for {
 		ev, err := c.event()
 		if err != nil {
@@ -364,6 +401,9 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			}
 			_ = json.Unmarshal(ev.Body, &b)
 			res.Output = append(res.Output, b.Output)
+			if b.Output == core.RunFinishedNote {
+				finished = true
+			}
 		case "stopped":
 			if len(res.Stops) >= maxStops {
 				return res, fmt.Errorf("more than %d stops", maxStops)
@@ -381,15 +421,12 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 			}
 			st.Reason = b.Reason
 			res.Stops = append(res.Stops, st)
-			restarted, err := c.answer(&res, script, b.ThreadID, maxStops)
+			ok, err := c.answer(&res, script, b.ThreadID, maxStops)
 			if err != nil {
 				return res, err
 			}
-			if restarted {
-				delivered = 0
-				// The restart re-read the pipeline file: stops map to its
-				// new user paths.
-				if paths, err = userPaths(pipeline); err != nil {
+			if ok {
+				if err := restarted(); err != nil {
 					return res, err
 				}
 			}
@@ -400,11 +437,41 @@ func (c *client) run(pipeline string, launch map[string]any, script Script, path
 				return res, err
 			}
 			res.Delivered = append(res.Delivered, b...)
-		case "terminated":
-			if _, err := c.request("disconnect", map[string]any{}); err != nil {
+		case "thread":
+			var b struct {
+				Reason   string `json:"reason"`
+				ThreadID int    `json:"threadId"`
+			}
+			if err := json.Unmarshal(ev.Body, &b); err != nil {
 				return res, err
 			}
-			return res, nil
+			if b.ThreadID != core.ThreadID {
+				continue
+			}
+			switch {
+			case b.Reason == "started":
+				inFlight = false
+			case b.Reason == "exited" && !inFlight && finished:
+				// The run ended; the session waits for Restart or Stop.
+				if afterRun == nil || afterRun(res) != Restart {
+					return disconnect()
+				}
+				_, err := c.request(string(Restart), map[string]any{})
+				var fe *failedError
+				if errors.As(err, &fe) {
+					res.RestartErrors = append(res.RestartErrors, fe.message)
+					return disconnect()
+				}
+				if err != nil {
+					return res, err
+				}
+				if err := restarted(); err != nil {
+					return res, err
+				}
+			}
+		case "terminated":
+			res.Terminated = true
+			return disconnect()
 		}
 	}
 }

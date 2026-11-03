@@ -785,3 +785,86 @@ func TestRestartBrokenPipeline(t *testing.T) {
 		})
 	}
 }
+
+// The end of a run doesn't terminate the session (D5): the run-finished
+// note goes out, and AfterRun's Restart re-steps the kept batch with the
+// edited mapping, delivered as batch 1 again. The second end of the run
+// ends Run.
+func TestAfterRunRestart(t *testing.T) {
+	pipeline, src, data := restartCopy(t)
+	edited := strings.Replace(src, "uppercase()", `uppercase() + "!"`, 1)
+	var ends []int // the delivered count at each end of a run
+	var editErr error
+	afterRun := func(res dapdrive.Result) dapdrive.Command {
+		ends = append(ends, len(res.Delivered))
+		if len(ends) == 1 {
+			editErr = errors.Join(write(data, "changed\n"), write(pipeline, edited))
+			return dapdrive.Restart
+		}
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := dapdrive.Run(ctx, dapdrive.Options{Pipeline: pipeline, Script: dapdrive.Always(dapdrive.Continue), AfterRun: afterRun})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if editErr != nil {
+		t.Fatal(editErr)
+	}
+	if res.Terminated {
+		t.Error("the run ended with terminated, want the root thread's exit")
+	}
+	if len(ends) != 2 || ends[0] != 1 || ends[1] != 2 {
+		t.Errorf("AfterRun saw %v delivered batches, want [1 2]", ends)
+	}
+	if len(res.RestartErrors) != 0 {
+		t.Errorf("restart errors = %q", res.RestartErrors)
+	}
+	if len(res.Stops) != 2 || res.Stops[0].Reason != "entry" || res.Stops[1].Reason != "entry" {
+		t.Errorf("stops = %+v, want the entry stop twice", res.Stops)
+	}
+	// Run checks each rpcnDelivered is numbered from 1 in its run.
+	if len(res.Delivered) != 2 ||
+		res.Delivered[0][0].Content != `{"line":"hello restart","upper":"HELLO RESTART"}` ||
+		res.Delivered[1][0].Content != `{"line":"hello restart","upper":"HELLO RESTART!"}` {
+		t.Errorf("delivered = %+v, want the same batch through the old, then the new mapping", res.Delivered)
+	}
+	if notes := outputs(res, "Run finished: Restart re-steps the same batch with the edited pipeline; Stop ends the session."); len(notes) != 2 {
+		t.Errorf("run-finished notes = %q, want one per run", notes)
+	}
+}
+
+// A launch that captures nothing ends as before, with terminated: the
+// NOTHING_CAPTURED note, no run-finished note, and AfterRun is not asked.
+func TestNothingCapturedEnds(t *testing.T) {
+	pipeline, _, data := restartCopy(t)
+	if err := write(data, ""); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	asked := 0
+	res, err := dapdrive.Run(ctx, dapdrive.Options{
+		Pipeline: pipeline,
+		AfterRun: func(dapdrive.Result) dapdrive.Command { asked++; return dapdrive.Restart },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outputs(res, "no batch was captured"); len(got) != 1 {
+		t.Errorf("outputs = %q, want the nothing-captured note", res.Output)
+	}
+	if got := outputs(res, "Run finished"); len(got) != 0 {
+		t.Errorf("run-finished notes = %q, want none", got)
+	}
+	if len(res.Stops) != 0 || res.Delivered != nil {
+		t.Errorf("stops = %+v, delivered = %+v; want none", res.Stops, res.Delivered)
+	}
+	if !res.Terminated {
+		t.Error("the run did not end with terminated")
+	}
+	if asked != 0 || len(res.RestartErrors) != 0 {
+		t.Errorf("AfterRun asked %d times, restart errors = %q; want neither", asked, res.RestartErrors)
+	}
+}
